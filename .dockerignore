@@ -1,0 +1,9 @@
+app.jsx
+build.sh
+COMO-PUBLICAR.txt
+*.md
+.git
+.github
+Dockerfile
+.dockerignore
+portainer-stack-adhunter.yml

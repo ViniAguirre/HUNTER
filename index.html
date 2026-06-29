@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hunter — Precisão em Escala</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;}
+body{margin:0;font-family:Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased;}
+::-webkit-scrollbar{width:8px;height:8px;}
+::-webkit-scrollbar-thumb{background:rgba(140,150,180,.25);border-radius:10px;}
+::-webkit-scrollbar-track{background:transparent;}
+@keyframes hpulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+@keyframes hslide{from{transform:translateX(40px);opacity:0;}to{transform:translateX(0);opacity:1;}}
+@keyframes hfade{from{opacity:0;}to{opacity:1;}}
+.row-hover:hover{background:var(--hover)!important;}
+.nav-link:hover{background:rgba(255,255,255,.04);}
+input:focus,textarea:focus{border-color:var(--blue)!important;outline:none;}
+</style>
+<script src="vendor/react.production.min.js"></script>
+<script src="vendor/react-dom.production.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script src="app.js"></script>
+</body>
+</html>
