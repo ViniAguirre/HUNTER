@@ -1,9 +1,7 @@
 'use strict';
 /*
- * Hunter — Fase 1
- * Servidor Node/Express: serve o front (login + app) e a API de autenticação.
- * - Sem login: só a tela de login é entregue (o bundle do app fica protegido).
- * - Com login: cookie de sessão (JWT httpOnly) libera o app.
+ * Hunter — Fase 2
+ * Servidor Node/Express: serve o front + API de autenticação + API de dados (leads e buscas).
  */
 const path = require('path');
 const express = require('express');
@@ -32,18 +30,141 @@ const pool = new Pool({
   database: process.env.PGDATABASE,
 });
 
-// ---- inicialização: cria a tabela e o primeiro admin ----
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+function computeHealth(b) {
+  if (b.status === 'Encerrada') return 'gray';
+  if (b.status === 'Pausada') return 'red';
+  if (b.status === 'Esgotada') return 'amber';
+  if (!b.ultima_ativ) return 'amber';
+  const mins = (Date.now() - new Date(b.ultima_ativ).getTime()) / 60000;
+  if (mins < 10) return 'green';
+  if (mins < 60) return 'amber';
+  return 'red';
+}
+
+function buildLeadsFilter(query) {
+  const { q, status, uf, busca_id, email_only } = query;
+  const conditions = [];
+  const vals = [];
+  if (q && q.trim()) {
+    vals.push(`%${q.trim()}%`);
+    const n = vals.length;
+    conditions.push(`(l.fantasia ILIKE $${n} OR l.decisor ILIKE $${n} OR l.razao ILIKE $${n})`);
+  }
+  if (status) { vals.push(status); conditions.push(`l.status = $${vals.length}`); }
+  if (uf) { vals.push(uf); conditions.push(`l.uf = $${vals.length}`); }
+  if (busca_id) {
+    const bid = parseInt(busca_id, 10);
+    if (!isNaN(bid)) { vals.push(bid); conditions.push(`l.busca_id = $${vals.length}`); }
+  }
+  if (email_only === 'true' || email_only === '1') conditions.push('l.tem_email = true');
+  return { conditions, vals };
+}
+
+// ── seed de dados de exemplo ──────────────────────────────────────────────────
+
+async function seed(adminId) {
+  const now = Date.now();
+  const buscasSeed = [
+    { nome:'Agências de marketing — Sul', tipo:'icp', status:'Ativa', ritmo:120, universo_est:2340,
+      criterios:{chips:['Setor: Agências de publicidade','UF: PR','Cidade: Curitiba','Porte: Médio']},
+      ultima_ativ: new Date(now - 2*60*1000), dias:30 },
+    { nome:'Indústrias alimentícias — GO/MG', tipo:'icp', status:'Ativa', ritmo:80, universo_est:1800,
+      criterios:{chips:['Setor: Indústria alimentícia','UF: GO','UF: MG','Porte: Grande']},
+      ultima_ativ: new Date(now - 6*60*1000), dias:25 },
+    { nome:'Clínicas médicas — capitais NE', tipo:'icp', status:'Ativa', ritmo:40, universo_est:540,
+      criterios:{chips:['Setor: Atividades de saúde','Região: Nordeste','Porte: Pequeno']},
+      ultima_ativ: new Date(now - 18*60*1000), dias:20 },
+    { nome:'Construtoras porte grande — SP', tipo:'icp', status:'Pausada', ritmo:0, universo_est:3200,
+      criterios:{chips:['Setor: Construção de edifícios','UF: SP','Porte: Grande']},
+      ultima_ativ: new Date(now - 2*60*60*1000), dias:45 },
+    { nome:'Escritórios de advocacia — DF', tipo:'icp', status:'Esgotada', ritmo:60, universo_est:540,
+      criterios:{chips:['Setor: Atividades jurídicas','UF: DF']},
+      ultima_ativ: new Date(now - 24*60*60*1000), dias:60 },
+    { nome:'Startups SaaS — semelhantes', tipo:'lookalike', status:'Ativa', ritmo:100, universo_est:1200,
+      criterios:{chips:['Modo: Lookalike','Setor: Software SaaS']},
+      ultima_ativ: new Date(now - 1*60*1000), dias:15 },
+    { nome:'Restaurantes — POA', tipo:'icp', status:'Encerrada', ritmo:0, universo_est:480,
+      criterios:{chips:['Setor: Restaurantes e bares','Cidade: Porto Alegre']},
+      ultima_ativ: new Date(now - 24*60*60*1000), dias:90 },
+  ];
+
+  const buscaIds = [];
+  for (const b of buscasSeed) {
+    const { rows:[row] } = await pool.query(
+      `INSERT INTO buscas (nome, tipo, status, criador_id, ritmo, criterios, universo_est, ultima_ativ, criado_em)
+       VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7,$8, now() - ($9 * interval '1 day')) RETURNING id`,
+      [b.nome, b.tipo, b.status, adminId, b.ritmo, JSON.stringify(b.criterios), b.universo_est, b.ultima_ativ, b.dias]
+    );
+    buscaIds.push(row.id);
+  }
+
+  const leadsRaw = [
+    {fantasia:'Pulse Marketing',razao:'Pulse Marketing Digital LTDA',cnpj:'18.402.551/0001-09',setor:'Agência de publicidade',cnae:'7311-4/00',porte:'Médio',cidade:'Curitiba',uf:'PR',decisor:'Ricardo Menezes',cargo:'Sócio-administrador',score:88,email:true,phone:true,status:'Qualificado',situacao:'Ativa',abertura:'12/03/2015',capital:'R$ 240.000',endereco:'R. Comendador Araújo, 499 — Batel',buscaIdx:1,mins:3},
+    {fantasia:'NovaTech Sistemas',razao:'NovaTech Soluções em Software LTDA',cnpj:'27.918.330/0001-44',setor:'Desenvolvimento de software',cnae:'6201-5/01',porte:'Médio',cidade:'São Paulo',uf:'SP',decisor:'Fernanda Lima',cargo:'Diretora de operações',score:81,email:true,phone:true,status:'Novo',situacao:'Ativa',abertura:'04/08/2017',capital:'R$ 500.000',endereco:'Av. Faria Lima, 2232 — Itaim',buscaIdx:6,mins:6},
+    {fantasia:'Verde Vale Alimentos',razao:'Verde Vale Indústria de Alimentos S.A.',cnpj:'09.221.764/0001-72',setor:'Indústria alimentícia',cnae:'1091-1/02',porte:'Grande',cidade:'Goiânia',uf:'GO',decisor:'Marcos Tavares',cargo:'Gerente comercial',score:64,email:true,phone:false,status:'Novo',situacao:'Ativa',abertura:'19/06/2009',capital:'R$ 3.200.000',endereco:'Rod. BR-153, km 12 — Distrito Ind.',buscaIdx:2,mins:9},
+    {fantasia:'Atlas Logística',razao:'Atlas Transportes e Logística LTDA',cnpj:'31.556.092/0001-18',setor:'Transporte rodoviário',cnae:'4930-2/02',porte:'Médio',cidade:'Joinville',uf:'SC',decisor:'Paulo Reis',cargo:'Diretor',score:73,email:true,phone:true,status:'Qualificado',situacao:'Ativa',abertura:'30/01/2013',capital:'R$ 850.000',endereco:'R. Otto Boehm, 1100 — América',buscaIdx:4,mins:12},
+    {fantasia:'Clínica Bem Estar',razao:'Bem Estar Serviços Médicos LTDA',cnpj:'22.044.871/0001-05',setor:'Atividades de saúde',cnae:'8630-5/03',porte:'Pequeno',cidade:'Recife',uf:'PE',decisor:'Dra. Camila Souza',cargo:'Sócia-proprietária',score:46,email:false,phone:true,status:'Incompleto',situacao:'Ativa',abertura:'22/11/2019',capital:'R$ 120.000',endereco:'Av. Boa Viagem, 3344 — Boa Viagem',buscaIdx:3,mins:15},
+    {fantasia:'Forte Construções',razao:'Forte Engenharia e Construções LTDA',cnpj:'14.880.213/0001-66',setor:'Construção de edifícios',cnae:'4120-4/00',porte:'Grande',cidade:'Belo Horizonte',uf:'MG',decisor:'Henrique Dias',cargo:'Diretor de obras',score:79,email:true,phone:true,status:'Enviado',situacao:'Ativa',abertura:'08/05/2008',capital:'R$ 5.000.000',endereco:'Av. do Contorno, 6061 — Funcionários',buscaIdx:4,mins:18},
+    {fantasia:'EcoSolar Energia',razao:'EcoSolar Energia Renovável LTDA',cnpj:'35.112.908/0001-30',setor:'Geração de energia solar',cnae:'3511-5/01',porte:'Médio',cidade:'Fortaleza',uf:'CE',decisor:'Juliana Castro',cargo:'CEO',score:91,email:true,phone:true,status:'Qualificado',situacao:'Ativa',abertura:'15/02/2018',capital:'R$ 1.100.000',endereco:'Av. Washington Soares, 909 — Edson Q.',buscaIdx:1,mins:21},
+    {fantasia:'Sabor & Cia',razao:'Sabor e Companhia Restaurantes LTDA',cnpj:'40.337.115/0001-92',setor:'Restaurantes',cnae:'5611-2/01',porte:'Pequeno',cidade:'Porto Alegre',uf:'RS',decisor:'André Klein',cargo:'Proprietário',score:52,email:false,phone:true,status:'Novo',situacao:'Ativa',abertura:'03/09/2021',capital:'R$ 80.000',endereco:'R. Padre Chagas, 415 — Moinhos',buscaIdx:7,mins:24},
+    {fantasia:'Mendes Advocacia',razao:'Mendes & Associados Advocacia',cnpj:'19.770.844/0001-51',setor:'Atividades jurídicas',cnae:'6911-7/01',porte:'Pequeno',cidade:'Brasília',uf:'DF',decisor:'Dr. Rafael Mendes',cargo:'Sócio-fundador',score:68,email:true,phone:false,status:'Novo',situacao:'Ativa',abertura:'27/07/2014',capital:'R$ 150.000',endereco:'SCS Quadra 9, Bloco C — Asa Sul',buscaIdx:5,mins:27},
+    {fantasia:'TechFix Assistência',razao:'TechFix Assistência Técnica LTDA',cnpj:'28.901.556/0001-23',setor:'Reparo de equipamentos',cnae:'9511-8/00',porte:'Pequeno',cidade:'Campinas',uf:'SP',decisor:'Bruno Almeida',cargo:'Gerente',score:41,email:true,phone:false,status:'Descartado',situacao:'Ativa',abertura:'11/04/2020',capital:'R$ 60.000',endereco:'Av. Norte-Sul, 1500 — Cambuí',buscaIdx:6,mins:30},
+  ];
+
+  for (let i = 0; i < leadsRaw.length; i++) {
+    const l = leadsRaw[i];
+    const dom = (l.fantasia||'').toLowerCase().replace(/[^a-z]/g,'');
+    const dd = l.uf==='SP'?'11':l.uf==='PR'?'41':'31';
+    const contatos = [];
+    if (l.email) contatos.push({tipo:'email',valor:`contato@${dom}.com.br`,fonte:'Validação SMTP',recencia:'verificado há 3 dias',selo:'verificado',validado:true});
+    if (l.phone) contatos.push({tipo:'telefone',valor:`+55 (${dd}) 9 8842-${3001+i}`,fonte:'Receita / operadora',recencia:'WhatsApp ativo',selo:'WhatsApp',validado:true});
+    contatos.push({tipo:'site',valor:`www.${dom}.com.br`,fonte:'Web crawl',recencia:l.score>70?'online':'sem resposta',selo:l.score>70?'online':'não verif.',validado:l.score>70});
+
+    const breakdown = [
+      {campo:'CNPJ ativo na Receita',delta:'+30',positivo:true},
+      {campo:'E-mail verificado (SMTP)',delta:l.email?'+22':'—',positivo:l.email},
+      {campo:'Telefone com WhatsApp',delta:l.phone?'+18':'—',positivo:l.phone},
+      {campo:'Decisor identificado',delta:'+15',positivo:true},
+      {campo:'Aderência ao setor do ICP',delta:l.score>70?'+12':'+6',positivo:true},
+      {campo:'Idade da empresa < 2 anos',delta:l.score<55?'−10':'0',positivo:false},
+    ];
+
+    const abordagem = i===0
+      ? 'A Pulse Marketing escala campanhas para clientes de médio porte e provavelmente sente o gargalo de prospecção qualificada. Aborde Ricardo destacando como o Hunter automatiza a entrada de leads B2B sem perder curadoria — alinhado ao posicionamento premium da agência.'
+      : `A ${l.fantasia} (${l.setor.toLowerCase()}, porte ${l.porte.toLowerCase()}) é um alvo aderente ao ICP. Aborde ${l.decisor.replace(/^(Dr|Dra)\.?\s*/,'').split(' ')[0]} reforçando ganho de eficiência comercial e dados de contato já validados, reduzindo o tempo até a primeira conversa.`;
+
+    await pool.query(
+      `INSERT INTO leads (busca_id,origem,estagio,fantasia,razao,cnpj,setor,cnae,porte,
+         cidade,uf,decisor,cargo,score,tem_email,tem_telefone,status,
+         situacao,abertura,capital,endereco,contatos,breakdown,swot,abordagem,
+         criado_em,atualizado_em)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
+               $22::jsonb,$23::jsonb,$24::jsonb,$25,
+               now() - ($26 * interval '1 minute'),
+               now() - ($26 * interval '1 minute'))`,
+      [buscaIds[l.buscaIdx-1],'icp','pronto',l.fantasia,l.razao,l.cnpj,l.setor,l.cnae,l.porte,
+       l.cidade,l.uf,l.decisor,l.cargo,l.score,l.email,l.phone,l.status,
+       l.situacao,l.abertura,l.capital,l.endereco,
+       JSON.stringify(contatos),JSON.stringify(breakdown),'{}',abordagem,l.mins]
+    );
+  }
+  console.log('[seed] 7 buscas e 10 leads inseridos.');
+}
+
+// ── inicialização ─────────────────────────────────────────────────────────────
+
 async function init() {
-  for (let tentativa = 1; tentativa <= 30; tentativa++) {
-    try {
-      await pool.query('SELECT 1');
-      break;
-    } catch (e) {
-      console.log(`[init] aguardando o banco... (${tentativa}/30)`);
+  for (let t = 1; t <= 30; t++) {
+    try { await pool.query('SELECT 1'); break; }
+    catch(e) {
+      console.log(`[init] aguardando banco... (${t}/30)`);
       await new Promise(r => setTimeout(r, 2000));
-      if (tentativa === 30) throw e;
+      if (t === 30) throw e;
     }
   }
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS usuarios (
       id            SERIAL PRIMARY KEY,
@@ -57,19 +178,74 @@ async function init() {
       criado_em     TIMESTAMPTZ NOT NULL DEFAULT now()
     );
   `);
-  const { rows } = await pool.query('SELECT COUNT(*)::int AS n FROM usuarios');
-  if (rows[0].n === 0) {
+
+  const { rows:[{n:uCount}] } = await pool.query('SELECT COUNT(*)::int AS n FROM usuarios');
+  if (uCount === 0) {
     const hash = await bcrypt.hash(ADMIN_PASSWORD, 12);
-    await pool.query(
-      'INSERT INTO usuarios (nome, email, senha_hash, papel) VALUES ($1,$2,$3,$4)',
-      [ADMIN_NAME, ADMIN_EMAIL, hash, 'Admin']
-    );
+    await pool.query('INSERT INTO usuarios (nome, email, senha_hash, papel) VALUES ($1,$2,$3,$4)',
+      [ADMIN_NAME, ADMIN_EMAIL, hash, 'Admin']);
     console.log(`[init] admin criado: ${ADMIN_EMAIL}`);
   }
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS buscas (
+      id            SERIAL PRIMARY KEY,
+      nome          TEXT NOT NULL,
+      tipo          TEXT NOT NULL DEFAULT 'icp'
+                      CHECK (tipo IN ('icp','cnpj','lookalike')),
+      status        TEXT NOT NULL DEFAULT 'Ativa'
+                      CHECK (status IN ('Ativa','Pausada','Esgotada','Encerrada')),
+      criador_id    INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+      ritmo         INTEGER NOT NULL DEFAULT 120,
+      criterios     JSONB NOT NULL DEFAULT '{}',
+      universo_est  INTEGER,
+      criado_em     TIMESTAMPTZ NOT NULL DEFAULT now(),
+      ultima_ativ   TIMESTAMPTZ
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS leads (
+      id            SERIAL PRIMARY KEY,
+      busca_id      INTEGER REFERENCES buscas(id) ON DELETE SET NULL,
+      origem        TEXT,
+      estagio       TEXT NOT NULL DEFAULT 'pronto'
+                      CHECK (estagio IN ('coletado','ativo','scored','enriquecido','pronto','descartado')),
+      fantasia      TEXT NOT NULL,
+      razao         TEXT,
+      cnpj          TEXT,
+      setor         TEXT, cnae TEXT, porte TEXT,
+      cidade        TEXT, uf TEXT,
+      decisor       TEXT, cargo TEXT,
+      score         INTEGER NOT NULL DEFAULT 0,
+      tem_email     BOOLEAN NOT NULL DEFAULT false,
+      tem_telefone  BOOLEAN NOT NULL DEFAULT false,
+      status        TEXT NOT NULL DEFAULT 'Novo'
+                      CHECK (status IN ('Novo','Qualificado','Incompleto','Descartado','Enviado')),
+      situacao      TEXT, abertura TEXT, capital TEXT, endereco TEXT,
+      contatos      JSONB NOT NULL DEFAULT '[]',
+      breakdown     JSONB NOT NULL DEFAULT '[]',
+      swot          JSONB NOT NULL DEFAULT '{}',
+      abordagem     TEXT,
+      criado_em     TIMESTAMPTZ NOT NULL DEFAULT now(),
+      atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_leads_status  ON leads(status);
+    CREATE INDEX IF NOT EXISTS idx_leads_estagio ON leads(estagio);
+    CREATE INDEX IF NOT EXISTS idx_leads_busca   ON leads(busca_id);
+  `);
+
+  const { rows:[{n:bCount}] } = await pool.query('SELECT COUNT(*)::int AS n FROM buscas');
+  if (bCount === 0) {
+    const { rows:[admin] } = await pool.query('SELECT id FROM usuarios LIMIT 1');
+    await seed(admin?.id || null);
+  }
+
   console.log('[init] banco pronto.');
 }
 
-// ---- helpers de sessão ----
+// ── sessão ────────────────────────────────────────────────────────────────────
+
 function setSession(res, user) {
   const token = jwt.sign(
     { id: user.id, nome: user.nome, email: user.email, papel: user.papel },
@@ -77,9 +253,7 @@ function setSession(res, user) {
     { expiresIn: `${SESSION_HOURS}h` }
   );
   res.cookie(COOKIE, token, {
-    httpOnly: true,
-    secure: true,
-    sameSite: 'lax',
+    httpOnly: true, secure: true, sameSite: 'lax',
     maxAge: SESSION_HOURS * 3600 * 1000,
   });
 }
@@ -91,7 +265,11 @@ function getUser(req) {
 function requireAuth(req, res, next) {
   const u = getUser(req);
   if (!u) return res.status(401).json({ erro: 'não autenticado' });
-  req.user = u;
+  req.user = u; next();
+}
+function requireEditor(req, res, next) {
+  if (!req.user || !['Admin','Operador'].includes(req.user.papel))
+    return res.status(403).json({ erro: 'sem permissão' });
   next();
 }
 function requireAdmin(req, res, next) {
@@ -100,16 +278,21 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+// ── app ───────────────────────────────────────────────────────────────────────
+
 const app = express();
-app.set('trust proxy', 1); // atrás do Traefik
+app.set('trust proxy', 1);
 app.use(express.json());
 app.use(cookieParser());
 
-// ---- healthcheck público (verificação de deploy) ----
-app.get('/api/health', (req, res) => res.json({ ok: true, versao: 'fase1', ts: new Date().toISOString() }));
+// healthcheck
+app.get('/api/health', (req, res) =>
+  res.json({ ok: true, versao: 'fase2', ts: new Date().toISOString() })
+);
 
-// ---- API: autenticação ----
-const loginLimiter = rateLimit({ windowMs: 5 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false });
+// ── API: auth ─────────────────────────────────────────────────────────────────
+
+const loginLimiter = rateLimit({ windowMs: 5*60*1000, max: 10, standardHeaders: true, legacyHeaders: false });
 
 app.post('/api/auth/login', loginLimiter, async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
@@ -119,15 +302,11 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
     const { rows } = await pool.query('SELECT * FROM usuarios WHERE email=$1', [email]);
     const user = rows[0];
     if (!user || !user.ativo) return res.status(401).json({ erro: 'credenciais inválidas' });
-    const ok = await bcrypt.compare(senha, user.senha_hash);
-    if (!ok) return res.status(401).json({ erro: 'credenciais inválidas' });
+    if (!await bcrypt.compare(senha, user.senha_hash)) return res.status(401).json({ erro: 'credenciais inválidas' });
     await pool.query('UPDATE usuarios SET ultimo_acesso=now() WHERE id=$1', [user.id]);
     setSession(res, user);
     res.json({ nome: user.nome, email: user.email, papel: user.papel });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ erro: 'erro interno' });
-  }
+  } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
 app.post('/api/auth/logout', (req, res) => {
@@ -135,11 +314,12 @@ app.post('/api/auth/logout', (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/auth/me', requireAuth, (req, res) => {
-  res.json({ nome: req.user.nome, email: req.user.email, papel: req.user.papel });
-});
+app.get('/api/auth/me', requireAuth, (req, res) =>
+  res.json({ id: req.user.id, nome: req.user.nome, email: req.user.email, papel: req.user.papel })
+);
 
-// ---- API: usuários (admin) ----
+// ── API: usuários ─────────────────────────────────────────────────────────────
+
 app.get('/api/usuarios', requireAuth, requireAdmin, async (req, res) => {
   const { rows } = await pool.query(
     'SELECT id, nome, email, papel, ativo, ultimo_acesso, criado_em FROM usuarios ORDER BY criado_em'
@@ -150,7 +330,7 @@ app.get('/api/usuarios', requireAuth, requireAdmin, async (req, res) => {
 app.post('/api/usuarios', requireAuth, requireAdmin, async (req, res) => {
   const nome = String(req.body.nome || '').trim();
   const email = String(req.body.email || '').trim().toLowerCase();
-  const papel = ['Admin', 'Operador', 'Visualizador'].includes(req.body.papel) ? req.body.papel : 'Operador';
+  const papel = ['Admin','Operador','Visualizador'].includes(req.body.papel) ? req.body.papel : 'Operador';
   let senha = String(req.body.senha || '').trim();
   if (!nome || !email) return res.status(400).json({ erro: 'informe nome e e-mail' });
   if (!senha) senha = Math.random().toString(36).slice(2, 10) + 'A1!';
@@ -161,24 +341,22 @@ app.post('/api/usuarios', requireAuth, requireAdmin, async (req, res) => {
       [nome, email, hash, papel]
     );
     res.status(201).json({ ...rows[0], senha_provisoria: senha });
-  } catch (e) {
+  } catch(e) {
     if (e.code === '23505') return res.status(409).json({ erro: 'e-mail já cadastrado' });
-    console.error(e);
-    res.status(500).json({ erro: 'erro interno' });
+    console.error(e); res.status(500).json({ erro: 'erro interno' });
   }
 });
 
 app.patch('/api/usuarios/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   const sets = [], vals = [];
-  if (typeof req.body.ativo === 'boolean') { sets.push(`ativo=$${sets.length + 1}`); vals.push(req.body.ativo); }
-  if (['Admin', 'Operador', 'Visualizador'].includes(req.body.papel)) { sets.push(`papel=$${sets.length + 1}`); vals.push(req.body.papel); }
-  if (req.body.senha) { sets.push(`senha_hash=$${sets.length + 1}`); vals.push(await bcrypt.hash(String(req.body.senha), 12)); }
+  if (typeof req.body.ativo === 'boolean') { sets.push(`ativo=$${sets.length+1}`); vals.push(req.body.ativo); }
+  if (['Admin','Operador','Visualizador'].includes(req.body.papel)) { sets.push(`papel=$${sets.length+1}`); vals.push(req.body.papel); }
+  if (req.body.senha) { sets.push(`senha_hash=$${sets.length+1}`); vals.push(await bcrypt.hash(String(req.body.senha), 12)); }
   if (!sets.length) return res.status(400).json({ erro: 'nada para atualizar' });
   vals.push(id);
   const { rows } = await pool.query(
-    `UPDATE usuarios SET ${sets.join(', ')} WHERE id=$${vals.length} RETURNING id, nome, email, papel, ativo`,
-    vals
+    `UPDATE usuarios SET ${sets.join(', ')} WHERE id=$${vals.length} RETURNING id, nome, email, papel, ativo`, vals
   );
   if (!rows[0]) return res.status(404).json({ erro: 'não encontrado' });
   res.json(rows[0]);
@@ -191,11 +369,213 @@ app.delete('/api/usuarios/:id', requireAuth, requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
-// ---- arquivos públicos (sem login): tela de login + logo ----
+// ── API: dashboard ────────────────────────────────────────────────────────────
+
+app.get('/api/dashboard', requireAuth, async (req, res) => {
+  try {
+    const [metricasRes, buscasRes, atividadeRes] = await Promise.all([
+      pool.query(`SELECT
+        (SELECT COUNT(*)::int FROM buscas WHERE status='Ativa') AS buscas_ativas,
+        (SELECT COUNT(*)::int FROM leads) AS leads_total,
+        (SELECT COUNT(*)::int FROM leads WHERE status='Qualificado') AS qualificados,
+        (SELECT COUNT(*)::int FROM leads WHERE status='Enviado') AS enviados`),
+      pool.query(`
+        SELECT b.id, b.nome, b.ritmo, b.status, b.ultima_ativ,
+          COUNT(l.id)::int AS encontrados
+        FROM buscas b LEFT JOIN leads l ON l.busca_id = b.id
+        WHERE b.status = 'Ativa'
+        GROUP BY b.id ORDER BY b.ultima_ativ DESC NULLS LAST LIMIT 5`),
+      pool.query(`SELECT fantasia, cidade, uf, score, criado_em FROM leads ORDER BY criado_em DESC LIMIT 5`),
+    ]);
+    res.json({
+      metricas: metricasRes.rows[0],
+      buscas_ativas: buscasRes.rows.map(b => ({ ...b, health: computeHealth(b) })),
+      atividade: atividadeRes.rows,
+    });
+  } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// ── API: buscas ───────────────────────────────────────────────────────────────
+
+app.get('/api/buscas', requireAuth, async (req, res) => {
+  try {
+    const { status, q } = req.query;
+    const conds = [], vals = [];
+    if (status) { vals.push(status); conds.push(`b.status=$${vals.length}`); }
+    if (q && q.trim()) { vals.push(`%${q.trim()}%`); conds.push(`b.nome ILIKE $${vals.length}`); }
+    const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
+    const { rows } = await pool.query(`
+      SELECT b.id, b.nome, b.tipo, b.status, b.ritmo, b.criterios, b.ultima_ativ, b.criado_em,
+        u.nome AS criador_nome,
+        COUNT(l.id)::int AS encontrados,
+        COUNT(l.id) FILTER (WHERE l.status='Qualificado')::int AS qualificados,
+        COUNT(l.id) FILTER (WHERE l.status='Enviado')::int AS enviados
+      FROM buscas b
+      LEFT JOIN usuarios u ON u.id = b.criador_id
+      LEFT JOIN leads l ON l.busca_id = b.id
+      ${where} GROUP BY b.id, u.nome ORDER BY b.criado_em DESC`, vals);
+    res.json(rows.map(b => ({ ...b, health: computeHealth(b) })));
+  } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+app.post('/api/buscas', requireAuth, requireEditor, async (req, res) => {
+  const nome = String(req.body.nome || '').trim();
+  if (!nome) return res.status(400).json({ erro: 'nome é obrigatório' });
+  const tipo = ['icp','cnpj','lookalike'].includes(req.body.tipo) ? req.body.tipo : 'icp';
+  const ritmo = typeof req.body.ritmo === 'number' ? req.body.ritmo : 120;
+  const criterios = req.body.criterios || {};
+  try {
+    const { rows:[b] } = await pool.query(
+      `INSERT INTO buscas (nome, tipo, ritmo, criterios, criador_id, ultima_ativ)
+       VALUES ($1,$2,$3,$4::jsonb,$5,now()) RETURNING *`,
+      [nome, tipo, ritmo, JSON.stringify(criterios), req.user.id]
+    );
+    res.status(201).json({ ...b, health: computeHealth(b), criador_nome: req.user.nome });
+  } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+app.get('/api/buscas/:id', requireAuth, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
+  try {
+    const [bRow, leadsRow] = await Promise.all([
+      pool.query(`
+        SELECT b.*, u.nome AS criador_nome,
+          COUNT(l.id)::int AS encontrados,
+          COUNT(l.id) FILTER (WHERE l.status='Qualificado')::int AS qualificados,
+          COUNT(l.id) FILTER (WHERE l.status='Incompleto')::int AS incompletos,
+          COUNT(l.id) FILTER (WHERE l.status='Descartado')::int AS descartados,
+          COUNT(l.id) FILTER (WHERE l.status='Enviado')::int AS enviados
+        FROM buscas b LEFT JOIN usuarios u ON u.id=b.criador_id
+        LEFT JOIN leads l ON l.busca_id=b.id
+        WHERE b.id=$1 GROUP BY b.id, u.nome`, [id]),
+      pool.query(`SELECT id, fantasia, decisor, cidade, uf, score, status
+        FROM leads WHERE busca_id=$1 ORDER BY score DESC LIMIT 20`, [id]),
+    ]);
+    if (!bRow.rows[0]) return res.status(404).json({ erro: 'não encontrada' });
+    res.json({ ...bRow.rows[0], health: computeHealth(bRow.rows[0]), leads: leadsRow.rows });
+  } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+app.patch('/api/buscas/:id', requireAuth, requireEditor, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
+  const sets = [], vals = [];
+  if (typeof req.body.ritmo === 'number') { sets.push(`ritmo=$${sets.length+1}`); vals.push(req.body.ritmo); }
+  if (['Ativa','Pausada','Esgotada','Encerrada'].includes(req.body.status)) {
+    sets.push(`status=$${sets.length+1}`); vals.push(req.body.status);
+  }
+  if (!sets.length) return res.status(400).json({ erro: 'nada para atualizar' });
+  vals.push(id);
+  try {
+    const { rows:[b] } = await pool.query(
+      `UPDATE buscas SET ${sets.join(',')} WHERE id=$${vals.length} RETURNING *`, vals
+    );
+    if (!b) return res.status(404).json({ erro: 'não encontrada' });
+    res.json({ ...b, health: computeHealth(b) });
+  } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// ── API: leads ────────────────────────────────────────────────────────────────
+
+app.get('/api/leads', requireAuth, async (req, res) => {
+  try {
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const perPage = Math.min(100, Math.max(1, parseInt(req.query.per_page, 10) || 50));
+    const { conditions, vals } = buildLeadsFilter(req.query);
+    const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+    const [countRes, dataRes] = await Promise.all([
+      pool.query(`SELECT COUNT(*)::int AS total FROM leads l ${where}`, vals),
+      pool.query(`SELECT l.id, l.fantasia, l.razao, l.setor, l.porte, l.cidade, l.uf,
+        l.decisor, l.cargo, l.score, l.tem_email, l.tem_telefone, l.status, l.busca_id
+        FROM leads l ${where} ORDER BY l.score DESC, l.id
+        LIMIT $${vals.length+1} OFFSET $${vals.length+2}`,
+        [...vals, perPage, (page-1)*perPage]),
+    ]);
+    const total = countRes.rows[0].total;
+    res.json({ leads: dataRes.rows, total, page, per_page: perPage, pages: Math.ceil(total/perPage) || 1 });
+  } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// export DEVE vir antes de /:id
+app.get('/api/leads/export', requireAuth, async (req, res) => {
+  try {
+    let rows;
+    const idsParam = req.query.ids;
+    if (idsParam) {
+      const ids = String(idsParam).split(',').map(x => parseInt(x,10)).filter(x => !isNaN(x));
+      if (!ids.length) return res.status(400).json({ erro: 'ids inválidos' });
+      const { rows:r } = await pool.query(
+        `SELECT fantasia,razao,cnpj,setor,porte,cidade,uf,decisor,cargo,score,status,tem_email,tem_telefone
+         FROM leads WHERE id = ANY($1::int[]) ORDER BY score DESC`, [ids]);
+      rows = r;
+    } else {
+      const { conditions, vals } = buildLeadsFilter(req.query);
+      const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+      const { rows:r } = await pool.query(
+        `SELECT fantasia,razao,cnpj,setor,porte,cidade,uf,decisor,cargo,score,status,tem_email,tem_telefone
+         FROM leads l ${where} ORDER BY score DESC`, vals);
+      rows = r;
+    }
+    const esc = v => `"${String(v||'').replace(/"/g,'""')}"`;
+    const csv = [
+      ['Empresa','Razão Social','CNPJ','Setor','Porte','Cidade','UF','Decisor','Cargo','Score','Status','Tem E-mail','Tem Telefone'].join(';'),
+      ...rows.map(r => [esc(r.fantasia),esc(r.razao),esc(r.cnpj),esc(r.setor),esc(r.porte),
+        esc(r.cidade),esc(r.uf),esc(r.decisor),esc(r.cargo),r.score,esc(r.status),
+        r.tem_email?'Sim':'Não',r.tem_telefone?'Sim':'Não'].join(';')),
+    ].join('\r\n');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="leads.csv"');
+    res.send('﻿' + csv);
+  } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+app.get('/api/leads/:id', requireAuth, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
+  try {
+    const { rows:[l] } = await pool.query(
+      `SELECT l.*, b.nome AS busca_nome FROM leads l
+       LEFT JOIN buscas b ON b.id=l.busca_id WHERE l.id=$1`, [id]);
+    if (!l) return res.status(404).json({ erro: 'não encontrado' });
+    res.json(l);
+  } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+app.patch('/api/leads/:id', requireAuth, requireEditor, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
+  const { status } = req.body;
+  if (!['Novo','Qualificado','Incompleto','Descartado','Enviado'].includes(status))
+    return res.status(400).json({ erro: 'status inválido' });
+  try {
+    const { rows:[l] } = await pool.query(
+      `UPDATE leads SET status=$1, atualizado_em=now() WHERE id=$2 RETURNING *`, [status, id]);
+    if (!l) return res.status(404).json({ erro: 'não encontrado' });
+    res.json(l);
+  } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+app.post('/api/leads/acoes', requireAuth, requireEditor, async (req, res) => {
+  const { ids, status } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ erro: 'ids obrigatório' });
+  if (!['Novo','Qualificado','Incompleto','Descartado','Enviado'].includes(status))
+    return res.status(400).json({ erro: 'status inválido' });
+  const idsInt = ids.map(x => parseInt(x,10)).filter(x => !isNaN(x));
+  if (!idsInt.length) return res.status(400).json({ erro: 'ids inválidos' });
+  try {
+    await pool.query(
+      `UPDATE leads SET status=$1, atualizado_em=now() WHERE id = ANY($2::int[])`,
+      [status, idsInt]);
+    res.json({ ok: true, atualizados: idsInt.length });
+  } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// ── arquivos estáticos ────────────────────────────────────────────────────────
+
 app.get('/login.html', (req, res) => res.sendFile(path.join(PUBLIC, 'login.html')));
 app.get('/hunter_logo_icon.png', (req, res) => res.sendFile(path.join(PUBLIC, 'hunter_logo_icon.png')));
 
-// ---- arquivos protegidos (exigem login): o app e o React ----
 function gate(req, res, next) {
   if (getUser(req)) return next();
   return res.status(401).send('Faça login para acessar.');
@@ -203,7 +583,6 @@ function gate(req, res, next) {
 app.get('/app.js', gate, (req, res) => res.sendFile(path.join(PUBLIC, 'app.js')));
 app.use('/vendor', gate, express.static(path.join(PUBLIC, 'vendor')));
 
-// ---- raiz e fallback: login.html (deslogado) ou app.html (logado) ----
 app.get('*', (req, res) => {
   if (req.path.startsWith('/api/')) return res.status(404).json({ erro: 'rota não encontrada' });
   return res.sendFile(path.join(PUBLIC, getUser(req) ? 'app.html' : 'login.html'));

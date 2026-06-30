@@ -358,286 +358,30 @@ function ContactIcons({
   }, ok(email, 'M3 5h18v14H3zM3 7l9 6 9-6', 'E-mail'), ok(phone, 'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.6A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.3 1.8.6 2.6a2 2 0 0 1-.5 2.1L8 9.6a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.5c.8.3 1.7.5 2.6.6a2 2 0 0 1 1.7 2z', 'Telefone'));
 }
 
-// ── raw data ──────────────────────────────────────────────────────────────────
-const RAW_LEADS = [{
-  id: 1,
-  fantasia: 'Pulse Marketing',
-  razao: 'Pulse Marketing Digital LTDA',
-  cnpj: '18.402.551/0001-09',
-  setor: 'Agência de publicidade',
-  cnae: '7311-4/00',
-  porte: 'Médio',
-  cidade: 'Curitiba',
-  uf: 'PR',
-  decisor: 'Ricardo Menezes',
-  cargo: 'Sócio-administrador',
-  score: 88,
-  email: true,
-  phone: true,
-  status: 'Qualificado',
-  situacao: 'Ativa',
-  abertura: '12/03/2015',
-  capital: 'R$ 240.000',
-  endereco: 'R. Comendador Araújo, 499 — Batel'
-}, {
-  id: 2,
-  fantasia: 'NovaTech Sistemas',
-  razao: 'NovaTech Soluções em Software LTDA',
-  cnpj: '27.918.330/0001-44',
-  setor: 'Desenvolvimento de software',
-  cnae: '6201-5/01',
-  porte: 'Médio',
-  cidade: 'São Paulo',
-  uf: 'SP',
-  decisor: 'Fernanda Lima',
-  cargo: 'Diretora de operações',
-  score: 81,
-  email: true,
-  phone: true,
-  status: 'Novo',
-  situacao: 'Ativa',
-  abertura: '04/08/2017',
-  capital: 'R$ 500.000',
-  endereco: 'Av. Faria Lima, 2232 — Itaim'
-}, {
-  id: 3,
-  fantasia: 'Verde Vale Alimentos',
-  razao: 'Verde Vale Indústria de Alimentos S.A.',
-  cnpj: '09.221.764/0001-72',
-  setor: 'Indústria alimentícia',
-  cnae: '1091-1/02',
-  porte: 'Grande',
-  cidade: 'Goiânia',
-  uf: 'GO',
-  decisor: 'Marcos Tavares',
-  cargo: 'Gerente comercial',
-  score: 64,
-  email: true,
-  phone: false,
-  status: 'Novo',
-  situacao: 'Ativa',
-  abertura: '19/06/2009',
-  capital: 'R$ 3.200.000',
-  endereco: 'Rod. BR-153, km 12 — Distrito Ind.'
-}, {
-  id: 4,
-  fantasia: 'Atlas Logística',
-  razao: 'Atlas Transportes e Logística LTDA',
-  cnpj: '31.556.092/0001-18',
-  setor: 'Transporte rodoviário',
-  cnae: '4930-2/02',
-  porte: 'Médio',
-  cidade: 'Joinville',
-  uf: 'SC',
-  decisor: 'Paulo Reis',
-  cargo: 'Diretor',
-  score: 73,
-  email: true,
-  phone: true,
-  status: 'Qualificado',
-  situacao: 'Ativa',
-  abertura: '30/01/2013',
-  capital: 'R$ 850.000',
-  endereco: 'R. Otto Boehm, 1100 — América'
-}, {
-  id: 5,
-  fantasia: 'Clínica Bem Estar',
-  razao: 'Bem Estar Serviços Médicos LTDA',
-  cnpj: '22.044.871/0001-05',
-  setor: 'Atividades de saúde',
-  cnae: '8630-5/03',
-  porte: 'Pequeno',
-  cidade: 'Recife',
-  uf: 'PE',
-  decisor: 'Dra. Camila Souza',
-  cargo: 'Sócia-proprietária',
-  score: 46,
-  email: false,
-  phone: true,
-  status: 'Incompleto',
-  situacao: 'Ativa',
-  abertura: '22/11/2019',
-  capital: 'R$ 120.000',
-  endereco: 'Av. Boa Viagem, 3344 — Boa Viagem'
-}, {
-  id: 6,
-  fantasia: 'Forte Construções',
-  razao: 'Forte Engenharia e Construções LTDA',
-  cnpj: '14.880.213/0001-66',
-  setor: 'Construção de edifícios',
-  cnae: '4120-4/00',
-  porte: 'Grande',
-  cidade: 'Belo Horizonte',
-  uf: 'MG',
-  decisor: 'Henrique Dias',
-  cargo: 'Diretor de obras',
-  score: 79,
-  email: true,
-  phone: true,
-  status: 'Enviado',
-  situacao: 'Ativa',
-  abertura: '08/05/2008',
-  capital: 'R$ 5.000.000',
-  endereco: 'Av. do Contorno, 6061 — Funcionários'
-}, {
-  id: 7,
-  fantasia: 'EcoSolar Energia',
-  razao: 'EcoSolar Energia Renovável LTDA',
-  cnpj: '35.112.908/0001-30',
-  setor: 'Geração de energia solar',
-  cnae: '3511-5/01',
-  porte: 'Médio',
-  cidade: 'Fortaleza',
-  uf: 'CE',
-  decisor: 'Juliana Castro',
-  cargo: 'CEO',
-  score: 91,
-  email: true,
-  phone: true,
-  status: 'Qualificado',
-  situacao: 'Ativa',
-  abertura: '15/02/2018',
-  capital: 'R$ 1.100.000',
-  endereco: 'Av. Washington Soares, 909 — Edson Q.'
-}, {
-  id: 8,
-  fantasia: 'Sabor & Cia',
-  razao: 'Sabor e Companhia Restaurantes LTDA',
-  cnpj: '40.337.115/0001-92',
-  setor: 'Restaurantes',
-  cnae: '5611-2/01',
-  porte: 'Pequeno',
-  cidade: 'Porto Alegre',
-  uf: 'RS',
-  decisor: 'André Klein',
-  cargo: 'Proprietário',
-  score: 52,
-  email: false,
-  phone: true,
-  status: 'Novo',
-  situacao: 'Ativa',
-  abertura: '03/09/2021',
-  capital: 'R$ 80.000',
-  endereco: 'R. Padre Chagas, 415 — Moinhos'
-}, {
-  id: 9,
-  fantasia: 'Mendes Advocacia',
-  razao: 'Mendes & Associados Advocacia',
-  cnpj: '19.770.844/0001-51',
-  setor: 'Atividades jurídicas',
-  cnae: '6911-7/01',
-  porte: 'Pequeno',
-  cidade: 'Brasília',
-  uf: 'DF',
-  decisor: 'Dr. Rafael Mendes',
-  cargo: 'Sócio-fundador',
-  score: 68,
-  email: true,
-  phone: false,
-  status: 'Novo',
-  situacao: 'Ativa',
-  abertura: '27/07/2014',
-  capital: 'R$ 150.000',
-  endereco: 'SCS Quadra 9, Bloco C — Asa Sul'
-}, {
-  id: 10,
-  fantasia: 'TechFix Assistência',
-  razao: 'TechFix Assistência Técnica LTDA',
-  cnpj: '28.901.556/0001-23',
-  setor: 'Reparo de equipamentos',
-  cnae: '9511-8/00',
-  porte: 'Pequeno',
-  cidade: 'Campinas',
-  uf: 'SP',
-  decisor: 'Bruno Almeida',
-  cargo: 'Gerente',
-  score: 41,
-  email: true,
-  phone: false,
-  status: 'Descartado',
-  situacao: 'Ativa',
-  abertura: '11/04/2020',
-  capital: 'R$ 60.000',
-  endereco: 'Av. Norte-Sul, 1500 — Cambuí'
-}];
-const BUSCAS_RAW = [{
-  id: 1,
-  nome: 'Agências de marketing — Sul',
-  status: 'Ativa',
-  criador: 'Vinícius A.',
-  ritmo: 120,
-  enc: 342,
-  qual: 128,
-  crm: 64,
-  ultima: 'há 2 min',
-  health: 'green'
-}, {
-  id: 2,
-  nome: 'Indústrias alimentícias — GO/MG',
-  status: 'Ativa',
-  criador: 'Marina C.',
-  ritmo: 80,
-  enc: 198,
-  qual: 74,
-  crm: 31,
-  ultima: 'há 6 min',
-  health: 'green'
-}, {
-  id: 3,
-  nome: 'Clínicas médicas — capitais NE',
-  status: 'Ativa',
-  criador: 'Vinícius A.',
-  ritmo: 40,
-  enc: 87,
-  qual: 29,
-  crm: 12,
-  ultima: 'há 18 min',
-  health: 'amber'
-}, {
-  id: 4,
-  nome: 'Construtoras porte grande — SP',
-  status: 'Pausada',
-  criador: 'Rafael M.',
-  ritmo: 0,
-  enc: 412,
-  qual: 163,
-  crm: 88,
-  ultima: 'há 2h',
-  health: 'red'
-}, {
-  id: 5,
-  nome: 'Escritórios de advocacia — DF',
-  status: 'Esgotada',
-  criador: 'Marina C.',
-  ritmo: 60,
-  enc: 540,
-  qual: 201,
-  crm: 140,
-  ultima: 'há 1 dia',
-  health: 'amber'
-}, {
-  id: 6,
-  nome: 'Startups SaaS — semelhantes',
-  status: 'Ativa',
-  criador: 'Vinícius A.',
-  ritmo: 100,
-  enc: 233,
-  qual: 97,
-  crm: 41,
-  ultima: 'há 1 min',
-  health: 'green'
-}, {
-  id: 7,
-  nome: 'Restaurantes — POA',
-  status: 'Encerrada',
-  criador: 'Rafael M.',
-  ritmo: 0,
-  enc: 128,
-  qual: 44,
-  crm: 20,
-  ultima: 'há 1 dia',
-  health: 'gray'
-}];
+// ── API helpers ───────────────────────────────────────────────────────────────
+function timeAgo(ts) {
+  if (!ts) return '—';
+  const diff = Date.now() - new Date(ts).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return 'agora mesmo';
+  if (m < 60) return 'há ' + m + ' min';
+  const h = Math.floor(m / 60);
+  if (h < 24) return 'há ' + h + 'h';
+  const d = Math.floor(h / 24);
+  return 'há ' + d + ' dia' + (d > 1 ? 's' : '');
+}
+function fmtNum(n) {
+  const num = parseInt(n) || 0;
+  return num.toLocaleString('pt-BR');
+}
+function hasEmail(contatos) {
+  if (!Array.isArray(contatos)) return false;
+  return contatos.some(c => c.tipo === 'email');
+}
+function hasPhone(contatos) {
+  if (!Array.isArray(contatos)) return false;
+  return contatos.some(c => c.tipo === 'telefone');
+}
 const statusColors = {
   Qualificado: C.gold,
   Novo: C.blue,
@@ -657,95 +401,6 @@ const healthColors = {
   red: C.red,
   gray: C.gray
 };
-function leadDetail(l) {
-  const dom = (l.fantasia || '').toLowerCase().replace(/[^a-z]/g, '');
-  const dd = l.uf === 'SP' ? '11' : l.uf === 'PR' ? '41' : '31';
-  const seloVerif = {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 4,
-    fontSize: 10,
-    fontWeight: 600,
-    padding: '3px 7px',
-    borderRadius: 6,
-    background: C.green + '1f',
-    color: C.green,
-    whiteSpace: 'nowrap'
-  };
-  const seloAmber = {
-    ...seloVerif,
-    background: C.amber + '1f',
-    color: C.amber
-  };
-  const contatos = [];
-  if (l.email) contatos.push({
-    type: 'email',
-    color: C.blue,
-    valor: 'contato@' + dom + '.com.br',
-    fonte: 'Validação SMTP',
-    recencia: 'verificado há 3 dias',
-    seloStyle: seloVerif,
-    seloLabel: 'verificado'
-  });
-  if (l.phone) contatos.push({
-    type: 'phone',
-    color: C.green,
-    valor: '+55 (' + dd + ') 9 8842-' + (3000 + l.id),
-    fonte: 'Receita / operadora',
-    recencia: 'WhatsApp ativo',
-    seloStyle: seloVerif,
-    seloLabel: 'WhatsApp'
-  });
-  contatos.push({
-    type: 'web',
-    color: C.cyan,
-    valor: 'www.' + dom + '.com.br',
-    fonte: 'Web crawl',
-    recencia: l.score > 70 ? 'online' : 'sem resposta',
-    seloStyle: l.score > 70 ? seloVerif : seloAmber,
-    seloLabel: l.score > 70 ? 'online' : 'não verif.'
-  });
-  const abordMap = {
-    1: 'A Pulse Marketing escala campanhas para clientes de médio porte e provavelmente sente o gargalo de prospecção qualificada. Aborde Ricardo destacando como o Hunter automatiza a entrada de leads B2B sem perder curadoria — alinhado ao posicionamento premium da agência.'
-  };
-  const abordagem = abordMap[l.id] || `A ${l.fantasia} (${l.setor.toLowerCase()}, porte ${l.porte.toLowerCase()}) é um alvo aderente ao ICP. Aborde ${l.decisor.split(' ')[0]} reforçando ganho de eficiência comercial e dados de contato já validados, reduzindo o tempo até a primeira conversa.`;
-  const breakdown = [{
-    campo: 'CNPJ ativo na Receita',
-    delta: '+30',
-    up: true
-  }, {
-    campo: 'E-mail verificado (SMTP)',
-    delta: l.email ? '+22' : '—',
-    up: l.email
-  }, {
-    campo: 'Telefone com WhatsApp',
-    delta: l.phone ? '+18' : '—',
-    up: l.phone
-  }, {
-    campo: 'Decisor identificado',
-    delta: '+15',
-    up: true
-  }, {
-    campo: 'Aderência ao setor do ICP',
-    delta: l.score > 70 ? '+12' : '+6',
-    up: true
-  }, {
-    campo: 'Idade da empresa < 2 anos',
-    delta: l.score < 55 ? '−10' : '0',
-    up: false
-  }].map(b => ({
-    ...b,
-    color: b.delta === '—' ? C.gray : b.delta.startsWith('−') ? C.red : b.up ? C.green : C.gray
-  }));
-  const decisorIni = l.decisor.replace(/^(Dr|Dra)\.?\s*/, '').split(' ').slice(0, 2).map(w => w[0]).join('');
-  return {
-    ...l,
-    contatos,
-    abordagem,
-    breakdown,
-    decisorIni
-  };
-}
 
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 const NAV_MAIN = [{
@@ -781,8 +436,12 @@ const NAV_ADMIN = [{
 function Sidebar({
   screen,
   onNav,
-  onLogout
+  onLogout,
+  user
 }) {
+  const nome = user?.nome || '…';
+  const papel = user?.papel || '';
+  const ini = nome.split(' ').slice(0, 2).map(w => w[0]).join('');
   const navStyle = key => {
     const active = screen === key || key === 'buscas' && screen === 'buscaDetail';
     return {
@@ -894,7 +553,7 @@ function Sidebar({
       fontWeight: 600,
       flexShrink: 0
     }
-  }, "VA"), /*#__PURE__*/React.createElement("div", {
+  }, ini), /*#__PURE__*/React.createElement("div", {
     style: {
       lineHeight: 1.3,
       overflow: 'hidden'
@@ -907,12 +566,12 @@ function Sidebar({
       overflow: 'hidden',
       textOverflow: 'ellipsis'
     }
-  }, "Vin\xEDcius Aguirre"), /*#__PURE__*/React.createElement("div", {
+  }, nome), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: 'var(--faint)'
     }
-  }, "Admin \xB7 sair"))));
+  }, papel, " \xB7 sair"))));
 }
 
 // ── Topbar ────────────────────────────────────────────────────────────────────
@@ -931,9 +590,11 @@ function Topbar({
   screen,
   theme,
   onTheme,
-  onNova
+  onNova,
+  user
 }) {
   const [title, sub] = TITLES[screen] || ['', ''];
+  const ini = (user?.nome || '').split(' ').slice(0, 2).map(w => w[0]).join('') || 'U';
   return /*#__PURE__*/React.createElement("header", {
     style: {
       height: 64,
@@ -1043,76 +704,70 @@ function Topbar({
       fontWeight: 600,
       cursor: 'pointer'
     }
-  }, "VA")));
+  }, ini)));
 }
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 function Dashboard({
-  onOpenBusca,
-  onNova
+  onOpenBusca
 }) {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    fetch('/api/dashboard', {
+      credentials: 'same-origin'
+    }).then(r => r.json()).then(setData).catch(() => {});
+  }, []);
+  if (!data) {
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: 'var(--faint)',
+        padding: 40,
+        textAlign: 'center'
+      }
+    }, "Carregando\u2026");
+  }
+  const {
+    metricas,
+    buscasAtivas,
+    atividade
+  } = data;
+  const qual = parseInt(metricas.leadsQualificados) || 0;
+  const enc = parseInt(metricas.leadsEncontrados) || 1;
+  const taxaQ = Math.round(qual / enc * 100);
   const metrics = [{
     label: 'Buscas ativas',
-    value: '7',
+    value: fmtNum(metricas.buscasAtivas),
     icon: 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-4.3-4.3',
     iColor: C.blue,
-    trend: '+2',
-    trendSub: 'esta semana',
-    tColor: C.green
+    trend: 'em produção',
+    tColor: 'var(--dim)'
   }, {
     label: 'Leads encontrados',
-    value: '1.284',
+    value: fmtNum(metricas.leadsEncontrados),
     icon: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 3v3M12 18v3M3 12h3M18 12h3',
     iColor: C.gold,
-    trend: '+312',
-    trendSub: 'últimos 7 dias',
-    tColor: C.green
+    trend: 'total acumulado',
+    tColor: 'var(--dim)'
   }, {
     label: 'Leads qualificados',
-    value: '498',
+    value: fmtNum(metricas.leadsQualificados),
     icon: 'M20 6L9 17l-5-5',
     iColor: C.green,
-    trend: '38,8%',
-    trendSub: 'taxa de qualificação',
+    trend: `${taxaQ}% taxa de qualif.`,
     tColor: 'var(--dim)'
   }, {
     label: 'Enviados ao CRM',
-    value: '176',
+    value: fmtNum(metricas.leadsCRM),
     icon: 'M5 12h14M13 5l7 7-7 7',
     iColor: C.cyan,
-    trend: '+24',
-    trendSub: 'hoje',
-    tColor: C.green
+    trend: 'total enviado',
+    tColor: 'var(--dim)'
   }];
-  const buscasAtivas = [{
-    id: 1,
-    nome: 'Agências de marketing — Sul',
-    ritmo: 120,
-    encontrados: 342,
-    health: 'green'
-  }, {
-    id: 2,
-    nome: 'Indústrias alimentícias — GO/MG',
-    ritmo: 80,
-    encontrados: 198,
-    health: 'green'
-  }, {
-    id: 3,
-    nome: 'Clínicas médicas — capitais NE',
-    ritmo: 40,
-    encontrados: 87,
-    health: 'amber'
-  }, {
-    id: 4,
-    nome: 'Construtoras porte grande — SP',
-    ritmo: 0,
-    encontrados: 412,
-    health: 'red'
-  }];
-  const healthLabel = {
+  const hlLabel = {
     green: 'produzindo',
     amber: 'ritmo lento',
-    red: 'parada'
+    red: 'parada',
+    gray: 'encerrada'
   };
   const alertas = [{
     color: C.red,
@@ -1127,12 +782,6 @@ function Dashboard({
     titulo: 'Integração de validação de e-mail reconectada',
     tempo: 'há 1h'
   }];
-  const atividade = RAW_LEADS.slice(0, 5).map(l => ({
-    empresa: l.fantasia,
-    cidade: l.cidade + '/' + l.uf,
-    tempo: 'há ' + l.id * 3 + ' min',
-    score: l.score
-  }));
   return /*#__PURE__*/React.createElement("div", {
     style: {
       maxWidth: 1180
@@ -1184,11 +833,7 @@ function Dashboard({
       fontSize: 12,
       color: m.tColor
     }
-  }, /*#__PURE__*/React.createElement("span", null, m.trend), /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: 'var(--faint)'
-    }
-  }, m.trendSub))))), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("span", null, m.trend))))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
       gridTemplateColumns: '1.55fr 1fr',
@@ -1222,7 +867,13 @@ function Dashboard({
       cursor: 'pointer',
       textDecoration: 'none'
     }
-  }, "Ver todas")), buscasAtivas.map(b => /*#__PURE__*/React.createElement("div", {
+  }, "Ver todas")), buscasAtivas.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '20px 16px',
+      fontSize: 13,
+      color: 'var(--faint)'
+    }
+  }, "Nenhuma busca ativa."), buscasAtivas.map(b => /*#__PURE__*/React.createElement("div", {
     key: b.id,
     onClick: () => onOpenBusca(b.id),
     className: "row-hover",
@@ -1256,7 +907,7 @@ function Dashboard({
       color: 'var(--faint)',
       marginTop: 2
     }
-  }, b.ritmo, " leads/h \xB7 ", healthLabel[b.health])), /*#__PURE__*/React.createElement("div", {
+  }, b.ritmo, " leads/h \xB7 ", hlLabel[b.health] || '—')), /*#__PURE__*/React.createElement("div", {
     style: {
       textAlign: 'right',
       flexShrink: 0
@@ -1266,7 +917,7 @@ function Dashboard({
       fontSize: 14,
       fontWeight: 600
     }
-  }, b.encontrados), /*#__PURE__*/React.createElement("div", {
+  }, fmtNum(b.enc)), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: 'var(--faint)'
@@ -1354,12 +1005,12 @@ function Dashboard({
       overflow: 'hidden',
       textOverflow: 'ellipsis'
     }
-  }, a.empresa), /*#__PURE__*/React.createElement("div", {
+  }, a.fantasia), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: 'var(--faint)'
     }
-  }, a.cidade, " \xB7 ", a.tempo)), /*#__PURE__*/React.createElement("span", {
+  }, a.cidade, "/", a.uf, " \xB7 ", timeAgo(a.criado_em))), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 11,
       fontWeight: 600,
@@ -1369,40 +1020,227 @@ function Dashboard({
 }
 
 // ── Leads ─────────────────────────────────────────────────────────────────────
-function Leads({
-  selected,
-  onSelect,
-  onToggleAll,
-  onClearSel,
-  onOpenLead,
-  onOpenCrm,
-  onOpenExport,
-  emailOnly,
-  onToggleEmailOnly
+function ExportModal({
+  ids,
+  onClose
 }) {
-  const allSel = selected.length === RAW_LEADS.length && selected.length > 0;
-  const filtered = emailOnly ? RAW_LEADS.filter(l => l.email) : RAW_LEADS;
-  const filters = ['Status', 'Score', 'Região', 'Busca'];
-  const emailToggleStyle = {
-    height: 38,
-    padding: '0 13px',
-    borderRadius: 9,
+  const [loading, setLoading] = useState(false);
+  const baixar = async () => {
+    setLoading(true);
+    try {
+      const params = ids.length ? '?ids=' + ids.join(',') : '';
+      const r = await fetch('/api/leads/export' + params, {
+        credentials: 'same-origin'
+      });
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'hunter-leads.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+      onClose();
+    } catch (_) {
+      alert('Erro ao exportar.');
+    } finally {
+      setLoading(false);
+    }
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'fixed',
+      inset: 0,
+      zIndex: 80,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    onClick: onClose,
+    style: {
+      position: 'absolute',
+      inset: 0,
+      background: 'rgba(5,9,20,.6)'
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'relative',
+      width: 440,
+      maxWidth: '92vw',
+      background: 'var(--panel)',
+      border: '1px solid var(--border)',
+      borderRadius: 16,
+      overflow: 'hidden'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '22px 24px 18px',
+      borderBottom: '1px solid var(--border)'
+    }
+  }, /*#__PURE__*/React.createElement("h2", {
+    style: {
+      fontSize: 17,
+      fontWeight: 600,
+      margin: '0 0 4px'
+    }
+  }, "Exportar lista"), /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 13,
+      color: 'var(--dim)',
+      margin: 0
+    }
+  }, ids.length, " lead", ids.length !== 1 ? 's' : '', " selecionado", ids.length !== 1 ? 's' : '', ".")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '20px 24px',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 18
+    }
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 9
+    }
+  }, "Formato"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 9
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      height: 40,
+      borderRadius: 9,
+      border: `1.5px solid ${C.gold}`,
+      background: 'rgba(251,228,154,.08)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      fontSize: 13,
+      fontWeight: 600,
+      cursor: 'pointer'
+    }
+  }, "CSV"))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: 'var(--dim)'
+    }
+  }, "Inclui: raz\xE3o social, CNPJ, decisor, cargo, contatos, score e status.")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '16px 24px',
+      borderTop: '1px solid var(--border)',
+      display: 'flex',
+      gap: 10,
+      justifyContent: 'flex-end'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: onClose,
+    style: {
+      height: 42,
+      padding: '0 18px',
+      borderRadius: 10,
+      border: '1px solid var(--border)',
+      background: 'transparent',
+      color: 'var(--text)',
+      fontSize: 13.5,
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, "Cancelar"), /*#__PURE__*/React.createElement("button", {
+    onClick: baixar,
+    disabled: loading,
+    style: {
+      height: 42,
+      padding: '0 20px',
+      borderRadius: 10,
+      border: 'none',
+      background: 'var(--gold)',
+      color: '#0E1936',
+      fontWeight: 600,
+      fontSize: 13.5,
+      fontFamily: 'inherit',
+      cursor: 'pointer',
+      opacity: loading ? .6 : 1
+    }
+  }, loading ? 'Gerando…' : 'Gerar e baixar'))));
+}
+function Leads({
+  refreshKey,
+  onOpenLead,
+  onCrm
+}) {
+  const [leads, setLeads] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [q, setQ] = useState('');
+  const [debouncedQ, setDebouncedQ] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
+  const [emailOnly, setEmailOnly] = useState(false);
+  const [selected, setSelected] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [exportIds, setExportIds] = useState(null);
+  const debRef = useRef(null);
+  const PER_PAGE = 20;
+  const handleQ = e => {
+    const v = e.target.value;
+    setQ(v);
+    clearTimeout(debRef.current);
+    debRef.current = setTimeout(() => {
+      setDebouncedQ(v);
+      setPage(1);
+    }, 400);
+  };
+  useEffect(() => {
+    setLoading(true);
+    const params = new URLSearchParams();
+    if (debouncedQ) params.set('q', debouncedQ);
+    if (filterStatus) params.set('status', filterStatus);
+    if (emailOnly) params.set('email_only', 'true');
+    params.set('page', page);
+    fetch('/api/leads?' + params, {
+      credentials: 'same-origin'
+    }).then(r => r.json()).then(d => {
+      setLeads(d.leads || []);
+      setTotal(d.total || 0);
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, [debouncedQ, filterStatus, emailOnly, page, refreshKey]);
+  const allSel = leads.length > 0 && leads.every(l => selected.includes(l.id));
+  const toggleSel = id => setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  const toggleAll = () => setSelected(allSel ? [] : leads.map(l => l.id));
+  const batchAction = async acao => {
+    if (!selected.length) return;
+    await fetch('/api/leads/acoes', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        ids: selected,
+        acao
+      })
+    });
+    setSelected([]);
+    setPage(p => p); // trigger refresh via useEffect
+  };
+  const totalPages = Math.ceil(total / PER_PAGE);
+  const selBtnStyle = variant => ({
+    height: 34,
+    padding: '0 12px',
+    borderRadius: 8,
+    border: '1px solid var(--border)',
+    background: variant === 'gold' ? 'var(--gold)' : 'transparent',
+    color: variant === 'gold' ? '#0E1936' : variant === 'dim' ? 'var(--dim)' : 'var(--text)',
     fontSize: 12.5,
     fontFamily: 'inherit',
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
     gap: 7,
-    ...(emailOnly ? {
-      border: `1px solid ${C.green}`,
-      background: C.green + '1f',
-      color: C.green
-    } : {
-      border: '1px solid var(--border)',
-      background: 'var(--panel)',
-      color: 'var(--dim)'
-    })
-  };
+    fontWeight: variant === 'gold' ? 600 : 400
+  });
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -1438,6 +1276,8 @@ function Leads({
   }), /*#__PURE__*/React.createElement("path", {
     d: "M21 21l-4.3-4.3"
   })), /*#__PURE__*/React.createElement("input", {
+    value: q,
+    onChange: handleQ,
     placeholder: "Buscar empresa, decisor\u2026",
     style: {
       width: '100%',
@@ -1450,34 +1290,64 @@ function Leads({
       fontSize: 13,
       fontFamily: 'inherit'
     }
-  })), filters.map(f => /*#__PURE__*/React.createElement("button", {
-    key: f,
+  })), /*#__PURE__*/React.createElement("select", {
+    value: filterStatus,
+    onChange: e => {
+      setFilterStatus(e.target.value);
+      setPage(1);
+    },
+    style: {
+      height: 38,
+      padding: '0 10px',
+      borderRadius: 9,
+      border: '1px solid var(--border)',
+      background: 'var(--panel)',
+      color: filterStatus ? 'var(--text)' : 'var(--dim)',
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "Status"), /*#__PURE__*/React.createElement("option", {
+    value: "Novo"
+  }, "Novo"), /*#__PURE__*/React.createElement("option", {
+    value: "Qualificado"
+  }, "Qualificado"), /*#__PURE__*/React.createElement("option", {
+    value: "Incompleto"
+  }, "Incompleto"), /*#__PURE__*/React.createElement("option", {
+    value: "Enviado"
+  }, "Enviado"), /*#__PURE__*/React.createElement("option", {
+    value: "Descartado"
+  }, "Descartado")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      setEmailOnly(e => !e);
+      setPage(1);
+    },
     style: {
       height: 38,
       padding: '0 13px',
       borderRadius: 9,
-      border: '1px solid var(--border)',
-      background: 'var(--panel)',
-      color: 'var(--dim)',
       fontSize: 12.5,
       fontFamily: 'inherit',
       cursor: 'pointer',
       display: 'flex',
       alignItems: 'center',
-      gap: 6
+      gap: 7,
+      ...(emailOnly ? {
+        border: `1px solid ${C.green}`,
+        background: C.green + '1f',
+        color: C.green
+      } : {
+        border: '1px solid var(--border)',
+        background: 'var(--panel)',
+        color: 'var(--dim)'
+      })
     }
-  }, f, /*#__PURE__*/React.createElement(Svg, {
-    d: "M6 9l6 6 6-6",
-    w: 13,
-    h: 13,
-    sw: 2
-  }))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1
-    }
-  }), /*#__PURE__*/React.createElement("button", {
-    onClick: onToggleEmailOnly,
-    style: emailToggleStyle
   }, /*#__PURE__*/React.createElement(SvgMulti, {
     w: 14,
     h: 14,
@@ -1508,29 +1378,15 @@ function Leads({
       fontWeight: 600,
       color: C.blue
     }
-  }, selected.length, " selecionados"), /*#__PURE__*/React.createElement("div", {
+  }, selected.length, " selecionado", selected.length !== 1 ? 's' : ''), /*#__PURE__*/React.createElement("div", {
     style: {
       width: 1,
       height: 20,
       background: 'var(--border)'
     }
   }), /*#__PURE__*/React.createElement("button", {
-    onClick: onOpenCrm,
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 7,
-      height: 34,
-      padding: '0 14px',
-      borderRadius: 8,
-      border: 'none',
-      background: 'var(--gold)',
-      color: '#0E1936',
-      fontWeight: 600,
-      fontSize: 12.5,
-      fontFamily: 'inherit',
-      cursor: 'pointer'
-    }
+    onClick: () => onCrm(selected),
+    style: selBtnStyle('gold')
   }, /*#__PURE__*/React.createElement(Svg, {
     d: "M5 12h14M13 5l7 7-7 7",
     color: "#0E1936",
@@ -1538,51 +1394,20 @@ function Leads({
     h: 14,
     sw: 2
   }), "Enviar ao CRM"), /*#__PURE__*/React.createElement("button", {
-    onClick: onOpenExport,
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 7,
-      height: 34,
-      padding: '0 12px',
-      borderRadius: 8,
-      border: '1px solid var(--border)',
-      background: 'transparent',
-      color: 'var(--text)',
-      fontSize: 12.5,
-      fontFamily: 'inherit',
-      cursor: 'pointer'
-    }
+    onClick: () => setExportIds(selected),
+    style: selBtnStyle('normal')
   }, "Exportar CSV"), /*#__PURE__*/React.createElement("button", {
-    style: {
-      height: 34,
-      padding: '0 12px',
-      borderRadius: 8,
-      border: '1px solid var(--border)',
-      background: 'transparent',
-      color: 'var(--text)',
-      fontSize: 12.5,
-      fontFamily: 'inherit',
-      cursor: 'pointer'
-    }
+    onClick: () => batchAction('aprovar'),
+    style: selBtnStyle('normal')
   }, "Aprovar"), /*#__PURE__*/React.createElement("button", {
-    style: {
-      height: 34,
-      padding: '0 12px',
-      borderRadius: 8,
-      border: '1px solid var(--border)',
-      background: 'transparent',
-      color: 'var(--dim)',
-      fontSize: 12.5,
-      fontFamily: 'inherit',
-      cursor: 'pointer'
-    }
+    onClick: () => batchAction('descartar'),
+    style: selBtnStyle('dim')
   }, "Descartar"), /*#__PURE__*/React.createElement("div", {
     style: {
       flex: 1
     }
   }), /*#__PURE__*/React.createElement("button", {
-    onClick: onClearSel,
+    onClick: () => setSelected([]),
     style: {
       background: 'none',
       border: 'none',
@@ -1613,14 +1438,30 @@ function Leads({
       textTransform: 'uppercase'
     }
   }, /*#__PURE__*/React.createElement("div", {
-    onClick: onToggleAll,
+    onClick: toggleAll,
     style: {
       cursor: 'pointer'
     }
   }, /*#__PURE__*/React.createElement(Checkbox, {
     checked: allSel
-  })), /*#__PURE__*/React.createElement("div", null, "Empresa"), /*#__PURE__*/React.createElement("div", null, "Setor \xB7 porte"), /*#__PURE__*/React.createElement("div", null, "Local"), /*#__PURE__*/React.createElement("div", null, "Decisor"), /*#__PURE__*/React.createElement("div", null, "Score"), /*#__PURE__*/React.createElement("div", null, "Contato"), /*#__PURE__*/React.createElement("div", null, "Status")), filtered.map(l => {
+  })), /*#__PURE__*/React.createElement("div", null, "Empresa"), /*#__PURE__*/React.createElement("div", null, "Setor \xB7 porte"), /*#__PURE__*/React.createElement("div", null, "Local"), /*#__PURE__*/React.createElement("div", null, "Decisor"), /*#__PURE__*/React.createElement("div", null, "Score"), /*#__PURE__*/React.createElement("div", null, "Contato"), /*#__PURE__*/React.createElement("div", null, "Status")), loading && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '28px 18px',
+      fontSize: 13,
+      color: 'var(--faint)',
+      textAlign: 'center'
+    }
+  }, "Carregando\u2026"), !loading && leads.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '28px 18px',
+      fontSize: 13,
+      color: 'var(--faint)',
+      textAlign: 'center'
+    }
+  }, "Nenhum lead encontrado."), !loading && leads.map(l => {
     const sel = selected.includes(l.id);
+    const email = hasEmail(l.contatos);
+    const phone = hasPhone(l.contatos);
     return /*#__PURE__*/React.createElement("div", {
       key: l.id,
       onClick: () => onOpenLead(l.id),
@@ -1638,7 +1479,7 @@ function Leads({
     }, /*#__PURE__*/React.createElement("div", {
       onClick: e => {
         e.stopPropagation();
-        onSelect(l.id);
+        toggleSel(l.id);
       },
       style: {
         cursor: 'pointer'
@@ -1711,8 +1552,8 @@ function Leads({
     }, l.cargo)), /*#__PURE__*/React.createElement(ScoreBar, {
       score: l.score
     }), /*#__PURE__*/React.createElement(ContactIcons, {
-      email: l.email,
-      phone: l.phone
+      email: email,
+      phone: phone
     }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
       style: badgeStyle(statusColors[l.status] || C.gray)
     }, l.status)));
@@ -1725,13 +1566,14 @@ function Leads({
       fontSize: 12,
       color: 'var(--faint)'
     }
-  }, /*#__PURE__*/React.createElement("span", null, "Mostrando ", filtered.length, " de 1.284 leads"), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("span", null, "Mostrando ", leads.length, " de ", fmtNum(total), " leads"), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 6
     }
-  }, ['‹', '›'].map(ch => /*#__PURE__*/React.createElement("button", {
-    key: ch,
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setPage(p => Math.max(1, p - 1)),
+    disabled: page <= 1,
     style: {
       height: 30,
       width: 30,
@@ -1739,15 +1581,43 @@ function Leads({
       border: '1px solid var(--border)',
       background: 'var(--panel)',
       color: 'var(--dim)',
-      cursor: 'pointer'
+      cursor: 'pointer',
+      opacity: page <= 1 ? .4 : 1
     }
-  }, ch)))));
+  }, "\u2039"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      lineHeight: '30px',
+      fontSize: 11
+    }
+  }, page, "/", totalPages || 1), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setPage(p => Math.min(totalPages, p + 1)),
+    disabled: page >= totalPages,
+    style: {
+      height: 30,
+      width: 30,
+      borderRadius: 7,
+      border: '1px solid var(--border)',
+      background: 'var(--panel)',
+      color: 'var(--dim)',
+      cursor: 'pointer',
+      opacity: page >= totalPages ? .4 : 1
+    }
+  }, "\u203A"))), exportIds && /*#__PURE__*/React.createElement(ExportModal, {
+    ids: exportIds,
+    onClose: () => setExportIds(null)
+  }));
 }
 
 // ── Buscas ────────────────────────────────────────────────────────────────────
 function Buscas({
   onOpen
 }) {
+  const [buscas, setBuscas] = useState(null);
+  useEffect(() => {
+    fetch('/api/buscas', {
+      credentials: 'same-origin'
+    }).then(r => r.json()).then(d => setBuscas(d.buscas || [])).catch(() => setBuscas([]));
+  }, []);
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -1793,20 +1663,7 @@ function Buscas({
       fontSize: 13,
       fontFamily: 'inherit'
     }
-  })), ['Status', 'Criador'].map(f => /*#__PURE__*/React.createElement("button", {
-    key: f,
-    style: {
-      height: 38,
-      padding: '0 13px',
-      borderRadius: 9,
-      border: '1px solid var(--border)',
-      background: 'var(--panel)',
-      color: 'var(--dim)',
-      fontSize: 12.5,
-      fontFamily: 'inherit',
-      cursor: 'pointer'
-    }
-  }, f))), /*#__PURE__*/React.createElement("div", {
+  }))), /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'var(--panel)',
       border: '1px solid var(--border)',
@@ -1827,7 +1684,19 @@ function Buscas({
       color: 'var(--faint)',
       textTransform: 'uppercase'
     }
-  }, /*#__PURE__*/React.createElement("div", null), /*#__PURE__*/React.createElement("div", null, "Nome"), /*#__PURE__*/React.createElement("div", null, "Status"), /*#__PURE__*/React.createElement("div", null, "Criada por"), /*#__PURE__*/React.createElement("div", null, "Ritmo"), /*#__PURE__*/React.createElement("div", null, "Encontr."), /*#__PURE__*/React.createElement("div", null, "Qualif."), /*#__PURE__*/React.createElement("div", null, "CRM"), /*#__PURE__*/React.createElement("div", null, "Atividade")), BUSCAS_RAW.map(b => /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", null), /*#__PURE__*/React.createElement("div", null, "Nome"), /*#__PURE__*/React.createElement("div", null, "Status"), /*#__PURE__*/React.createElement("div", null, "Criada por"), /*#__PURE__*/React.createElement("div", null, "Ritmo"), /*#__PURE__*/React.createElement("div", null, "Encontr."), /*#__PURE__*/React.createElement("div", null, "Qualif."), /*#__PURE__*/React.createElement("div", null, "CRM"), /*#__PURE__*/React.createElement("div", null, "Atividade")), buscas === null && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '22px 18px',
+      fontSize: 13,
+      color: 'var(--faint)'
+    }
+  }, "Carregando\u2026"), buscas && buscas.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '22px 18px',
+      fontSize: 13,
+      color: 'var(--faint)'
+    }
+  }, "Nenhuma busca encontrada."), buscas && buscas.map(b => /*#__PURE__*/React.createElement("div", {
     key: b.id,
     onClick: () => onOpen(b.id),
     className: "row-hover",
@@ -1841,7 +1710,7 @@ function Buscas({
       cursor: 'pointer'
     }
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StatusDot, {
-    color: healthColors[b.health],
+    color: healthColors[b.health] || C.gray,
     pulse: b.health === 'green'
   })), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -1858,7 +1727,7 @@ function Buscas({
       fontSize: 12.5,
       color: 'var(--dim)'
     }
-  }, b.criador), /*#__PURE__*/React.createElement("div", {
+  }, b.criador || '—'), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 12.5
     }
@@ -1867,22 +1736,22 @@ function Buscas({
       fontSize: 13,
       fontWeight: 600
     }
-  }, b.enc), /*#__PURE__*/React.createElement("div", {
+  }, fmtNum(b.enc)), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 13,
       color: 'var(--dim)'
     }
-  }, b.qual), /*#__PURE__*/React.createElement("div", {
+  }, fmtNum(b.qual)), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 13,
       color: C.cyan
     }
-  }, b.crm), /*#__PURE__*/React.createElement("div", {
+  }, fmtNum(b.crm)), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 12,
       color: 'var(--faint)'
     }
-  }, b.ultima)))));
+  }, timeAgo(b.ultima_ativ))))));
 }
 
 // ── BuscaDetail ───────────────────────────────────────────────────────────────
@@ -1891,8 +1760,46 @@ function BuscaDetail({
   onBack,
   onOpenLead
 }) {
-  const b = BUSCAS_RAW.find(x => x.id === buscaId) || BUSCAS_RAW[0];
-  const leads = RAW_LEADS.slice(0, 5);
+  const [data, setData] = useState(null);
+  const [toggling, setToggling] = useState(false);
+  const carregar = () => {
+    fetch('/api/buscas/' + buscaId, {
+      credentials: 'same-origin'
+    }).then(r => r.json()).then(setData).catch(() => {});
+  };
+  useEffect(() => {
+    if (buscaId) carregar();
+  }, [buscaId]);
+  const toggleStatus = async () => {
+    if (!data) return;
+    const novoStatus = data.busca.status === 'Ativa' ? 'Pausada' : 'Ativa';
+    setToggling(true);
+    await fetch('/api/buscas/' + buscaId, {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        status: novoStatus
+      })
+    }).catch(() => {});
+    setToggling(false);
+    carregar();
+  };
+  if (!data) return /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: 'var(--faint)',
+      padding: 40,
+      textAlign: 'center'
+    }
+  }, "Carregando\u2026");
+  const {
+    busca: b,
+    leads
+  } = data;
+  const criterios = b.criterios || {};
+  const tags = Object.entries(criterios).flatMap(([k, v]) => Array.isArray(v) ? v.map(x => k + ': ' + x) : [k + ': ' + v]).filter(Boolean);
   return /*#__PURE__*/React.createElement("div", {
     style: {
       maxWidth: 1180
@@ -1924,7 +1831,7 @@ function BuscaDetail({
       marginTop: 4
     }
   }, /*#__PURE__*/React.createElement(StatusDot, {
-    color: healthColors[b.health],
+    color: healthColors[b.health] || C.gray,
     pulse: b.health === 'green'
   })), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -1944,14 +1851,14 @@ function BuscaDetail({
     }
   }, b.nome), /*#__PURE__*/React.createElement("span", {
     style: badgeStyle(buscaStatusColors[b.status] || C.gray)
-  }, b.status)), /*#__PURE__*/React.createElement("div", {
+  }, b.status)), tags.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       flexWrap: 'wrap',
       gap: 7,
       marginTop: 10
     }
-  }, ['Agências de publicidade', 'PR · Sul', 'Porte médio'].map(tag => /*#__PURE__*/React.createElement("span", {
+  }, tags.map(tag => /*#__PURE__*/React.createElement("span", {
     key: tag,
     style: {
       fontSize: 12,
@@ -1961,7 +1868,9 @@ function BuscaDetail({
       border: '1px solid var(--border)',
       color: 'var(--dim)'
     }
-  }, tag)))), /*#__PURE__*/React.createElement("button", {
+  }, tag)))), (b.status === 'Ativa' || b.status === 'Pausada') && /*#__PURE__*/React.createElement("button", {
+    onClick: toggleStatus,
+    disabled: toggling,
     style: {
       height: 38,
       padding: '0 15px',
@@ -1971,28 +1880,17 @@ function BuscaDetail({
       color: 'var(--text)',
       fontSize: 13,
       fontFamily: 'inherit',
-      cursor: 'pointer'
+      cursor: 'pointer',
+      opacity: toggling ? .6 : 1
     }
-  }, "Pausar"), /*#__PURE__*/React.createElement("button", {
-    style: {
-      height: 38,
-      padding: '0 15px',
-      borderRadius: 9,
-      border: '1px solid var(--border)',
-      background: 'transparent',
-      color: 'var(--dim)',
-      fontSize: 13,
-      fontFamily: 'inherit',
-      cursor: 'pointer'
-    }
-  }, "Editar ritmo")), /*#__PURE__*/React.createElement("div", {
+  }, toggling ? '…' : b.status === 'Ativa' ? 'Pausar' : 'Retomar')), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
-      gridTemplateColumns: 'repeat(5,1fr)',
+      gridTemplateColumns: 'repeat(3,1fr)',
       gap: 12,
       marginBottom: 18
     }
-  }, [['Encontrados', '342', 'var(--text)'], ['Qualificados', '128', C.green], ['Incompletos', '61', C.amber], ['Descartados', '89', 'var(--dim)'], ['Enviados ao CRM', '64', C.cyan]].map(([label, val, col]) => /*#__PURE__*/React.createElement("div", {
+  }, [['Encontrados', fmtNum(b.enc), 'var(--text)'], ['Qualificados', fmtNum(b.qual), C.green], ['Enviados ao CRM', fmtNum(b.crm), C.cyan]].map(([label, val, col]) => /*#__PURE__*/React.createElement("div", {
     key: label,
     style: {
       background: 'var(--panel)',
@@ -2060,7 +1958,7 @@ function BuscaDetail({
       fontWeight: 600,
       margin: '0 0 16px'
     }
-  }, "Esgotamento do universo"), /*#__PURE__*/React.createElement("div", {
+  }, "Universo estimado"), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'baseline',
@@ -2072,13 +1970,13 @@ function BuscaDetail({
       fontSize: 30,
       fontWeight: 600
     }
-  }, "38%"), /*#__PURE__*/React.createElement("span", {
+  }, fmtNum(b.enc)), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 12.5,
       color: 'var(--faint)'
     }
-  }, "varrido")), /*#__PURE__*/React.createElement(ProgressBar, {
-    pct: 38,
+  }, "de ~", fmtNum(b.universo_est || 0), " empresas")), /*#__PURE__*/React.createElement(ProgressBar, {
+    pct: b.universo_est ? Math.min(100, Math.round(parseInt(b.enc) / b.universo_est * 100)) : 0,
     color: C.gold
   }), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -2087,7 +1985,7 @@ function BuscaDetail({
       marginTop: 12,
       lineHeight: 1.5
     }
-  }, "~890 de 2.340 empresas avaliadas. Ritmo atual de 120 leads/h."))), /*#__PURE__*/React.createElement("div", {
+  }, "Ritmo atual: ", b.ritmo || 0, " leads/h. \xDAltima atividade: ", timeAgo(b.ultima_ativ), "."))), /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'var(--panel)',
       border: '1px solid var(--border)',
@@ -2105,7 +2003,13 @@ function BuscaDetail({
       fontWeight: 600,
       margin: 0
     }
-  }, "Leads desta busca")), leads.map(l => /*#__PURE__*/React.createElement("div", {
+  }, "Leads desta busca")), leads.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '22px 18px',
+      fontSize: 13,
+      color: 'var(--faint)'
+    }
+  }, "Nenhum lead ainda."), leads.map(l => /*#__PURE__*/React.createElement("div", {
     key: l.id,
     onClick: () => onOpenLead(l.id),
     className: "row-hover",
@@ -2147,12 +2051,13 @@ function BuscaDetail({
 
 // ── Nova Busca ────────────────────────────────────────────────────────────────
 function NovaBusca({
-  tipo,
-  onTipo,
-  ritmo,
-  onRitmo,
-  onLigar
+  onSalvar
 }) {
+  const [tipo, setTipo] = useState('icp');
+  const [ritmo, setRitmo] = useState(120);
+  const [saving, setSaving] = useState(false);
+  const nomeRef = useRef();
+  const criteriosRef = useRef();
   const tipos = [{
     key: 'icp',
     titulo: 'Por perfil (ICP)',
@@ -2169,7 +2074,40 @@ function NovaBusca({
     desc: 'Suba clientes que já converteram.',
     icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 11l-3 3-1.5-1.5'
   }];
-  const chips = ['Setor: Agências de publicidade', 'UF: PR', 'Cidade: Curitiba', 'Porte: Médio'];
+  const salvar = async () => {
+    const nome = nomeRef.current?.value?.trim();
+    if (!nome) {
+      alert('Informe o nome da busca.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const r = await fetch('/api/buscas', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          nome,
+          tipo,
+          ritmo,
+          criterios: {
+            texto: criteriosRef.current?.value || ''
+          }
+        })
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error(d.erro || 'Erro ao criar busca.');
+      }
+      onSalvar();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
   return /*#__PURE__*/React.createElement("div", {
     style: {
       maxWidth: 760
@@ -2184,7 +2122,7 @@ function NovaBusca({
     const active = tipo === t.key;
     return /*#__PURE__*/React.createElement("div", {
       key: t.key,
-      onClick: () => onTipo(t.key),
+      onClick: () => setTipo(t.key),
       style: {
         flex: 1,
         textAlign: 'left',
@@ -2226,7 +2164,8 @@ function NovaBusca({
       marginBottom: 22
     }
   }, /*#__PURE__*/React.createElement("textarea", {
-    defaultValue: "ag\xEAncias de marketing em Curitiba, porte m\xE9dio, com time comercial estruturado",
+    ref: criteriosRef,
+    placeholder: "Ex: ag\xEAncias de marketing em Curitiba, porte m\xE9dio, com time comercial estruturado",
     style: {
       width: '100%',
       minHeight: 84,
@@ -2240,70 +2179,7 @@ function NovaBusca({
       lineHeight: 1.5,
       resize: 'vertical'
     }
-  })), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 8,
-      marginBottom: 11
-    }
-  }, /*#__PURE__*/React.createElement(SvgMulti, {
-    w: 14,
-    h: 14,
-    sw: 1.8,
-    color: C.blue
-  }, /*#__PURE__*/React.createElement("circle", {
-    cx: 12,
-    cy: 12,
-    r: 4
-  }), /*#__PURE__*/React.createElement("path", {
-    d: "M12 3v2M12 19v2M5 12H3M21 12h-2"
-  })), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 11,
-      fontWeight: 600,
-      letterSpacing: '.06em',
-      color: C.blue,
-      textTransform: 'uppercase'
-    }
-  }, "Crit\xE9rios inferidos do texto \u2014 edite se precisar")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      flexWrap: 'wrap',
-      gap: 8,
-      marginBottom: 24
-    }
-  }, chips.map(ch => /*#__PURE__*/React.createElement("span", {
-    key: ch,
-    style: {
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: 7,
-      fontSize: 12.5,
-      padding: '7px 12px',
-      borderRadius: 8,
-      background: 'var(--panel2)',
-      border: '1px solid var(--border)',
-      color: 'var(--text)'
-    }
-  }, ch, /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: 'var(--faint)',
-      cursor: 'pointer'
-    }
-  }, "\u2715"))), /*#__PURE__*/React.createElement("span", {
-    style: {
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: 5,
-      fontSize: 12.5,
-      padding: '7px 12px',
-      borderRadius: 8,
-      border: '1px dashed var(--border)',
-      color: 'var(--faint)',
-      cursor: 'pointer'
-    }
-  }, "+ crit\xE9rio"))) : /*#__PURE__*/React.createElement("div", {
+  }))) : /*#__PURE__*/React.createElement("div", {
     style: {
       border: '1.5px dashed var(--border)',
       borderRadius: 14,
@@ -2345,7 +2221,11 @@ function NovaBusca({
       gridTemplateColumns: '1fr 1fr',
       gap: '18px 22px'
     }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      gridColumn: '1 / -1'
+    }
+  }, /*#__PURE__*/React.createElement("label", {
     style: {
       display: 'block',
       fontSize: 12,
@@ -2353,27 +2233,8 @@ function NovaBusca({
       marginBottom: 7
     }
   }, "Nome da busca"), /*#__PURE__*/React.createElement("input", {
-    defaultValue: "Ag\xEAncias de marketing \u2014 Sul",
-    style: {
-      width: '100%',
-      height: 40,
-      borderRadius: 9,
-      border: '1px solid var(--border)',
-      background: 'var(--panel2)',
-      color: 'var(--text)',
-      padding: '0 12px',
-      fontSize: 13,
-      fontFamily: 'inherit'
-    }
-  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    style: {
-      display: 'block',
-      fontSize: 12,
-      color: 'var(--dim)',
-      marginBottom: 7
-    }
-  }, "Corte m\xEDnimo de confidence score"), /*#__PURE__*/React.createElement("input", {
-    defaultValue: "60",
+    ref: nomeRef,
+    placeholder: "Ex: Ag\xEAncias de marketing \u2014 Sul",
     style: {
       width: '100%',
       height: 40,
@@ -2401,7 +2262,7 @@ function NovaBusca({
       fontSize: 12,
       color: 'var(--dim)'
     }
-  }, "Ritmo da torneira \u2014 controla a velocidade da busca"), /*#__PURE__*/React.createElement("span", {
+  }, "Ritmo da torneira"), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 13,
       fontWeight: 600,
@@ -2413,7 +2274,7 @@ function NovaBusca({
     max: 300,
     step: 10,
     value: ritmo,
-    onChange: e => onRitmo(+e.target.value),
+    onChange: e => setRitmo(+e.target.value),
     style: {
       width: '100%',
       accentColor: '#FBE49A',
@@ -2430,53 +2291,11 @@ function NovaBusca({
   }, /*#__PURE__*/React.createElement("span", null, "econ\xF4mico"), /*#__PURE__*/React.createElement("span", null, "agressivo"))))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
-      alignItems: 'center',
-      gap: 13,
-      background: 'var(--panel2)',
-      border: '1px solid var(--border)',
-      borderRadius: 12,
-      padding: '15px 18px',
-      marginBottom: 24
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: 38,
-      height: 38,
-      borderRadius: 10,
-      background: 'rgba(122,217,255,.12)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      flexShrink: 0
-    }
-  }, /*#__PURE__*/React.createElement(SvgMulti, {
-    w: 18,
-    h: 18,
-    sw: 1.8,
-    color: C.cyan
-  }, /*#__PURE__*/React.createElement("circle", {
-    cx: 11,
-    cy: 11,
-    r: 7
-  }), /*#__PURE__*/React.createElement("path", {
-    d: "M21 21l-4.3-4.3"
-  }))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 14,
-      fontWeight: 600
-    }
-  }, "~2.340 empresas batem com esse filtro"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      color: 'var(--faint)'
-    }
-  }, "universo estimado \xB7 calibre os crit\xE9rios antes de ligar"))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
       gap: 12
     }
   }, /*#__PURE__*/React.createElement("button", {
-    onClick: onLigar,
+    onClick: salvar,
+    disabled: saving,
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -2490,7 +2309,8 @@ function NovaBusca({
       fontWeight: 600,
       fontSize: 14,
       fontFamily: 'inherit',
-      cursor: 'pointer'
+      cursor: 'pointer',
+      opacity: saving ? .6 : 1
     }
   }, /*#__PURE__*/React.createElement(Svg, {
     d: "M5 12h14M13 5l7 7-7 7",
@@ -2498,19 +2318,7 @@ function NovaBusca({
     w: 16,
     h: 16,
     sw: 2
-  }), "Ligar busca"), /*#__PURE__*/React.createElement("button", {
-    style: {
-      height: 46,
-      padding: '0 20px',
-      borderRadius: 11,
-      border: '1px solid var(--border)',
-      background: 'transparent',
-      color: 'var(--text)',
-      fontSize: 14,
-      fontFamily: 'inherit',
-      cursor: 'pointer'
-    }
-  }, "Salvar rascunho")));
+  }), saving ? 'Criando…' : 'Ligar busca')));
 }
 
 // ── Integrações ───────────────────────────────────────────────────────────────
@@ -3128,70 +2936,7 @@ function Config() {
       fontSize: 13,
       fontFamily: 'inherit'
     }
-  }))))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: 'var(--panel)',
-      border: '1px solid var(--border)',
-      borderRadius: 14,
-      padding: 22
-    }
-  }, /*#__PURE__*/React.createElement("h3", {
-    style: {
-      fontSize: 14,
-      fontWeight: 600,
-      margin: '0 0 4px'
-    }
-  }, "Marca \xB7 white-label"), /*#__PURE__*/React.createElement("p", {
-    style: {
-      fontSize: 12.5,
-      color: 'var(--faint)',
-      margin: '0 0 18px'
-    }
-  }, "Para parceiros que revendem o Hunter."), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 16
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: 54,
-      height: 54,
-      borderRadius: 12,
-      background: 'var(--panel2)',
-      border: '1px dashed var(--border)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      color: 'var(--faint)',
-      fontSize: 11,
-      flexShrink: 0
-    }
-  }, "logo"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1
-    }
-  }, /*#__PURE__*/React.createElement("label", {
-    style: {
-      display: 'block',
-      fontSize: 12,
-      color: 'var(--dim)',
-      marginBottom: 7
-    }
-  }, "Nome exibido"), /*#__PURE__*/React.createElement("input", {
-    defaultValue: "Hunter",
-    style: {
-      width: '100%',
-      height: 38,
-      borderRadius: 9,
-      border: '1px solid var(--border)',
-      background: 'var(--panel2)',
-      color: 'var(--text)',
-      padding: '0 12px',
-      fontSize: 13,
-      fontFamily: 'inherit'
-    }
-  })))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("button", {
+  }))))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("button", {
     style: {
       height: 44,
       padding: '0 22px',
@@ -3484,22 +3229,91 @@ function Monitor() {
 function LeadDetailPanel({
   leadId,
   onClose,
-  onCrm
+  onCrm,
+  onStatusChange
 }) {
-  const l = leadId ? leadDetail(RAW_LEADS.find(x => x.id === leadId)) : null;
-  if (!l) return null;
+  const [lead, setLead] = useState(null);
+  const [displayStatus, setDisplayStatus] = useState(null);
+  const [actioning, setActioning] = useState(false);
+  useEffect(() => {
+    if (!leadId) return;
+    setLead(null);
+    setDisplayStatus(null);
+    fetch('/api/leads/' + leadId, {
+      credentials: 'same-origin'
+    }).then(r => r.json()).then(l => {
+      setLead(l);
+      setDisplayStatus(l.status);
+    }).catch(() => {});
+  }, [leadId]);
+  const patchStatus = async novoStatus => {
+    if (actioning) return;
+    setActioning(true);
+    try {
+      await fetch('/api/leads/' + leadId, {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          status: novoStatus
+        })
+      });
+      setDisplayStatus(novoStatus);
+      onStatusChange && onStatusChange();
+    } catch (_) {}
+    setActioning(false);
+  };
+  if (!lead) {
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        position: 'fixed',
+        inset: 0,
+        zIndex: 60
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      onClick: onClose,
+      style: {
+        position: 'absolute',
+        inset: 0,
+        background: 'rgba(5,9,20,.55)'
+      }
+    }), /*#__PURE__*/React.createElement("div", {
+      style: {
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        height: '100vh',
+        width: 560,
+        maxWidth: '94vw',
+        background: 'var(--panel)',
+        borderLeft: '1px solid var(--border)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: 'var(--faint)',
+        fontSize: 13
+      }
+    }, "Carregando\u2026"));
+  }
+  const l = lead;
+  const status = displayStatus || l.status;
+  const contatos = Array.isArray(l.contatos) ? l.contatos : [];
+  const breakdown = Array.isArray(l.breakdown) ? l.breakdown : [];
+  const decisorIni = (l.decisor || '').replace(/^(Dr|Dra)\.?\s*/i, '').split(' ').slice(0, 2).map(w => w[0]).join('');
   const mailPath = 'M3 5h18v14H3zM3 7l9 6 9-6';
   const telPath = 'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.6A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.3 1.8.6 2.6a2 2 0 0 1-.5 2.1L8 9.6a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.5c.8.3 1.7.5 2.6.6a2 2 0 0 1 1.7 2z';
   const webPath = 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM3 12h18M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18';
-  const contactIcon = type => {
-    if (type === 'email') return /*#__PURE__*/React.createElement(Svg, {
+  const contactIcon = tipo => {
+    if (tipo === 'email') return /*#__PURE__*/React.createElement(Svg, {
       d: mailPath,
       color: C.blue,
       w: 16,
       h: 16,
       sw: 1.8
     });
-    if (type === 'phone') return /*#__PURE__*/React.createElement(Svg, {
+    if (tipo === 'telefone') return /*#__PURE__*/React.createElement(Svg, {
       d: telPath,
       color: C.green,
       w: 16,
@@ -3514,6 +3328,22 @@ function LeadDetailPanel({
       sw: 1.8
     });
   };
+  const seloStyle = validado => ({
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 4,
+    fontSize: 10,
+    fontWeight: 600,
+    padding: '3px 7px',
+    borderRadius: 6,
+    whiteSpace: 'nowrap',
+    background: validado ? C.green + '1f' : C.amber + '1f',
+    color: validado ? C.green : C.amber
+  });
+  const breakdownColor = b => {
+    if (!b.positivo) return b.delta && b.delta !== '0' && b.delta !== '—' ? C.red : C.gray;
+    return C.green;
+  };
   const cadastrais = [{
     k: 'CNAE principal',
     v: l.cnae
@@ -3523,7 +3353,7 @@ function LeadDetailPanel({
   }, {
     k: 'Situação',
     v: l.situacao,
-    ok: true
+    ok: l.situacao === 'Ativa'
   }, {
     k: 'Abertura',
     v: l.abertura
@@ -3586,8 +3416,8 @@ function LeadDetailPanel({
       marginBottom: 5
     }
   }, /*#__PURE__*/React.createElement("span", {
-    style: badgeStyle(statusColors[l.status] || C.gray)
-  }, l.status), /*#__PURE__*/React.createElement("span", {
+    style: badgeStyle(statusColors[status] || C.gray)
+  }, status), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 11.5,
       color: 'var(--faint)'
@@ -3666,7 +3496,7 @@ function LeadDetailPanel({
       display: 'inline-block',
       flexShrink: 0
     }
-  }), /*#__PURE__*/React.createElement("span", null, c.v)))))), /*#__PURE__*/React.createElement("section", {
+  }), /*#__PURE__*/React.createElement("span", null, c.v || '—')))))), /*#__PURE__*/React.createElement("section", {
     style: {
       borderTop: '1px solid var(--border)',
       paddingTop: 18
@@ -3700,7 +3530,7 @@ function LeadDetailPanel({
       fontSize: 14,
       flexShrink: 0
     }
-  }, l.decisorIni), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, decisorIni), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 14,
       fontWeight: 500
@@ -3733,7 +3563,7 @@ function LeadDetailPanel({
     color: C.cyan
   }, /*#__PURE__*/React.createElement("path", {
     d: "M20 6L9 17l-5-5"
-  })), "Receita Federal"))), /*#__PURE__*/React.createElement("section", {
+  })), "Receita Federal"))), contatos.length > 0 && /*#__PURE__*/React.createElement("section", {
     style: {
       borderTop: '1px solid var(--border)',
       paddingTop: 18
@@ -3753,7 +3583,7 @@ function LeadDetailPanel({
       flexDirection: 'column',
       gap: 9
     }
-  }, l.contatos.map((c, i) => /*#__PURE__*/React.createElement("div", {
+  }, contatos.map((c, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
     style: {
       display: 'flex',
@@ -3764,7 +3594,7 @@ function LeadDetailPanel({
       borderRadius: 10,
       padding: '11px 13px'
     }
-  }, contactIcon(c.type), /*#__PURE__*/React.createElement("div", {
+  }, contactIcon(c.tipo), /*#__PURE__*/React.createElement("div", {
     style: {
       flex: 1,
       minWidth: 0
@@ -3782,8 +3612,8 @@ function LeadDetailPanel({
       color: 'var(--faint)'
     }
   }, c.fonte, " \xB7 ", c.recencia)), /*#__PURE__*/React.createElement("span", {
-    style: c.seloStyle
-  }, c.seloLabel))))), /*#__PURE__*/React.createElement("section", {
+    style: seloStyle(c.validado)
+  }, c.selo || (c.validado ? 'verificado' : 'não verif.')))))), l.abordagem && /*#__PURE__*/React.createElement("section", {
     style: {
       borderTop: '1px solid var(--border)',
       paddingTop: 18
@@ -3834,6 +3664,7 @@ function LeadDetailPanel({
       gap: 8
     }
   }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => navigator.clipboard?.writeText(l.abordagem).catch(() => {}),
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -3848,22 +3679,7 @@ function LeadDetailPanel({
       fontFamily: 'inherit',
       cursor: 'pointer'
     }
-  }, "Copiar"), /*#__PURE__*/React.createElement("button", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 6,
-      height: 31,
-      padding: '0 12px',
-      borderRadius: 7,
-      border: '1px solid var(--border)',
-      background: 'transparent',
-      color: 'var(--dim)',
-      fontSize: 12,
-      fontFamily: 'inherit',
-      cursor: 'pointer'
-    }
-  }, "Regenerar")))), /*#__PURE__*/React.createElement("section", {
+  }, "Copiar")))), breakdown.length > 0 && /*#__PURE__*/React.createElement("section", {
     style: {
       borderTop: '1px solid var(--border)',
       paddingTop: 18
@@ -3883,7 +3699,7 @@ function LeadDetailPanel({
       flexDirection: 'column',
       gap: 9
     }
-  }, l.breakdown.map((b, i) => /*#__PURE__*/React.createElement("div", {
+  }, breakdown.map((b, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
     style: {
       display: 'flex',
@@ -3900,7 +3716,7 @@ function LeadDetailPanel({
     style: {
       fontSize: 12,
       fontWeight: 600,
-      color: b.color,
+      color: breakdownColor(b),
       minWidth: 34,
       textAlign: 'right'
     }
@@ -3915,7 +3731,7 @@ function LeadDetailPanel({
       gap: 10
     }
   }, /*#__PURE__*/React.createElement("button", {
-    onClick: onCrm,
+    onClick: () => onCrm([leadId]),
     style: {
       flex: 1,
       display: 'flex',
@@ -3939,37 +3755,67 @@ function LeadDetailPanel({
     h: 15,
     sw: 2
   }), "Enviar ao CRM"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => patchStatus('Qualificado'),
+    disabled: actioning || status === 'Qualificado',
     style: {
       height: 42,
       padding: '0 16px',
       borderRadius: 10,
       border: '1px solid var(--border)',
       background: 'transparent',
-      color: 'var(--text)',
+      color: status === 'Qualificado' ? C.green : 'var(--text)',
       fontSize: 13,
       fontFamily: 'inherit',
-      cursor: 'pointer'
+      cursor: 'pointer',
+      opacity: actioning || status === 'Qualificado' ? .6 : 1
     }
   }, "Aprovar"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => patchStatus('Descartado'),
+    disabled: actioning || status === 'Descartado',
     style: {
       height: 42,
       padding: '0 16px',
       borderRadius: 10,
       border: '1px solid var(--border)',
       background: 'transparent',
-      color: 'var(--dim)',
+      color: status === 'Descartado' ? C.red : 'var(--dim)',
       fontSize: 13,
       fontFamily: 'inherit',
-      cursor: 'pointer'
+      cursor: 'pointer',
+      opacity: actioning || status === 'Descartado' ? .6 : 1
     }
   }, "Descartar"))));
 }
 
-// ── Modals ────────────────────────────────────────────────────────────────────
+// ── CRM Modal ─────────────────────────────────────────────────────────────────
 function CrmModal({
-  count,
-  onClose
+  ids,
+  onClose,
+  onConfirm
 }) {
+  const [loading, setLoading] = useState(false);
+  const confirmar = async () => {
+    setLoading(true);
+    try {
+      await fetch('/api/leads/acoes', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          ids,
+          acao: 'enviar_crm',
+          crm_destino: 'RD Station'
+        })
+      });
+      onConfirm();
+    } catch (_) {
+      alert('Erro ao enviar ao CRM.');
+    } finally {
+      setLoading(false);
+    }
+  };
   return /*#__PURE__*/React.createElement("div", {
     style: {
       position: 'fixed',
@@ -4013,7 +3859,7 @@ function CrmModal({
       color: 'var(--dim)',
       margin: 0
     }
-  }, count, " leads ser\xE3o enviados \u2014 a\xE7\xE3o deliberada, sem automa\xE7\xE3o.")), /*#__PURE__*/React.createElement("div", {
+  }, ids.length, " lead", ids.length !== 1 ? 's' : '', " ", ids.length !== 1 ? 'serão enviados' : 'será enviado', " \u2014 a\xE7\xE3o deliberada, sem automa\xE7\xE3o.")), /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '20px 24px',
       display: 'flex',
@@ -4094,7 +3940,8 @@ function CrmModal({
       cursor: 'pointer'
     }
   }, "Cancelar"), /*#__PURE__*/React.createElement("button", {
-    onClick: onClose,
+    onClick: confirmar,
+    disabled: loading,
     style: {
       height: 42,
       padding: '0 20px',
@@ -4105,375 +3952,32 @@ function CrmModal({
       fontWeight: 600,
       fontSize: 13.5,
       fontFamily: 'inherit',
-      cursor: 'pointer'
-    }
-  }, "Confirmar envio"))));
-}
-function ExportModal({
-  count,
-  onClose
-}) {
-  const CheckOn = () => /*#__PURE__*/React.createElement("span", {
-    style: {
-      width: 17,
-      height: 17,
-      borderRadius: 5,
-      background: C.blue,
-      display: 'inline-flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      flexShrink: 0
-    }
-  }, /*#__PURE__*/React.createElement(SvgMulti, {
-    w: 10,
-    h: 10,
-    sw: 3,
-    color: "#fff"
-  }, /*#__PURE__*/React.createElement("path", {
-    d: "M20 6L9 17l-5-5"
-  })));
-  const CheckOff = () => /*#__PURE__*/React.createElement("span", {
-    style: {
-      width: 17,
-      height: 17,
-      borderRadius: 5,
-      border: '1.5px solid var(--border)',
-      flexShrink: 0
-    }
-  });
-  return /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'fixed',
-      inset: 0,
-      zIndex: 80,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    onClick: onClose,
-    style: {
-      position: 'absolute',
-      inset: 0,
-      background: 'rgba(5,9,20,.6)'
-    }
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'relative',
-      width: 440,
-      maxWidth: '92vw',
-      background: 'var(--panel)',
-      border: '1px solid var(--border)',
-      borderRadius: 16,
-      overflow: 'hidden'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '22px 24px 18px',
-      borderBottom: '1px solid var(--border)'
-    }
-  }, /*#__PURE__*/React.createElement("h2", {
-    style: {
-      fontSize: 17,
-      fontWeight: 600,
-      margin: '0 0 4px'
-    }
-  }, "Exportar lista"), /*#__PURE__*/React.createElement("p", {
-    style: {
-      fontSize: 13,
-      color: 'var(--dim)',
-      margin: 0
-    }
-  }, count, " leads selecionados.")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '20px 24px',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 18
-    }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    style: {
-      display: 'block',
-      fontSize: 12,
-      color: 'var(--dim)',
-      marginBottom: 9
-    }
-  }, "Formato"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 9
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1,
-      height: 40,
-      borderRadius: 9,
-      border: `1.5px solid ${C.gold}`,
-      background: 'rgba(251,228,154,.08)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      fontSize: 13,
-      fontWeight: 600,
-      cursor: 'pointer'
-    }
-  }, "CSV"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1,
-      height: 40,
-      borderRadius: 9,
-      border: '1px solid var(--border)',
-      background: 'var(--panel2)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      fontSize: 13,
-      color: 'var(--dim)',
-      cursor: 'pointer'
-    }
-  }, "XLSX"))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    style: {
-      display: 'block',
-      fontSize: 12,
-      color: 'var(--dim)',
-      marginBottom: 9
-    }
-  }, "Campos inclu\xEDdos"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 9
-    }
-  }, [['on', 'Razão social e CNPJ'], ['on', 'Decisor e cargo'], ['on', 'Contatos validados'], ['off', 'Confidence score e breakdown']].map(([state, label]) => /*#__PURE__*/React.createElement("label", {
-    key: label,
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 9,
-      fontSize: 13,
       cursor: 'pointer',
-      color: state === 'off' ? 'var(--dim)' : 'var(--text)'
+      opacity: loading ? .6 : 1
     }
-  }, state === 'on' ? /*#__PURE__*/React.createElement(CheckOn, null) : /*#__PURE__*/React.createElement(CheckOff, null), label))))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '16px 24px',
-      borderTop: '1px solid var(--border)',
-      display: 'flex',
-      gap: 10,
-      justifyContent: 'flex-end'
-    }
-  }, /*#__PURE__*/React.createElement("button", {
-    onClick: onClose,
-    style: {
-      height: 42,
-      padding: '0 18px',
-      borderRadius: 10,
-      border: '1px solid var(--border)',
-      background: 'transparent',
-      color: 'var(--text)',
-      fontSize: 13.5,
-      fontFamily: 'inherit',
-      cursor: 'pointer'
-    }
-  }, "Cancelar"), /*#__PURE__*/React.createElement("button", {
-    onClick: onClose,
-    style: {
-      height: 42,
-      padding: '0 20px',
-      borderRadius: 10,
-      border: 'none',
-      background: 'var(--gold)',
-      color: '#0E1936',
-      fontWeight: 600,
-      fontSize: 13.5,
-      fontFamily: 'inherit',
-      cursor: 'pointer'
-    }
-  }, "Gerar e baixar"))));
-}
-
-// ── Login ─────────────────────────────────────────────────────────────────────
-function Login({
-  theme,
-  onLogin,
-  onTheme
-}) {
-  return /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1,
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      position: 'relative',
-      overflow: 'hidden',
-      background: 'var(--bg)',
-      minHeight: '100vh'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'absolute',
-      inset: 0,
-      opacity: .5,
-      pointerEvents: 'none',
-      backgroundImage: 'radial-gradient(circle at 50% 42%, var(--vignette,rgba(58,142,255,.10)), transparent 55%)'
-    }
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'absolute',
-      top: -60,
-      right: -60,
-      width: 520,
-      height: 520,
-      opacity: .06,
-      color: C.gold
-    }
-  }, /*#__PURE__*/React.createElement(CrosshairBig, null)), /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'relative',
-      width: 380,
-      maxWidth: '90vw'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 12,
-      marginBottom: 38
-    }
-  }, /*#__PURE__*/React.createElement("img", {
-    src: "hunter_logo_icon.png",
-    alt: "Hunter",
-    style: {
-      width: 46,
-      height: 46
-    }
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      flexDirection: 'column',
-      lineHeight: 1
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 21,
-      fontWeight: 600,
-      letterSpacing: '.22em'
-    }
-  }, "HUNTER"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 11,
-      color: C.gold,
-      letterSpacing: '.16em',
-      marginTop: 5
-    }
-  }, "PRECIS\xC3O EM ESCALA"))), /*#__PURE__*/React.createElement("h1", {
-    style: {
-      fontSize: 24,
-      fontWeight: 600,
-      margin: '0 0 6px'
-    }
-  }, "Entrar"), /*#__PURE__*/React.createElement("p", {
-    style: {
-      fontSize: 13,
-      color: 'var(--dim)',
-      margin: '0 0 28px'
-    }
-  }, "Acesse o motor de atra\xE7\xE3o de leads."), /*#__PURE__*/React.createElement("label", {
-    style: {
-      display: 'block',
-      fontSize: 12,
-      color: 'var(--dim)',
-      marginBottom: 7
-    }
-  }, "E-mail"), /*#__PURE__*/React.createElement("input", {
-    defaultValue: "vendas@empresa.com.br",
-    style: {
-      width: '100%',
-      height: 44,
-      borderRadius: 10,
-      border: '1px solid var(--border)',
-      background: 'var(--panel2)',
-      color: 'var(--text)',
-      padding: '0 14px',
-      fontSize: 14,
-      fontFamily: 'inherit',
-      marginBottom: 16
-    }
-  }), /*#__PURE__*/React.createElement("label", {
-    style: {
-      display: 'block',
-      fontSize: 12,
-      color: 'var(--dim)',
-      marginBottom: 7
-    }
-  }, "Senha"), /*#__PURE__*/React.createElement("input", {
-    type: "password",
-    defaultValue: "123456789",
-    style: {
-      width: '100%',
-      height: 44,
-      borderRadius: 10,
-      border: '1px solid var(--border)',
-      background: 'var(--panel2)',
-      color: 'var(--text)',
-      padding: '0 14px',
-      fontSize: 14,
-      fontFamily: 'inherit',
-      marginBottom: 22
-    }
-  }), /*#__PURE__*/React.createElement("button", {
-    onClick: onLogin,
-    style: {
-      width: '100%',
-      height: 46,
-      borderRadius: 10,
-      border: 'none',
-      background: 'var(--gold)',
-      color: '#0E1936',
-      fontWeight: 600,
-      fontSize: 14,
-      fontFamily: 'inherit',
-      cursor: 'pointer'
-    }
-  }, "Entrar"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      textAlign: 'center',
-      marginTop: 18
-    }
-  }, /*#__PURE__*/React.createElement("a", {
-    href: "#",
-    style: {
-      fontSize: 12,
-      color: C.blue,
-      textDecoration: 'none'
-    }
-  }, "Esqueci minha senha"))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      position: 'absolute',
-      top: 24,
-      right: 24
-    }
-  }, /*#__PURE__*/React.createElement(ThemeToggle, {
-    theme: theme,
-    onToggle: onTheme
-  })));
+  }, loading ? 'Enviando…' : 'Confirmar envio'))));
 }
 
 // ── App ───────────────────────────────────────────────────────────────────────
 function App() {
   const [theme, setTheme] = useState('dark');
   const [screen, setScreen] = useState('dashboard');
-  const [selected, setSelected] = useState([]);
-  const [leadDetail, setLeadDetail] = useState(null);
-  const [modal, setModal] = useState(null);
-  const [buscaDetail, setBuscaDetail] = useState(null);
-  const [novaTipo, setNovaTipo] = useState('icp');
-  const [ritmo, setRitmo] = useState(120);
-  const [emailOnly, setEmailOnly] = useState(false);
+  const [openLeadId, setOpenLeadId] = useState(null);
+  const [crmIds, setCrmIds] = useState(null);
+  const [buscaDetailId, setBuscaDetailId] = useState(null);
+  const [user, setUser] = useState(null);
+  const [leadsRefreshKey, setLeadsRefreshKey] = useState(0);
+  useEffect(() => {
+    fetch('/api/auth/me', {
+      credentials: 'same-origin'
+    }).then(r => r.ok ? r.json() : null).then(u => {
+      if (u) setUser(u);
+    }).catch(() => {});
+  }, []);
   const navTo = s => {
     setScreen(s);
-    setLeadDetail(null);
-    setModal(null);
+    setOpenLeadId(null);
+    setCrmIds(null);
   };
   const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
   const logout = async () => {
@@ -4485,11 +3989,9 @@ function App() {
     } catch (_) {}
     window.location = '/';
   };
-  const toggleSel = id => setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  const toggleAll = () => setSelected(prev => prev.length ? [] : RAW_LEADS.map(l => l.id));
   const openBusca = id => {
     if (id) {
-      setBuscaDetail(id);
+      setBuscaDetailId(id);
       setScreen('buscaDetail');
     } else {
       setScreen('buscas');
@@ -4514,38 +4016,27 @@ function App() {
     switch (screen) {
       case 'dashboard':
         return /*#__PURE__*/React.createElement(Dashboard, {
-          onOpenBusca: openBusca,
-          onNova: () => navTo('nova')
+          onOpenBusca: openBusca
         });
       case 'leads':
         return /*#__PURE__*/React.createElement(Leads, {
-          selected: selected,
-          onSelect: toggleSel,
-          onToggleAll: toggleAll,
-          onClearSel: () => setSelected([]),
-          onOpenLead: id => setLeadDetail(id),
-          onOpenCrm: () => setModal('crm'),
-          onOpenExport: () => setModal('export'),
-          emailOnly: emailOnly,
-          onToggleEmailOnly: () => setEmailOnly(e => !e)
+          refreshKey: leadsRefreshKey,
+          onOpenLead: setOpenLeadId,
+          onCrm: setCrmIds
         });
       case 'buscas':
         return /*#__PURE__*/React.createElement(Buscas, {
-          onOpen: id => openBusca(id)
+          onOpen: openBusca
         });
       case 'buscaDetail':
         return /*#__PURE__*/React.createElement(BuscaDetail, {
-          buscaId: buscaDetail,
+          buscaId: buscaDetailId,
           onBack: () => setScreen('buscas'),
-          onOpenLead: id => setLeadDetail(id)
+          onOpenLead: setOpenLeadId
         });
       case 'nova':
         return /*#__PURE__*/React.createElement(NovaBusca, {
-          tipo: novaTipo,
-          onTipo: setNovaTipo,
-          ritmo: ritmo,
-          onRitmo: setRitmo,
-          onLigar: () => navTo('buscas')
+          onSalvar: () => navTo('buscas')
         });
       case 'integracoes':
         return /*#__PURE__*/React.createElement(Integracoes, null);
@@ -4559,15 +4050,6 @@ function App() {
         return null;
     }
   };
-  if (screen === 'login') {
-    return /*#__PURE__*/React.createElement("div", {
-      style: rootStyle
-    }, /*#__PURE__*/React.createElement(Login, {
-      theme: theme,
-      onLogin: () => setScreen('dashboard'),
-      onTheme: toggleTheme
-    }));
-  }
   return /*#__PURE__*/React.createElement("div", {
     style: rootStyle
   }, /*#__PURE__*/React.createElement("div", {
@@ -4579,7 +4061,8 @@ function App() {
   }, /*#__PURE__*/React.createElement(Sidebar, {
     screen: screen,
     onNav: navTo,
-    onLogout: logout
+    onLogout: logout,
+    user: user
   }), /*#__PURE__*/React.createElement("div", {
     style: {
       flex: 1,
@@ -4592,23 +4075,26 @@ function App() {
     screen: screen,
     theme: theme,
     onTheme: toggleTheme,
-    onNova: () => navTo('nova')
+    onNova: () => navTo('nova'),
+    user: user
   }), /*#__PURE__*/React.createElement("main", {
     style: {
       flex: 1,
       overflowY: 'auto',
       padding: 28
     }
-  }, renderScreen()))), leadDetail && /*#__PURE__*/React.createElement(LeadDetailPanel, {
-    leadId: leadDetail,
-    onClose: () => setLeadDetail(null),
-    onCrm: () => setModal('crm')
-  }), modal === 'crm' && /*#__PURE__*/React.createElement(CrmModal, {
-    count: Math.max(selected.length, 12),
-    onClose: () => setModal(null)
-  }), modal === 'export' && /*#__PURE__*/React.createElement(ExportModal, {
-    count: Math.max(selected.length, 12),
-    onClose: () => setModal(null)
+  }, renderScreen()))), openLeadId && /*#__PURE__*/React.createElement(LeadDetailPanel, {
+    leadId: openLeadId,
+    onClose: () => setOpenLeadId(null),
+    onCrm: ids => setCrmIds(ids),
+    onStatusChange: () => setLeadsRefreshKey(k => k + 1)
+  }), crmIds && /*#__PURE__*/React.createElement(CrmModal, {
+    ids: crmIds,
+    onClose: () => setCrmIds(null),
+    onConfirm: () => {
+      setCrmIds(null);
+      setLeadsRefreshKey(k => k + 1);
+    }
   }));
 }
 ReactDOM.createRoot(document.getElementById('root')).render(/*#__PURE__*/React.createElement(App, null));
