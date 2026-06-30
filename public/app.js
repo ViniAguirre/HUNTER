@@ -1,7 +1,8 @@
 const {
   useState,
   useRef,
-  useEffect
+  useEffect,
+  useMemo
 } = React;
 
 // ── constants ─────────────────────────────────────────────────────────────────
@@ -2052,6 +2053,14 @@ function BuscaDetail({
 // ── Nova Busca ────────────────────────────────────────────────────────────────
 const UFS_BR = ['AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'];
 const PORTES_BR = ['Micro', 'Pequena', 'Média', 'Grande'];
+
+// Tabela CNAE (código + descrição) carregada uma vez e cacheada no módulo.
+let _cnaeCache = null;
+const semAcento = s => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const fmtCnae = c => {
+  const d = String(c).padStart(7, '0');
+  return `${d.slice(0, 4)}-${d.slice(4, 5)}/${d.slice(5, 7)}`;
+};
 function NovaBusca({
   onSalvar
 }) {
@@ -2061,9 +2070,42 @@ function NovaBusca({
   const [saving, setSaving] = useState(false);
   const [ufs, setUfs] = useState([]);
   const [portes, setPortes] = useState([]);
+  const [cnaeBusca, setCnaeBusca] = useState('');
+  const [cnaeSel, setCnaeSel] = useState([]);
+  const [cnaeData, setCnaeData] = useState([]);
+  const [cnaeFoco, setCnaeFoco] = useState(false);
   const nomeRef = useRef();
-  const cnaesRef = useRef();
   const criteriosRef = useRef();
+  useEffect(() => {
+    if (_cnaeCache) {
+      setCnaeData(_cnaeCache);
+      return;
+    }
+    fetch('/cnae.json', {
+      credentials: 'same-origin'
+    }).then(r => r.json()).then(d => {
+      _cnaeCache = d;
+      setCnaeData(d);
+    }).catch(() => {});
+  }, []);
+  const cnaeResultados = useMemo(() => {
+    const q = semAcento(cnaeBusca.trim());
+    if (q.length < 2) return [];
+    const qDig = q.replace(/\D/g, '');
+    const out = [];
+    for (const s of cnaeData) {
+      if (semAcento(s.d).includes(q) || qDig.length >= 3 && s.c.includes(qDig)) {
+        out.push(s);
+        if (out.length >= 25) break;
+      }
+    }
+    return out;
+  }, [cnaeBusca, cnaeData]);
+  const addCnae = s => {
+    setCnaeSel(prev => prev.find(x => x.c === s.c) ? prev : [...prev, s]);
+    setCnaeBusca('');
+  };
+  const removeCnae = c => setCnaeSel(prev => prev.filter(x => x.c !== c));
   const tipos = [{
     key: 'icp',
     titulo: 'Por perfil (ICP)',
@@ -2089,14 +2131,15 @@ function NovaBusca({
     }
     setSaving(true);
     try {
-      const cnaes = (cnaesRef.current?.value || '').split(',').map(s => s.trim().replace(/\D/g, '')).filter(Boolean);
-      const chips = [...ufs.map(u => `UF: ${u}`), ...portes.map(p => `Porte: ${p}`), ...cnaes.map(c => `CNAE: ${c}`)];
+      const cnaes = cnaeSel.map(s => s.c);
+      const chips = [...ufs.map(u => `UF: ${u}`), ...portes.map(p => `Porte: ${p}`), ...cnaeSel.map(s => `CNAE: ${s.d}`)];
       const criterios = tipo === 'icp' ? {
         chips,
         params: {
           ufs,
           portes,
           cnaes,
+          cnaes_rotulos: cnaeSel,
           query: criteriosRef.current?.value || ''
         },
         texto: criteriosRef.current?.value || ''
@@ -2182,7 +2225,8 @@ function NovaBusca({
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
-      marginBottom: 18
+      marginBottom: 18,
+      position: 'relative'
     }
   }, /*#__PURE__*/React.createElement("label", {
     style: {
@@ -2191,9 +2235,12 @@ function NovaBusca({
       color: 'var(--dim)',
       marginBottom: 7
     }
-  }, "CNAEs (c\xF3digos separados por v\xEDrgula)"), /*#__PURE__*/React.createElement("input", {
-    ref: cnaesRef,
-    placeholder: "Ex: 7311300, 7312200",
+  }, "Atividade \u2014 busque por palavra (vira CNAE automaticamente)"), /*#__PURE__*/React.createElement("input", {
+    value: cnaeBusca,
+    onChange: e => setCnaeBusca(e.target.value),
+    onFocus: () => setCnaeFoco(true),
+    onBlur: () => setTimeout(() => setCnaeFoco(false), 150),
+    placeholder: "Ex: fisioterapia, restaurante, desenvolvimento de software\u2026",
     style: {
       width: '100%',
       height: 40,
@@ -2205,7 +2252,84 @@ function NovaBusca({
       fontSize: 13,
       fontFamily: 'inherit'
     }
-  })), /*#__PURE__*/React.createElement("div", {
+  }), cnaeFoco && cnaeBusca.trim().length >= 2 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'absolute',
+      zIndex: 30,
+      left: 0,
+      right: 0,
+      top: '100%',
+      marginTop: 4,
+      maxHeight: 248,
+      overflowY: 'auto',
+      background: 'var(--panel2)',
+      border: '1px solid var(--border)',
+      borderRadius: 9,
+      boxShadow: '0 10px 28px rgba(0,0,0,.45)'
+    }
+  }, cnaeData.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '10px 12px',
+      fontSize: 12.5,
+      color: 'var(--faint)'
+    }
+  }, "Carregando atividades\u2026") : cnaeResultados.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '10px 12px',
+      fontSize: 12.5,
+      color: 'var(--faint)'
+    }
+  }, "Nenhuma atividade encontrada.") : cnaeResultados.map(s => /*#__PURE__*/React.createElement("div", {
+    key: s.c,
+    onMouseDown: () => addCnae(s),
+    className: "row-hover",
+    style: {
+      padding: '9px 12px',
+      fontSize: 12.5,
+      cursor: 'pointer',
+      borderBottom: '1px solid var(--border)',
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", null, s.d), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)',
+      flexShrink: 0,
+      fontVariantNumeric: 'tabular-nums'
+    }
+  }, fmtCnae(s.c))))), cnaeSel.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: 6,
+      marginTop: 9
+    }
+  }, cnaeSel.map(s => /*#__PURE__*/React.createElement("span", {
+    key: s.c,
+    style: {
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 7,
+      padding: '5px 10px',
+      borderRadius: 7,
+      fontSize: 11.5,
+      border: `1px solid ${C.gold}`,
+      background: 'rgba(251,228,154,.1)',
+      color: C.gold
+    }
+  }, s.d, /*#__PURE__*/React.createElement("span", {
+    onClick: () => removeCnae(s.c),
+    title: "Remover",
+    style: {
+      cursor: 'pointer',
+      fontWeight: 700,
+      fontSize: 13,
+      lineHeight: 1,
+      opacity: .8
+    }
+  }, "\xD7"))))), /*#__PURE__*/React.createElement("div", {
     style: {
       marginBottom: 18
     }

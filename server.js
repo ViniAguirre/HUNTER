@@ -796,6 +796,7 @@ function gate(req, res, next) {
   return res.status(401).send('Faça login para acessar.');
 }
 app.get('/app.js', gate, (req, res) => res.sendFile(path.join(PUBLIC, 'app.js')));
+app.get('/cnae.json', gate, (req, res) => res.sendFile(path.join(PUBLIC, 'cnae.json')));
 app.use('/vendor', gate, express.static(path.join(PUBLIC, 'vendor')));
 
 app.get('*', (req, res) => {

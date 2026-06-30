@@ -1,4 +1,4 @@
-const { useState, useRef, useEffect } = React;
+const { useState, useRef, useEffect, useMemo } = React;
 
 // ── constants ─────────────────────────────────────────────────────────────────
 const C = { green:'#34D399', amber:'#FBBF24', red:'#F87171', blue:'#3A8EFF', gold:'#FBE49A', cyan:'#7AD9FF', gray:'#7C89A8' };
@@ -806,6 +806,11 @@ function BuscaDetail({ buscaId, onBack, onOpenLead }) {
 const UFS_BR = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];
 const PORTES_BR = ['Micro','Pequena','Média','Grande'];
 
+// Tabela CNAE (código + descrição) carregada uma vez e cacheada no módulo.
+let _cnaeCache = null;
+const semAcento = s => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const fmtCnae = c => { const d = String(c).padStart(7, '0'); return `${d.slice(0,4)}-${d.slice(4,5)}/${d.slice(5,7)}`; };
+
 function NovaBusca({ onSalvar }) {
   const [tipo, setTipo] = useState('icp');
   const [ritmo, setRitmo] = useState(120);
@@ -813,9 +818,37 @@ function NovaBusca({ onSalvar }) {
   const [saving, setSaving] = useState(false);
   const [ufs, setUfs] = useState([]);
   const [portes, setPortes] = useState([]);
+  const [cnaeBusca, setCnaeBusca] = useState('');
+  const [cnaeSel, setCnaeSel] = useState([]);
+  const [cnaeData, setCnaeData] = useState([]);
+  const [cnaeFoco, setCnaeFoco] = useState(false);
   const nomeRef = useRef();
-  const cnaesRef = useRef();
   const criteriosRef = useRef();
+
+  useEffect(() => {
+    if (_cnaeCache) { setCnaeData(_cnaeCache); return; }
+    fetch('/cnae.json', { credentials:'same-origin' })
+      .then(r => r.json())
+      .then(d => { _cnaeCache = d; setCnaeData(d); })
+      .catch(() => {});
+  }, []);
+
+  const cnaeResultados = useMemo(() => {
+    const q = semAcento(cnaeBusca.trim());
+    if (q.length < 2) return [];
+    const qDig = q.replace(/\D/g, '');
+    const out = [];
+    for (const s of cnaeData) {
+      if (semAcento(s.d).includes(q) || (qDig.length >= 3 && s.c.includes(qDig))) {
+        out.push(s);
+        if (out.length >= 25) break;
+      }
+    }
+    return out;
+  }, [cnaeBusca, cnaeData]);
+
+  const addCnae = s => { setCnaeSel(prev => prev.find(x => x.c === s.c) ? prev : [...prev, s]); setCnaeBusca(''); };
+  const removeCnae = c => setCnaeSel(prev => prev.filter(x => x.c !== c));
 
   const tipos = [
     { key:'icp', titulo:'Por perfil (ICP)', desc:'Defina CNAE, UF e porte do cliente ideal.',
@@ -833,14 +866,14 @@ function NovaBusca({ onSalvar }) {
     if (!nome) { alert('Informe o nome da busca.'); return; }
     setSaving(true);
     try {
-      const cnaes = (cnaesRef.current?.value || '').split(',').map(s => s.trim().replace(/\D/g,'')).filter(Boolean);
+      const cnaes = cnaeSel.map(s => s.c);
       const chips = [
         ...ufs.map(u => `UF: ${u}`),
         ...portes.map(p => `Porte: ${p}`),
-        ...cnaes.map(c => `CNAE: ${c}`),
+        ...cnaeSel.map(s => `CNAE: ${s.d}`),
       ];
       const criterios = tipo === 'icp'
-        ? { chips, params: { ufs, portes, cnaes, query: criteriosRef.current?.value || '' }, texto: criteriosRef.current?.value || '' }
+        ? { chips, params: { ufs, portes, cnaes, cnaes_rotulos: cnaeSel, query: criteriosRef.current?.value || '' }, texto: criteriosRef.current?.value || '' }
         : { texto: criteriosRef.current?.value || '' };
       const r = await fetch('/api/buscas', {
         method:'POST', credentials:'same-origin',
@@ -877,13 +910,47 @@ function NovaBusca({ onSalvar }) {
 
       {tipo === 'icp' ? (
         <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:20, marginBottom:18 }}>
-          <div style={{ marginBottom:18 }}>
+          <div style={{ marginBottom:18, position:'relative' }}>
             <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>
-              CNAEs (códigos separados por vírgula)
+              Atividade — busque por palavra (vira CNAE automaticamente)
             </label>
-            <input ref={cnaesRef} placeholder="Ex: 7311300, 7312200"
+            <input value={cnaeBusca}
+              onChange={e => setCnaeBusca(e.target.value)}
+              onFocus={() => setCnaeFoco(true)}
+              onBlur={() => setTimeout(() => setCnaeFoco(false), 150)}
+              placeholder="Ex: fisioterapia, restaurante, desenvolvimento de software…"
               style={{ width:'100%', height:40, borderRadius:9, border:'1px solid var(--border)',
                 background:'var(--panel2)', color:'var(--text)', padding:'0 12px', fontSize:13, fontFamily:'inherit' }}/>
+            {cnaeFoco && cnaeBusca.trim().length >= 2 && (
+              <div style={{ position:'absolute', zIndex:30, left:0, right:0, top:'100%', marginTop:4,
+                maxHeight:248, overflowY:'auto', background:'var(--panel2)', border:'1px solid var(--border)',
+                borderRadius:9, boxShadow:'0 10px 28px rgba(0,0,0,.45)' }}>
+                {cnaeData.length === 0 ? (
+                  <div style={{ padding:'10px 12px', fontSize:12.5, color:'var(--faint)' }}>Carregando atividades…</div>
+                ) : cnaeResultados.length === 0 ? (
+                  <div style={{ padding:'10px 12px', fontSize:12.5, color:'var(--faint)' }}>Nenhuma atividade encontrada.</div>
+                ) : cnaeResultados.map(s => (
+                  <div key={s.c} onMouseDown={() => addCnae(s)} className="row-hover"
+                    style={{ padding:'9px 12px', fontSize:12.5, cursor:'pointer', borderBottom:'1px solid var(--border)',
+                      display:'flex', justifyContent:'space-between', alignItems:'center', gap:10 }}>
+                    <span>{s.d}</span>
+                    <span style={{ color:'var(--faint)', flexShrink:0, fontVariantNumeric:'tabular-nums' }}>{fmtCnae(s.c)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {cnaeSel.length > 0 && (
+              <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginTop:9 }}>
+                {cnaeSel.map(s => (
+                  <span key={s.c} style={{ display:'inline-flex', alignItems:'center', gap:7, padding:'5px 10px',
+                    borderRadius:7, fontSize:11.5, border:`1px solid ${C.gold}`, background:'rgba(251,228,154,.1)', color:C.gold }}>
+                    {s.d}
+                    <span onClick={() => removeCnae(s.c)} title="Remover"
+                      style={{ cursor:'pointer', fontWeight:700, fontSize:13, lineHeight:1, opacity:.8 }}>×</span>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
           <div style={{ marginBottom:18 }}>
             <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>UFs</label>
