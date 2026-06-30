@@ -41,10 +41,10 @@ if (process.env.REDIS_HOST) {
     maxRetriesPerRequest: null,
   };
   monitorQueues = {
-    descoberta: new Queue('hunter:descoberta', { connection: { ...redisOpts } }),
-    enriquecimento: new Queue('hunter:enriquecimento', { connection: { ...redisOpts } }),
-    filtroContador: new Queue('hunter:filtro_contador', { connection: { ...redisOpts } }),
-    score1: new Queue('hunter:score1', { connection: { ...redisOpts } }),
+    descoberta: new Queue('hunter-descoberta', { connection: { ...redisOpts } }),
+    enriquecimento: new Queue('hunter-enriquecimento', { connection: { ...redisOpts } }),
+    filtroContador: new Queue('hunter-filtro_contador', { connection: { ...redisOpts } }),
+    score1: new Queue('hunter-score1', { connection: { ...redisOpts } }),
   };
 }
 
