@@ -2640,42 +2640,91 @@ function Integracoes() {
 }
 
 // ── Usuários ──────────────────────────────────────────────────────────────────
+function fmtAcesso(ts) {
+  if (!ts) return 'nunca';
+  try {
+    return new Date(ts).toLocaleString('pt-BR', {
+      day: '2-digit',
+      month: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  } catch (_) {
+    return '—';
+  }
+}
 function Usuarios() {
-  const users = [{
-    nome: 'Vinícius Aguirre',
-    email: 'vinicius@empresa.com.br',
-    papel: 'Admin',
-    ativo: true,
-    ultimo: 'agora'
-  }, {
-    nome: 'Marina Castro',
-    email: 'marina@empresa.com.br',
-    papel: 'Operador',
-    ativo: true,
-    ultimo: 'há 12 min'
-  }, {
-    nome: 'Rafael Mendes',
-    email: 'rafael@empresa.com.br',
-    papel: 'Operador',
-    ativo: true,
-    ultimo: 'há 3h'
-  }, {
-    nome: 'Paula Nunes',
-    email: 'paula@empresa.com.br',
-    papel: 'Visualizador',
-    ativo: true,
-    ultimo: 'ontem'
-  }, {
-    nome: 'Diego Souza',
-    email: 'diego@empresa.com.br',
-    papel: 'Operador',
-    ativo: false,
-    ultimo: 'há 8 dias'
-  }];
+  const [users, setUsers] = useState(null);
+  const [erro, setErro] = useState(null);
   const papelColors = {
     Admin: C.gold,
     Operador: C.blue,
     Visualizador: C.gray
+  };
+  const carregar = () => {
+    setErro(null);
+    fetch('/api/usuarios', {
+      credentials: 'same-origin'
+    }).then(r => {
+      if (!r.ok) throw new Error('Sem permissão (apenas Admin) ou sessão expirada.');
+      return r.json();
+    }).then(setUsers).catch(e => {
+      setUsers([]);
+      setErro(e.message);
+    });
+  };
+  useEffect(carregar, []);
+  const convidar = async () => {
+    const nome = window.prompt('Nome do usuário:');
+    if (!nome) return;
+    const email = window.prompt('E-mail:');
+    if (!email) return;
+    const papel = window.prompt('Papel (Admin / Operador / Visualizador):', 'Operador') || 'Operador';
+    const resp = await fetch('/api/usuarios', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        nome,
+        email,
+        papel
+      })
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      window.alert(data.erro || 'Erro ao criar usuário.');
+      return;
+    }
+    window.alert('Usuário criado!\n\nSenha provisória: ' + data.senha_provisoria + '\n\nAnote e repasse com segurança.');
+    carregar();
+  };
+  const alternar = async u => {
+    if (u.ativo) {
+      if (!window.confirm('Desativar ' + u.nome + '?')) return;
+      const r = await fetch('/api/usuarios/' + u.id, {
+        method: 'DELETE',
+        credentials: 'same-origin'
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        window.alert(d.erro || 'Erro.');
+        return;
+      }
+    } else {
+      await fetch('/api/usuarios/' + u.id, {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          ativo: true
+        })
+      });
+    }
+    carregar();
   };
   return /*#__PURE__*/React.createElement("div", {
     style: {
@@ -2688,6 +2737,7 @@ function Usuarios() {
       marginBottom: 14
     }
   }, /*#__PURE__*/React.createElement("button", {
+    onClick: convidar,
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -2709,7 +2759,17 @@ function Usuarios() {
     w: 15,
     h: 15,
     sw: 2
-  }), "Convidar usu\xE1rio")), /*#__PURE__*/React.createElement("div", {
+  }), "Convidar usu\xE1rio")), erro && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      color: C.red,
+      background: 'rgba(248,113,113,.1)',
+      border: '1px solid rgba(248,113,113,.25)',
+      borderRadius: 9,
+      padding: '10px 12px',
+      marginBottom: 14
+    }
+  }, erro), /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'var(--panel)',
       border: '1px solid var(--border)',
@@ -2719,7 +2779,7 @@ function Usuarios() {
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
-      gridTemplateColumns: '2fr 1.3fr 1fr 1fr 90px',
+      gridTemplateColumns: '2fr 1.3fr 1fr 1fr 110px',
       alignItems: 'center',
       gap: 10,
       padding: '12px 18px',
@@ -2730,13 +2790,25 @@ function Usuarios() {
       color: 'var(--faint)',
       textTransform: 'uppercase'
     }
-  }, /*#__PURE__*/React.createElement("div", null, "Usu\xE1rio"), /*#__PURE__*/React.createElement("div", null, "E-mail"), /*#__PURE__*/React.createElement("div", null, "Papel"), /*#__PURE__*/React.createElement("div", null, "\xDAltimo acesso"), /*#__PURE__*/React.createElement("div", null, "Status")), users.map(u => {
-    const ini = u.nome.split(' ').slice(0, 2).map(w => w[0]).join('');
+  }, /*#__PURE__*/React.createElement("div", null, "Usu\xE1rio"), /*#__PURE__*/React.createElement("div", null, "E-mail"), /*#__PURE__*/React.createElement("div", null, "Papel"), /*#__PURE__*/React.createElement("div", null, "\xDAltimo acesso"), /*#__PURE__*/React.createElement("div", null, "Status")), users === null ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '22px 18px',
+      fontSize: 13,
+      color: 'var(--faint)'
+    }
+  }, "Carregando\u2026") : users.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '22px 18px',
+      fontSize: 13,
+      color: 'var(--faint)'
+    }
+  }, "Nenhum usu\xE1rio.") : users.map(u => {
+    const ini = (u.nome || '?').split(' ').slice(0, 2).map(w => w[0]).join('');
     return /*#__PURE__*/React.createElement("div", {
-      key: u.nome,
+      key: u.id,
       style: {
         display: 'grid',
-        gridTemplateColumns: '2fr 1.3fr 1fr 1fr 90px',
+        gridTemplateColumns: '2fr 1.3fr 1fr 1fr 110px',
         alignItems: 'center',
         gap: 10,
         padding: '13px 18px',
@@ -2782,8 +2854,13 @@ function Usuarios() {
         fontSize: 12.5,
         color: 'var(--faint)'
       }
-    }, u.ultimo), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
-      style: badgeStyle(u.ativo ? C.green : C.gray)
+    }, fmtAcesso(u.ultimo_acesso)), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
+      onClick: () => alternar(u),
+      title: "Clique para alternar",
+      style: {
+        ...badgeStyle(u.ativo ? C.green : C.gray),
+        cursor: 'pointer'
+      }
     }, u.ativo ? 'Ativo' : 'Inativo')));
   })));
 }
@@ -4225,7 +4302,7 @@ function Login({
 // ── App ───────────────────────────────────────────────────────────────────────
 function App() {
   const [theme, setTheme] = useState('dark');
-  const [screen, setScreen] = useState('login');
+  const [screen, setScreen] = useState('dashboard');
   const [selected, setSelected] = useState([]);
   const [leadDetail, setLeadDetail] = useState(null);
   const [modal, setModal] = useState(null);
@@ -4239,6 +4316,15 @@ function App() {
     setModal(null);
   };
   const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
+  const logout = async () => {
+    try {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'same-origin'
+      });
+    } catch (_) {}
+    window.location = '/';
+  };
   const toggleSel = id => setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   const toggleAll = () => setSelected(prev => prev.length ? [] : RAW_LEADS.map(l => l.id));
   const openBusca = id => {
@@ -4333,7 +4419,7 @@ function App() {
   }, /*#__PURE__*/React.createElement(Sidebar, {
     screen: screen,
     onNav: navTo,
-    onLogout: () => navTo('login')
+    onLogout: logout
   }), /*#__PURE__*/React.createElement("div", {
     style: {
       flex: 1,

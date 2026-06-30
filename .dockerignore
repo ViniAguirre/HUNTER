@@ -1,9 +1,4 @@
-app.jsx
-build.sh
-COMO-PUBLICAR.txt
+node_modules
+npm-debug.log
 *.md
 .git
-.github
-Dockerfile
-.dockerignore
-portainer-stack-adhunter.yml

@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hunter — Entrar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased;
+    background:#0E1936;color:#ECEFF7;}
+  .wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;}
+  .vignette{position:absolute;inset:0;opacity:.5;pointer-events:none;
+    background-image:radial-gradient(circle at 50% 42%, rgba(58,142,255,.12), transparent 55%);}
+  .cross{position:absolute;top:-60px;right:-60px;width:520px;height:520px;opacity:.06;color:#FBE49A;}
+  .card{position:relative;width:380px;max-width:90vw;}
+  .brand{display:flex;align-items:center;gap:12px;margin-bottom:38px;}
+  .brand img{width:46px;height:46px;}
+  .brand .name{font-size:21px;font-weight:600;letter-spacing:.22em;line-height:1;}
+  .brand .tag{font-size:11px;color:#FBE49A;letter-spacing:.16em;margin-top:5px;}
+  h1{font-size:24px;font-weight:600;margin:0 0 6px;}
+  .sub{font-size:13px;color:#8A95B4;margin:0 0 28px;}
+  label{display:block;font-size:12px;color:#8A95B4;margin-bottom:7px;}
+  input{width:100%;height:44px;border-radius:10px;border:1px solid rgba(255,255,255,.08);
+    background:#101a3a;color:#ECEFF7;padding:0 14px;font-size:14px;font-family:inherit;margin-bottom:16px;outline:none;}
+  input:focus{border-color:#3A8EFF;}
+  button{width:100%;height:46px;border-radius:10px;border:none;background:#FBE49A;color:#0E1936;
+    font-weight:600;font-size:14px;font-family:inherit;cursor:pointer;margin-top:6px;}
+  button:disabled{opacity:.6;cursor:default;}
+  .err{display:none;font-size:13px;color:#F87171;background:rgba(248,113,113,.1);
+    border:1px solid rgba(248,113,113,.25);border-radius:9px;padding:10px 12px;margin-bottom:16px;}
+  .forgot{text-align:center;margin-top:18px;}
+  .forgot a{font-size:12px;color:#3A8EFF;text-decoration:none;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="vignette"></div>
+  <div class="cross">
+    <svg width="100%" height="100%" viewBox="0 0 200 200" fill="none" stroke="currentColor">
+      <circle cx="100" cy="100" r="78" stroke-width="2" stroke-dasharray="5 9"></circle>
+      <path d="M100 6v26M100 168v26M6 100h26M168 100h26" stroke-width="3" stroke-linecap="round"></path>
+      <path d="M100 60L132 122H68z" stroke-width="3" stroke-linejoin="round"></path>
+      <circle cx="100" cy="100" r="6" stroke-width="3"></circle>
+    </svg>
+  </div>
+  <form class="card" id="form">
+    <div class="brand">
+      <img src="/hunter_logo_icon.png" alt="Hunter" />
+      <div>
+        <div class="name">HUNTER</div>
+        <div class="tag">PRECISÃO EM ESCALA</div>
+      </div>
+    </div>
+    <h1>Entrar</h1>
+    <p class="sub">Acesse o motor de atração de leads.</p>
+    <div class="err" id="err"></div>
+    <label for="email">E-mail</label>
+    <input id="email" name="email" type="email" autocomplete="username" value="" placeholder="seu@email.com" />
+    <label for="senha">Senha</label>
+    <input id="senha" name="senha" type="password" autocomplete="current-password" value="" />
+    <button type="submit" id="btn">Entrar</button>
+    <div class="forgot"><a href="#">Esqueci minha senha</a></div>
+  </form>
+</div>
+<script>
+  var form = document.getElementById('form');
+  var err = document.getElementById('err');
+  var btn = document.getElementById('btn');
+  form.addEventListener('submit', async function (e) {
+    e.preventDefault();
+    err.style.display = 'none';
+    btn.disabled = true; btn.textContent = 'Entrando...';
+    try {
+      var resp = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: document.getElementById('email').value,
+          senha: document.getElementById('senha').value
+        })
+      });
+      if (resp.ok) { window.location = '/'; return; }
+      var data = await resp.json().catch(function () { return {}; });
+      err.textContent = data.erro || 'Não foi possível entrar.';
+      err.style.display = 'block';
+    } catch (_) {
+      err.textContent = 'Erro de conexão. Tente novamente.';
+      err.style.display = 'block';
+    }
+    btn.disabled = false; btn.textContent = 'Entrar';
+  });
+</script>
+</body>
+</html>
