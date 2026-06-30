@@ -34,11 +34,14 @@ jobs:
           tags: ghcr.io/viniaguirre/hunter:latest
 
       - name: Avisar o Portainer pra atualizar
+        continue-on-error: true
         env:
           HOOK: ${{ secrets.PORTAINER_WEBHOOK }}
         run: |
           if [ -n "$HOOK" ]; then
-            curl -fsS -X POST "$HOOK" && echo "Redeploy disparado no Portainer."
+            curl -fsS --max-time 30 -X POST "$HOOK" \
+              && echo "Redeploy disparado no Portainer." \
+              || echo "Webhook falhou (Portainer fora do ar?) — imagem já está no ghcr.io, redeploy manual no Portainer."
           else
             echo "PORTAINER_WEBHOOK ainda nao definido — pulei o redeploy (configure o segredo)."
           fi
