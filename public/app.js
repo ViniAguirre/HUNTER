@@ -2656,6 +2656,8 @@ function fmtAcesso(ts) {
 function Usuarios() {
   const [users, setUsers] = useState(null);
   const [erro, setErro] = useState(null);
+  const [novaCred, setNovaCred] = useState(null);
+  const [copiado, setCopiado] = useState(false);
   const papelColors = {
     Admin: C.gold,
     Operador: C.blue,
@@ -2697,38 +2699,54 @@ function Usuarios() {
       window.alert(data.erro || 'Erro ao criar usuário.');
       return;
     }
-    window.alert('Usuário criado!\n\nSenha provisória: ' + data.senha_provisoria + '\n\nAnote e repasse com segurança.');
+    setCopiado(false);
+    setNovaCred({
+      nome,
+      email,
+      senha: data.senha_provisoria
+    });
     carregar();
   };
+  const credText = c => 'Acesso ao Hunter\nURL: https://adhunter.antidotodigital.com\nE-mail: ' + c.email + '\nSenha provisória: ' + c.senha + '\n(troque a senha no primeiro acesso)';
+  const copiar = async c => {
+    try {
+      await navigator.clipboard.writeText(credText(c));
+      setCopiado(true);
+      setTimeout(() => setCopiado(false), 2500);
+    } catch (_) {
+      window.prompt('Copie as credenciais:', credText(c));
+    }
+  };
   const alternar = async u => {
-    if (u.ativo) {
-      if (!window.confirm('Desativar ' + u.nome + '?')) return;
-      const r = await fetch('/api/usuarios/' + u.id, {
-        method: 'DELETE',
-        credentials: 'same-origin'
-      });
-      if (!r.ok) {
-        const d = await r.json().catch(() => ({}));
-        window.alert(d.erro || 'Erro.');
-        return;
-      }
-    } else {
-      await fetch('/api/usuarios/' + u.id, {
-        method: 'PATCH',
-        credentials: 'same-origin',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          ativo: true
-        })
-      });
+    await fetch('/api/usuarios/' + u.id, {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        ativo: !u.ativo
+      })
+    });
+    carregar();
+  };
+  const excluir = async u => {
+    if (!window.confirm('Excluir ' + u.nome + ' definitivamente?\nEssa ação não pode ser desfeita.')) return;
+    const r = await fetch('/api/usuarios/' + u.id, {
+      method: 'DELETE',
+      credentials: 'same-origin'
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      window.alert(d.erro || 'Erro ao excluir.');
+      return;
     }
     carregar();
   };
+  const cols = '2fr 1.3fr .9fr 1fr 90px 44px';
   return /*#__PURE__*/React.createElement("div", {
     style: {
-      maxWidth: 980
+      maxWidth: 1010
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -2779,7 +2797,7 @@ function Usuarios() {
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
-      gridTemplateColumns: '2fr 1.3fr 1fr 1fr 110px',
+      gridTemplateColumns: cols,
       alignItems: 'center',
       gap: 10,
       padding: '12px 18px',
@@ -2790,7 +2808,7 @@ function Usuarios() {
       color: 'var(--faint)',
       textTransform: 'uppercase'
     }
-  }, /*#__PURE__*/React.createElement("div", null, "Usu\xE1rio"), /*#__PURE__*/React.createElement("div", null, "E-mail"), /*#__PURE__*/React.createElement("div", null, "Papel"), /*#__PURE__*/React.createElement("div", null, "\xDAltimo acesso"), /*#__PURE__*/React.createElement("div", null, "Status")), users === null ? /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", null, "Usu\xE1rio"), /*#__PURE__*/React.createElement("div", null, "E-mail"), /*#__PURE__*/React.createElement("div", null, "Papel"), /*#__PURE__*/React.createElement("div", null, "\xDAltimo acesso"), /*#__PURE__*/React.createElement("div", null, "Status"), /*#__PURE__*/React.createElement("div", null)), users === null ? /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '22px 18px',
       fontSize: 13,
@@ -2808,7 +2826,7 @@ function Usuarios() {
       key: u.id,
       style: {
         display: 'grid',
-        gridTemplateColumns: '2fr 1.3fr 1fr 1fr 110px',
+        gridTemplateColumns: cols,
         alignItems: 'center',
         gap: 10,
         padding: '13px 18px',
@@ -2856,13 +2874,155 @@ function Usuarios() {
       }
     }, fmtAcesso(u.ultimo_acesso)), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
       onClick: () => alternar(u),
-      title: "Clique para alternar",
+      title: "Clique para ativar/desativar",
       style: {
         ...badgeStyle(u.ativo ? C.green : C.gray),
         cursor: 'pointer'
       }
-    }, u.ativo ? 'Ativo' : 'Inativo')));
-  })));
+    }, u.ativo ? 'Ativo' : 'Inativo')), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("button", {
+      onClick: () => excluir(u),
+      title: "Excluir usu\xE1rio",
+      style: {
+        width: 30,
+        height: 30,
+        borderRadius: 8,
+        border: '1px solid var(--border)',
+        background: 'transparent',
+        color: 'var(--dim)',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center'
+      }
+    }, /*#__PURE__*/React.createElement(SvgMulti, {
+      w: 15,
+      h: 15,
+      sw: 1.7
+    }, /*#__PURE__*/React.createElement("path", {
+      d: "M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6M10 11v6M14 11v6"
+    })))));
+  })), novaCred && /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'fixed',
+      inset: 0,
+      zIndex: 80,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    onClick: () => setNovaCred(null),
+    style: {
+      position: 'absolute',
+      inset: 0,
+      background: 'rgba(5,9,20,.6)'
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'relative',
+      width: 440,
+      maxWidth: '92vw',
+      background: 'var(--panel)',
+      border: '1px solid var(--border)',
+      borderRadius: 16,
+      overflow: 'hidden'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '22px 24px 0'
+    }
+  }, /*#__PURE__*/React.createElement("h2", {
+    style: {
+      fontSize: 17,
+      fontWeight: 600,
+      margin: '0 0 4px'
+    }
+  }, "Usu\xE1rio criado \u2713"), /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 13,
+      color: 'var(--dim)',
+      margin: '0 0 18px'
+    }
+  }, "Repasse com seguran\xE7a \u2014 a senha provis\xF3ria s\xF3 aparece agora.")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '0 24px',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 10
+    }
+  }, [['Nome', novaCred.nome], ['E-mail', novaCred.email], ['Senha provisória', novaCred.senha]].map(([k, v]) => /*#__PURE__*/React.createElement("div", {
+    key: k,
+    style: {
+      background: 'var(--panel2)',
+      border: '1px solid var(--border)',
+      borderRadius: 10,
+      padding: '10px 13px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)',
+      marginBottom: 3
+    }
+  }, k), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 14,
+      fontWeight: 600,
+      fontFamily: k === 'Senha provisória' ? 'ui-monospace,monospace' : 'inherit',
+      color: k === 'Senha provisória' ? C.gold : 'var(--text)',
+      wordBreak: 'break-all'
+    }
+  }, v)))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '16px 24px 20px',
+      display: 'flex',
+      gap: 10
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => copiar(novaCred),
+    style: {
+      flex: 1,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 7,
+      height: 42,
+      borderRadius: 10,
+      border: 'none',
+      background: 'var(--gold)',
+      color: '#0E1936',
+      fontWeight: 600,
+      fontSize: 13.5,
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, /*#__PURE__*/React.createElement(SvgMulti, {
+    w: 15,
+    h: 15,
+    sw: 1.8,
+    color: "#0E1936"
+  }, /*#__PURE__*/React.createElement("rect", {
+    x: "9",
+    y: "9",
+    width: "11",
+    height: "11",
+    rx: "2"
+  }), /*#__PURE__*/React.createElement("path", {
+    d: "M5 15V5a2 2 0 0 1 2-2h10"
+  })), copiado ? 'Copiado!' : 'Copiar credenciais'), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setNovaCred(null),
+    style: {
+      height: 42,
+      padding: '0 16px',
+      borderRadius: 10,
+      border: '1px solid var(--border)',
+      background: 'transparent',
+      color: 'var(--text)',
+      fontSize: 13,
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, "Fechar")))));
 }
 
 // ── Configurações ─────────────────────────────────────────────────────────────

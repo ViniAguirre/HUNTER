@@ -183,8 +183,8 @@ app.patch('/api/usuarios/:id', requireAuth, requireAdmin, async (req, res) => {
 
 app.delete('/api/usuarios/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = parseInt(req.params.id, 10);
-  if (req.user.id === id) return res.status(400).json({ erro: 'não é possível desativar a si mesmo' });
-  await pool.query('UPDATE usuarios SET ativo=false WHERE id=$1', [id]);
+  if (req.user.id === id) return res.status(400).json({ erro: 'não é possível excluir a si mesmo' });
+  await pool.query('DELETE FROM usuarios WHERE id=$1', [id]);
   res.json({ ok: true });
 });
 
