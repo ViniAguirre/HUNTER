@@ -632,7 +632,7 @@ function Buscas({ onOpen }) {
   useEffect(() => {
     fetch('/api/buscas', { credentials:'same-origin' })
       .then(r => r.json())
-      .then(d => setBuscas(d.buscas || []))
+      .then(d => setBuscas(Array.isArray(d) ? d : (d.buscas || [])))
       .catch(() => setBuscas([]));
   }, []);
 
@@ -669,11 +669,11 @@ function Buscas({ onOpen }) {
             <div><StatusDot color={healthColors[b.health]||C.gray} pulse={b.health==='green'}/></div>
             <div style={{ fontSize:13.5, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{b.nome}</div>
             <div><span style={badgeStyle(buscaStatusColors[b.status]||C.gray)}>{b.status}</span></div>
-            <div style={{ fontSize:12.5, color:'var(--dim)' }}>{b.criador || '—'}</div>
+            <div style={{ fontSize:12.5, color:'var(--dim)' }}>{b.criador_nome || b.criador || '—'}</div>
             <div style={{ fontSize:12.5 }}>{b.ritmo ? b.ritmo+'/h' : '—'}</div>
-            <div style={{ fontSize:13, fontWeight:600 }}>{fmtNum(b.enc)}</div>
-            <div style={{ fontSize:13, color:'var(--dim)' }}>{fmtNum(b.qual)}</div>
-            <div style={{ fontSize:13, color:C.cyan }}>{fmtNum(b.crm)}</div>
+            <div style={{ fontSize:13, fontWeight:600 }}>{fmtNum(b.encontrados ?? b.enc)}</div>
+            <div style={{ fontSize:13, color:'var(--dim)' }}>{fmtNum(b.qualificados ?? b.qual)}</div>
+            <div style={{ fontSize:13, color:C.cyan }}>{fmtNum(b.enviados ?? b.crm)}</div>
             <div style={{ fontSize:12, color:'var(--faint)' }}>{timeAgo(b.ultima_ativ)}</div>
           </div>
         ))}
@@ -697,7 +697,7 @@ function BuscaDetail({ buscaId, onBack, onOpenLead }) {
 
   const toggleStatus = async () => {
     if (!data) return;
-    const novoStatus = data.busca.status === 'Ativa' ? 'Pausada' : 'Ativa';
+    const novoStatus = (data.busca || data).status === 'Ativa' ? 'Pausada' : 'Ativa';
     setToggling(true);
     await fetch('/api/buscas/' + buscaId, {
       method:'PATCH', credentials:'same-origin',
@@ -710,9 +710,15 @@ function BuscaDetail({ buscaId, onBack, onOpenLead }) {
 
   if (!data) return <div style={{ color:'var(--faint)', padding:40, textAlign:'center' }}>Carregando…</div>;
 
-  const { busca: b, leads } = data;
+  const b = data.busca || data;
+  const leads = data.leads || [];
   const criterios = b.criterios || {};
-  const tags = Object.entries(criterios).flatMap(([k, v]) => Array.isArray(v) ? v.map(x => k+': '+x) : [k+': '+v]).filter(Boolean);
+  const tags = Array.isArray(criterios.chips) && criterios.chips.length
+    ? criterios.chips
+    : Object.entries(criterios)
+        .filter(([k]) => !['params', 'cnaes_rotulos', 'texto', 'query'].includes(k))
+        .flatMap(([k, v]) => Array.isArray(v) ? v.map(x => k + ': ' + x) : (typeof v === 'object' ? [] : [k + ': ' + v]))
+        .filter(Boolean);
 
   return (
     <div style={{ maxWidth:1180 }}>
