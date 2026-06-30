@@ -33,7 +33,7 @@ services:
           - node.role == manager
 
   hunter-api:
-    image: hunter-app:latest
+    image: ghcr.io/viniaguirre/hunter:latest
     networks:
       - minha_rede
     environment:
@@ -60,7 +60,7 @@ services:
         - "traefik.http.services.adhunter.loadbalancer.server.port=3000"
 
   hunter-worker:
-    image: hunter-app:latest
+    image: ghcr.io/viniaguirre/hunter:latest
     command: ["node", "worker.js"]
     networks:
       - minha_rede
