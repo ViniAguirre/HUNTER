@@ -727,10 +727,10 @@ function Dashboard({
     }, "Carregando\u2026");
   }
   const {
-    metricas,
-    buscasAtivas,
-    atividade
-  } = data;
+    metricas = {},
+    buscasAtivas = [],
+    atividade = []
+  } = data || {};
   const qual = parseInt(metricas.leadsQualificados) || 0;
   const enc = parseInt(metricas.leadsEncontrados) || 1;
   const taxaQ = Math.round(qual / enc * 100);

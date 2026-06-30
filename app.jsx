@@ -297,7 +297,7 @@ function Dashboard({ onOpenBusca }) {
     return <div style={{ color:'var(--faint)', padding:40, textAlign:'center' }}>Carregando…</div>;
   }
 
-  const { metricas, buscasAtivas, atividade } = data;
+  const { metricas = {}, buscasAtivas = [], atividade = [] } = data || {};
   const qual = parseInt(metricas.leadsQualificados) || 0;
   const enc = parseInt(metricas.leadsEncontrados) || 1;
   const taxaQ = Math.round(qual / enc * 100);

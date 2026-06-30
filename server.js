@@ -478,9 +478,15 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
         GROUP BY b.id ORDER BY b.ultima_ativ DESC NULLS LAST LIMIT 5`),
       pool.query(`SELECT fantasia, cidade, uf, score, criado_em FROM leads ORDER BY criado_em DESC LIMIT 5`),
     ]);
+    const m = metricasRes.rows[0] || {};
     res.json({
-      metricas: metricasRes.rows[0],
-      buscas_ativas: buscasRes.rows.map(b => ({ ...b, health: computeHealth(b) })),
+      metricas: {
+        buscasAtivas: m.buscas_ativas ?? 0,
+        leadsEncontrados: m.leads_total ?? 0,
+        leadsQualificados: m.qualificados ?? 0,
+        leadsCRM: m.enviados ?? 0,
+      },
+      buscasAtivas: buscasRes.rows.map(b => ({ ...b, enc: b.encontrados, health: computeHealth(b) })),
       atividade: atividadeRes.rows,
     });
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
