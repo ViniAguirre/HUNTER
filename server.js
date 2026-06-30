@@ -1,7 +1,8 @@
 'use strict';
 /*
- * Hunter — Fase 2
- * Servidor Node/Express: serve o front + API de autenticação + API de dados (leads e buscas).
+ * Hunter — Fase 3
+ * Servidor Node/Express: serve o front + API de autenticação + API de dados
+ * (leads, buscas, integrações) + monitoramento real das filas do motor.
  */
 const path = require('path');
 const express = require('express');
@@ -29,6 +30,23 @@ const pool = new Pool({
   password: process.env.PGPASSWORD,
   database: process.env.PGDATABASE,
 });
+
+// Conexão com o Redis do motor (opcional — só pra leitura de stats das filas).
+let monitorQueues = null;
+if (process.env.REDIS_HOST) {
+  const { Queue } = require('bullmq');
+  const redisOpts = {
+    host: process.env.REDIS_HOST,
+    port: parseInt(process.env.REDIS_PORT || '6379', 10),
+    maxRetriesPerRequest: null,
+  };
+  monitorQueues = {
+    descoberta: new Queue('hunter:descoberta', { connection: { ...redisOpts } }),
+    enriquecimento: new Queue('hunter:enriquecimento', { connection: { ...redisOpts } }),
+    filtroContador: new Queue('hunter:filtro_contador', { connection: { ...redisOpts } }),
+    score1: new Queue('hunter:score1', { connection: { ...redisOpts } }),
+  };
+}
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -300,6 +318,14 @@ async function init() {
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS corte_score      INTEGER NOT NULL DEFAULT 60;
   `);
 
+  // Garante a linha do provider de descoberta (CNPJá) pra tela de Integrações
+  // ter o que mostrar mesmo antes da chave ser cadastrada.
+  await pool.query(`
+    INSERT INTO integracoes (categoria, provedor, ativo, ordem)
+    VALUES ('descoberta', 'cnpja', false, 10)
+    ON CONFLICT (categoria, provedor) DO NOTHING
+  `);
+
   const { rows:[{n:bCount}] } = await pool.query('SELECT COUNT(*)::int AS n FROM buscas');
   if (bCount === 0) {
     const { rows:[admin] } = await pool.query('SELECT id FROM usuarios LIMIT 1');
@@ -352,7 +378,7 @@ app.use(cookieParser());
 
 // healthcheck
 app.get('/api/health', (req, res) =>
-  res.json({ ok: true, versao: 'fase2', ts: new Date().toISOString() })
+  res.json({ ok: true, versao: 'fase3', ts: new Date().toISOString() })
 );
 
 // ── API: auth ─────────────────────────────────────────────────────────────────
@@ -489,11 +515,13 @@ app.post('/api/buscas', requireAuth, requireEditor, async (req, res) => {
   const tipo = ['icp','cnpj','lookalike'].includes(req.body.tipo) ? req.body.tipo : 'icp';
   const ritmo = typeof req.body.ritmo === 'number' ? req.body.ritmo : 120;
   const criterios = req.body.criterios || {};
+  const corteScore = typeof req.body.corte_score === 'number'
+    ? Math.max(0, Math.min(100, req.body.corte_score)) : 60;
   try {
     const { rows:[b] } = await pool.query(
-      `INSERT INTO buscas (nome, tipo, ritmo, criterios, criador_id, ultima_ativ)
-       VALUES ($1,$2,$3,$4::jsonb,$5,now()) RETURNING *`,
-      [nome, tipo, ritmo, JSON.stringify(criterios), req.user.id]
+      `INSERT INTO buscas (nome, tipo, ritmo, criterios, corte_score, criador_id, ultima_ativ)
+       VALUES ($1,$2,$3,$4::jsonb,$5,$6,now()) RETURNING *`,
+      [nome, tipo, ritmo, JSON.stringify(criterios), corteScore, req.user.id]
     );
     res.status(201).json({ ...b, health: computeHealth(b), criador_nome: req.user.nome });
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
@@ -633,6 +661,122 @@ app.post('/api/leads/acoes', requireAuth, requireEditor, async (req, res) => {
       `UPDATE leads SET status=$1, atualizado_em=now() WHERE id = ANY($2::int[])`,
       [status, idsInt]);
     res.json({ ok: true, atualizados: idsInt.length });
+  } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// ── API: monitoramento do motor (Fase 3) ───────────────────────────────────────
+
+app.get('/api/monitor/queues', requireAuth, async (req, res) => {
+  try {
+    const [leadsHoje, empresasTotal, buscasAtivas, descartados] = await Promise.all([
+      pool.query(`SELECT COUNT(*)::int AS n FROM leads WHERE criado_em >= now() - interval '1 day'`),
+      pool.query(`SELECT COUNT(*)::int AS n FROM empresas`),
+      pool.query(`SELECT COUNT(*)::int AS n FROM buscas WHERE status='Ativa'`),
+      pool.query(`SELECT COUNT(*)::int AS n FROM leads WHERE estagio='descartado' AND criado_em >= now() - interval '1 day'`),
+    ]);
+
+    let queues = [];
+    let dlq = [];
+    if (monitorQueues) {
+      const entries = [
+        ['descoberta', 'Descoberta'],
+        ['enriquecimento', 'Enriquecimento'],
+        ['filtroContador', 'Filtro Contador'],
+        ['score1', 'Score 1'],
+      ];
+      queues = await Promise.all(entries.map(async ([key, label]) => {
+        const q = monitorQueues[key];
+        const [waiting, active, completed, failed] = await Promise.all([
+          q.getWaitingCount(), q.getActiveCount(), q.getCompletedCount(), q.getFailedCount(),
+        ]);
+        return { key, label, waiting, active, completed, failed };
+      }));
+
+      const falhasPorFila = await Promise.all(entries.map(async ([key, label]) => {
+        const q = monitorQueues[key];
+        const jobs = await q.getFailed(0, 4);
+        return jobs.map(j => ({
+          job: label, ref: j.data?.cnpj || j.data?.busca_id || '—',
+          motivo: (j.failedReason || 'erro desconhecido').slice(0, 140),
+          quando: j.finishedOn ? new Date(j.finishedOn).toISOString() : null,
+        }));
+      }));
+      dlq = falhasPorFila.flat().sort((a, b) => (b.quando||'').localeCompare(a.quando||'')).slice(0, 10);
+    }
+
+    res.json({
+      queues,
+      dlq,
+      motor_conectado: !!monitorQueues,
+      leads_hoje: leadsHoje.rows[0].n,
+      empresas_total: empresasTotal.rows[0].n,
+      buscas_ativas: buscasAtivas.rows[0].n,
+      descartados_hoje: descartados.rows[0].n,
+    });
+  } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// ── API: integrações (chaves dos providers, Fase 3) ────────────────────────────
+// Cifragem real da key fica pra tela dedicada da Fase 3.1; por ora a tela de
+// Integrações usa estes endpoints pra ligar/desligar e trocar a chave do CNPJá.
+
+function maskKey(k) {
+  if (!k) return null;
+  const s = String(k);
+  return s.length <= 4 ? '••••' : '•'.repeat(Math.max(0, s.length - 4)) + s.slice(-4);
+}
+
+app.get('/api/integracoes', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, categoria, provedor, config, ativo, ordem, criado_em,
+        (key_cifrada IS NOT NULL AND key_cifrada <> '') AS tem_chave,
+        right(key_cifrada, 4) AS chave_final
+       FROM integracoes ORDER BY categoria, ordem`
+    );
+    res.json(rows.map(r => ({ ...r, chave_mascarada: r.tem_chave ? maskKey('x'.repeat(8) + r.chave_final) : null, chave_final: undefined })));
+  } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+app.post('/api/integracoes', requireAuth, requireAdmin, async (req, res) => {
+  const categoria = String(req.body.categoria || '').trim();
+  const provedor = String(req.body.provedor || '').trim();
+  const key = req.body.key != null ? String(req.body.key).trim() : null;
+  const ativo = !!req.body.ativo;
+  const ordem = Number.isInteger(req.body.ordem) ? req.body.ordem : 100;
+  const categoriasValidas = ['descoberta','contato','validacao_email','validacao_tel','crm','ia'];
+  if (!categoriasValidas.includes(categoria) || !provedor) {
+    return res.status(400).json({ erro: 'categoria/provedor inválidos' });
+  }
+  try {
+    const { rows: [row] } = await pool.query(`
+      INSERT INTO integracoes (categoria, provedor, key_cifrada, ativo, ordem)
+      VALUES ($1,$2,$3,$4,$5)
+      ON CONFLICT (categoria, provedor) DO UPDATE SET
+        key_cifrada = COALESCE(NULLIF($3,''), integracoes.key_cifrada),
+        ativo = $4, ordem = $5
+      RETURNING id, categoria, provedor, ativo, ordem`,
+      [categoria, provedor, key, ativo, ordem]
+    );
+    res.status(201).json(row);
+  } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+app.patch('/api/integracoes/:id', requireAuth, requireAdmin, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
+  const sets = [], vals = [];
+  if (typeof req.body.ativo === 'boolean') { sets.push(`ativo=$${sets.length+1}`); vals.push(req.body.ativo); }
+  if (req.body.key) { sets.push(`key_cifrada=$${sets.length+1}`); vals.push(String(req.body.key)); }
+  if (Number.isInteger(req.body.ordem)) { sets.push(`ordem=$${sets.length+1}`); vals.push(req.body.ordem); }
+  if (!sets.length) return res.status(400).json({ erro: 'nada para atualizar' });
+  vals.push(id);
+  try {
+    const { rows: [row] } = await pool.query(
+      `UPDATE integracoes SET ${sets.join(', ')} WHERE id=$${vals.length} RETURNING id, categoria, provedor, ativo, ordem`, vals
+    );
+    if (!row) return res.status(404).json({ erro: 'não encontrado' });
+    res.json(row);
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 

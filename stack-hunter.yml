@@ -1,0 +1,88 @@
+version: "3.8"
+
+services:
+  hunter-db:
+    image: postgres:16-alpine
+    networks:
+      - minha_rede
+    environment:
+      - POSTGRES_USER=hunter
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=hunter
+    volumes:
+      - hunter_db_data:/var/lib/postgresql/data
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  hunter-redis:
+    image: redis:7-alpine
+    networks:
+      - minha_rede
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "yes"]
+    volumes:
+      - hunter_redis_data:/data
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+  hunter-api:
+    image: hunter-app:latest
+    networks:
+      - minha_rede
+    environment:
+      - DATABASE_URL=postgres://hunter:${POSTGRES_PASSWORD}@hunter-db:5432/hunter
+      - JWT_SECRET=${JWT_SECRET}
+      - ADMIN_NAME=Vinicius Aguirre
+      - ADMIN_EMAIL=contato@viniaguirre.com.br
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - NODE_ENV=production
+      - REDIS_HOST=hunter-redis
+      - REDIS_PORT=6379
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      labels:
+        - "traefik.enable=true"
+        - "traefik.docker.network=minha_rede"
+        - "traefik.http.routers.adhunter.rule=Host(`adhunter.antidotodigital.com`)"
+        - "traefik.http.routers.adhunter.entrypoints=websecure"
+        - "traefik.http.routers.adhunter.tls.certresolver=letsencryptresolver"
+        - "traefik.http.services.adhunter.loadbalancer.server.port=3000"
+
+  hunter-worker:
+    image: hunter-app:latest
+    command: ["node", "worker.js"]
+    networks:
+      - minha_rede
+    environment:
+      - DATABASE_URL=postgres://hunter:${POSTGRES_PASSWORD}@hunter-db:5432/hunter
+      - REDIS_HOST=hunter-redis
+      - REDIS_PORT=6379
+      - NODE_ENV=production
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+
+networks:
+  minha_rede:
+    name: minha_rede
+    external: true
+
+volumes:
+  hunter_db_data:
+    name: hunter_db_data
+  hunter_redis_data:
+    name: hunter_redis_data

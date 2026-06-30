@@ -2050,18 +2050,24 @@ function BuscaDetail({
 }
 
 // ── Nova Busca ────────────────────────────────────────────────────────────────
+const UFS_BR = ['AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI', 'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'];
+const PORTES_BR = ['Micro', 'Pequena', 'Média', 'Grande'];
 function NovaBusca({
   onSalvar
 }) {
   const [tipo, setTipo] = useState('icp');
   const [ritmo, setRitmo] = useState(120);
+  const [corte, setCorte] = useState(60);
   const [saving, setSaving] = useState(false);
+  const [ufs, setUfs] = useState([]);
+  const [portes, setPortes] = useState([]);
   const nomeRef = useRef();
+  const cnaesRef = useRef();
   const criteriosRef = useRef();
   const tipos = [{
     key: 'icp',
     titulo: 'Por perfil (ICP)',
-    desc: 'Descreva o cliente ideal e refine os critérios.',
+    desc: 'Defina CNAE, UF e porte do cliente ideal.',
     icon: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM12 12h.01'
   }, {
     key: 'cnpj',
@@ -2074,6 +2080,7 @@ function NovaBusca({
     desc: 'Suba clientes que já converteram.',
     icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 11l-3 3-1.5-1.5'
   }];
+  const toggle = (arr, setArr, v) => setArr(arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v]);
   const salvar = async () => {
     const nome = nomeRef.current?.value?.trim();
     if (!nome) {
@@ -2082,6 +2089,20 @@ function NovaBusca({
     }
     setSaving(true);
     try {
+      const cnaes = (cnaesRef.current?.value || '').split(',').map(s => s.trim().replace(/\D/g, '')).filter(Boolean);
+      const chips = [...ufs.map(u => `UF: ${u}`), ...portes.map(p => `Porte: ${p}`), ...cnaes.map(c => `CNAE: ${c}`)];
+      const criterios = tipo === 'icp' ? {
+        chips,
+        params: {
+          ufs,
+          portes,
+          cnaes,
+          query: criteriosRef.current?.value || ''
+        },
+        texto: criteriosRef.current?.value || ''
+      } : {
+        texto: criteriosRef.current?.value || ''
+      };
       const r = await fetch('/api/buscas', {
         method: 'POST',
         credentials: 'same-origin',
@@ -2092,9 +2113,8 @@ function NovaBusca({
           nome,
           tipo,
           ritmo,
-          criterios: {
-            texto: criteriosRef.current?.value || ''
-          }
+          corte_score: corte,
+          criterios
         })
       });
       if (!r.ok) {
@@ -2152,29 +2172,116 @@ function NovaBusca({
         lineHeight: 1.45
       }
     }, t.desc));
-  })), tipo === 'icp' ? /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  })), tipo === 'icp' ? /*#__PURE__*/React.createElement("div", {
     style: {
-      fontSize: 13,
-      fontWeight: 600,
-      marginBottom: 9
+      background: 'var(--panel)',
+      border: '1px solid var(--border)',
+      borderRadius: 14,
+      padding: 20,
+      marginBottom: 18
     }
-  }, "Descreva quem voc\xEA quer encontrar"), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", {
     style: {
-      position: 'relative',
-      marginBottom: 22
+      marginBottom: 18
     }
-  }, /*#__PURE__*/React.createElement("textarea", {
-    ref: criteriosRef,
-    placeholder: "Ex: ag\xEAncias de marketing em Curitiba, porte m\xE9dio, com time comercial estruturado",
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 7
+    }
+  }, "CNAEs (c\xF3digos separados por v\xEDrgula)"), /*#__PURE__*/React.createElement("input", {
+    ref: cnaesRef,
+    placeholder: "Ex: 7311300, 7312200",
     style: {
       width: '100%',
-      minHeight: 84,
-      borderRadius: 12,
-      border: `1px solid ${C.blue}`,
-      background: 'var(--panel)',
+      height: 40,
+      borderRadius: 9,
+      border: '1px solid var(--border)',
+      background: 'var(--panel2)',
       color: 'var(--text)',
-      padding: 14,
-      fontSize: 14,
+      padding: '0 12px',
+      fontSize: 13,
+      fontFamily: 'inherit'
+    }
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 18
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 7
+    }
+  }, "UFs"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: 6
+    }
+  }, UFS_BR.map(u => /*#__PURE__*/React.createElement("span", {
+    key: u,
+    onClick: () => toggle(ufs, setUfs, u),
+    style: {
+      cursor: 'pointer',
+      padding: '5px 10px',
+      borderRadius: 7,
+      fontSize: 11.5,
+      border: ufs.includes(u) ? `1px solid ${C.gold}` : '1px solid var(--border)',
+      background: ufs.includes(u) ? 'rgba(251,228,154,.1)' : 'transparent',
+      color: ufs.includes(u) ? C.gold : 'var(--dim)'
+    }
+  }, u)))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 18
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 7
+    }
+  }, "Porte"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: 6
+    }
+  }, PORTES_BR.map(p => /*#__PURE__*/React.createElement("span", {
+    key: p,
+    onClick: () => toggle(portes, setPortes, p),
+    style: {
+      cursor: 'pointer',
+      padding: '5px 12px',
+      borderRadius: 7,
+      fontSize: 11.5,
+      border: portes.includes(p) ? `1px solid ${C.gold}` : '1px solid var(--border)',
+      background: portes.includes(p) ? 'rgba(251,228,154,.1)' : 'transparent',
+      color: portes.includes(p) ? C.gold : 'var(--dim)'
+    }
+  }, p)))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 7
+    }
+  }, "Descri\xE7\xE3o livre (opcional, contexto pro agente SWOT)"), /*#__PURE__*/React.createElement("textarea", {
+    ref: criteriosRef,
+    placeholder: "Ex: empresas com time comercial estruturado, foco em B2B",
+    style: {
+      width: '100%',
+      minHeight: 70,
+      borderRadius: 12,
+      border: '1px solid var(--border)',
+      background: 'var(--panel2)',
+      color: 'var(--text)',
+      padding: 12,
+      fontSize: 13,
       fontFamily: 'inherit',
       lineHeight: 1.5,
       resize: 'vertical'
@@ -2207,7 +2314,24 @@ function NovaBusca({
       color: 'var(--faint)',
       marginTop: 5
     }
-  }, "Uma coluna de CNPJ, ou cole a lista no campo abaixo")), /*#__PURE__*/React.createElement("div", {
+  }, "Uma coluna de CNPJ, ou cole a lista no campo abaixo"), /*#__PURE__*/React.createElement("textarea", {
+    ref: criteriosRef,
+    placeholder: "Cole a lista de CNPJs (um por linha)",
+    style: {
+      width: '100%',
+      minHeight: 70,
+      marginTop: 16,
+      borderRadius: 12,
+      border: '1px solid var(--border)',
+      background: 'var(--panel2)',
+      color: 'var(--text)',
+      padding: 12,
+      fontSize: 13,
+      fontFamily: 'inherit',
+      lineHeight: 1.5,
+      resize: 'vertical'
+    }
+  })), /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'var(--panel)',
       border: '1px solid var(--border)',
@@ -2246,11 +2370,7 @@ function NovaBusca({
       fontSize: 13,
       fontFamily: 'inherit'
     }
-  })), /*#__PURE__*/React.createElement("div", {
-    style: {
-      gridColumn: '1 / -1'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -2288,7 +2408,45 @@ function NovaBusca({
       color: 'var(--faint)',
       marginTop: 5
     }
-  }, /*#__PURE__*/React.createElement("span", null, "econ\xF4mico"), /*#__PURE__*/React.createElement("span", null, "agressivo"))))), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("span", null, "econ\xF4mico"), /*#__PURE__*/React.createElement("span", null, "agressivo"))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      marginBottom: 9
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      fontSize: 12,
+      color: 'var(--dim)'
+    }
+  }, "Corte do Score 1"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 13,
+      fontWeight: 600,
+      color: C.gold
+    }
+  }, corte, " pts")), /*#__PURE__*/React.createElement("input", {
+    type: "range",
+    min: 0,
+    max: 100,
+    step: 5,
+    value: corte,
+    onChange: e => setCorte(+e.target.value),
+    style: {
+      width: '100%',
+      accentColor: '#FBE49A',
+      cursor: 'pointer'
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      fontSize: 10.5,
+      color: 'var(--faint)',
+      marginTop: 5
+    }
+  }, /*#__PURE__*/React.createElement("span", null, "permissivo"), /*#__PURE__*/React.createElement("span", null, "rigoroso"))))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 12
@@ -2322,38 +2480,118 @@ function NovaBusca({
 }
 
 // ── Integrações ───────────────────────────────────────────────────────────────
-function Integracoes() {
-  const items = [{
-    nome: 'API de CNPJ',
-    provedor: 'ReceitaWS · CNPJá',
-    conectado: true,
-    cred: '••••••••••3f2a',
-    icon: 'M14 2v6h6M14 2l6 6v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z'
-  }, {
+const INTEGRACOES_META = {
+  'descoberta|cnpja': {
+    nome: 'Descoberta de empresas',
+    provedor: 'CNPJá',
+    icon: 'M14 2v6h6M14 2l6 6v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z',
+    editavel: true
+  },
+  'crm|rdstation': {
     nome: 'CRM',
     provedor: 'RD Station',
-    conectado: true,
-    cred: '••••••••••a91c',
-    icon: 'M3 3h18v4H3zM3 10h18v4H3zM3 17h18v4H3z'
-  }, {
+    icon: 'M3 3h18v4H3zM3 10h18v4H3zM3 17h18v4H3z',
+    editavel: false
+  },
+  'validacao_email|neverbounce': {
     nome: 'Validação de e-mail',
     provedor: 'NeverBounce',
-    conectado: true,
-    cred: '••••••••••77de',
-    icon: 'M3 5h18v14H3zM3 7l9 6 9-6'
-  }, {
+    icon: 'M3 5h18v14H3zM3 7l9 6 9-6',
+    editavel: false
+  },
+  'validacao_tel|twilio': {
     nome: 'Validação de telefone',
     provedor: 'Twilio Lookup',
-    conectado: false,
-    cred: '',
-    icon: 'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.6A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.3 1.8.6 2.6a2 2 0 0 1-.5 2.1L8 9.6a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.5c.8.3 1.7.5 2.6.6a2 2 0 0 1 1.7 2z'
-  }, {
+    icon: 'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.6A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.3 1.8.6 2.6a2 2 0 0 1-.5 2.1L8 9.6a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.5c.8.3 1.7.5 2.6.6a2 2 0 0 1 1.7 2z',
+    editavel: false
+  },
+  'ia|claude': {
     nome: 'Inteligência (IA)',
     provedor: 'Claude · Anthropic',
-    conectado: true,
-    cred: '••••••••••be40',
-    icon: 'M12 3v2M12 19v2M5 12H3M21 12h-2M7 7L5.5 5.5M18.5 18.5L17 17M17 7l1.5-1.5M5.5 18.5L7 17'
-  }];
+    icon: 'M12 3v2M12 19v2M5 12H3M21 12h-2M7 7L5.5 5.5M18.5 18.5L17 17M17 7l1.5-1.5M5.5 18.5L7 17',
+    editavel: false
+  }
+};
+const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'crm|rdstation', 'validacao_email|neverbounce', 'validacao_tel|twilio', 'ia|claude'];
+function Integracoes() {
+  const [rows, setRows] = useState(null);
+  const [erro, setErro] = useState(null);
+  const [salvando, setSalvando] = useState(null);
+  const chaveRefs = useRef({});
+  const carregar = () => {
+    setErro(null);
+    fetch('/api/integracoes', {
+      credentials: 'same-origin'
+    }).then(r => {
+      if (!r.ok) throw new Error('Sem permissão (apenas Admin) ou sessão expirada.');
+      return r.json();
+    }).then(setRows).catch(e => {
+      setRows([]);
+      setErro(e.message);
+    });
+  };
+  useEffect(carregar, []);
+  const porChave = {};
+  (rows || []).forEach(r => {
+    porChave[`${r.categoria}|${r.provedor}`] = r;
+  });
+  const salvar = async (chave, categoria, provedor) => {
+    const key = (chaveRefs.current[chave]?.value || '').trim();
+    const existente = porChave[chave];
+    setSalvando(chave);
+    try {
+      if (existente) {
+        await fetch('/api/integracoes/' + existente.id, {
+          method: 'PATCH',
+          credentials: 'same-origin',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            ativo: true,
+            ...(key ? {
+              key
+            } : {})
+          })
+        });
+      } else {
+        await fetch('/api/integracoes', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            categoria,
+            provedor,
+            ativo: true,
+            key
+          })
+        });
+      }
+      if (chaveRefs.current[chave]) chaveRefs.current[chave].value = '';
+      carregar();
+    } catch (_) {
+      window.alert('Erro ao salvar credencial.');
+    } finally {
+      setSalvando(null);
+    }
+  };
+  const alternar = async chave => {
+    const existente = porChave[chave];
+    if (!existente) return;
+    await fetch('/api/integracoes/' + existente.id, {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        ativo: !existente.ativo
+      })
+    });
+    carregar();
+  };
   return /*#__PURE__*/React.createElement("div", {
     style: {
       maxWidth: 840,
@@ -2361,90 +2599,135 @@ function Integracoes() {
       flexDirection: 'column',
       gap: 12
     }
-  }, items.map(ig => /*#__PURE__*/React.createElement("div", {
-    key: ig.nome,
+  }, erro && /*#__PURE__*/React.createElement("div", {
     style: {
-      background: 'var(--panel)',
-      border: '1px solid var(--border)',
-      borderRadius: 14,
-      padding: '18px 20px',
-      display: 'flex',
-      alignItems: 'center',
-      gap: 16
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      width: 42,
-      height: 42,
-      borderRadius: 11,
-      background: 'var(--panel2)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      color: 'var(--dim)',
-      flexShrink: 0
-    }
-  }, /*#__PURE__*/React.createElement(Svg, {
-    d: ig.icon,
-    w: 20,
-    h: 20,
-    sw: 1.6
-  })), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1,
-      minWidth: 0
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 9
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 14.5,
-      fontWeight: 600
-    }
-  }, ig.nome), /*#__PURE__*/React.createElement("span", {
-    style: badgeStyle(ig.conectado ? C.green : C.gray)
-  }, /*#__PURE__*/React.createElement(StatusDot, {
-    color: ig.conectado ? C.green : C.gray,
-    pulse: false
-  }), ig.conectado ? 'conectado' : 'desconectado')), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12.5,
-      color: 'var(--faint)',
-      marginTop: 3
-    }
-  }, ig.provedor)), /*#__PURE__*/React.createElement("input", {
-    defaultValue: ig.cred,
-    placeholder: "Adicionar credencial\u2026",
-    style: {
-      width: 190,
-      height: 38,
+      fontSize: 13,
+      color: C.red,
+      background: 'rgba(248,113,113,.1)',
+      border: '1px solid rgba(248,113,113,.25)',
       borderRadius: 9,
-      border: '1px solid var(--border)',
-      background: 'var(--panel2)',
-      color: 'var(--dim)',
-      padding: '0 12px',
-      fontSize: 12.5,
-      fontFamily: 'inherit',
-      letterSpacing: '.05em'
+      padding: '10px 12px'
     }
-  }), /*#__PURE__*/React.createElement("button", {
+  }, erro), rows === null ? /*#__PURE__*/React.createElement("div", {
     style: {
-      height: 38,
-      padding: '0 15px',
-      borderRadius: 9,
-      border: '1px solid var(--border)',
-      background: 'transparent',
-      color: 'var(--text)',
-      fontSize: 12.5,
-      fontFamily: 'inherit',
-      cursor: 'pointer',
-      flexShrink: 0
+      fontSize: 13,
+      color: 'var(--faint)'
     }
-  }, "Testar conex\xE3o"))));
+  }, "Carregando\u2026") : INTEGRACOES_ORDEM.map(chave => {
+    const meta = INTEGRACOES_META[chave];
+    const [categoria, provedor] = chave.split('|');
+    const row = porChave[chave];
+    const conectado = !!(row && row.ativo && row.tem_chave);
+    return /*#__PURE__*/React.createElement("div", {
+      key: chave,
+      style: {
+        background: 'var(--panel)',
+        border: '1px solid var(--border)',
+        borderRadius: 14,
+        padding: '18px 20px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: 16
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        width: 42,
+        height: 42,
+        borderRadius: 11,
+        background: 'var(--panel2)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: 'var(--dim)',
+        flexShrink: 0
+      }
+    }, /*#__PURE__*/React.createElement(Svg, {
+      d: meta.icon,
+      w: 20,
+      h: 20,
+      sw: 1.6
+    })), /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1,
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 9
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 14.5,
+        fontWeight: 600
+      }
+    }, meta.nome), /*#__PURE__*/React.createElement("span", {
+      style: badgeStyle(conectado ? C.green : C.gray)
+    }, /*#__PURE__*/React.createElement(StatusDot, {
+      color: conectado ? C.green : C.gray,
+      pulse: false
+    }), conectado ? 'conectado' : 'desconectado'), !meta.editavel && /*#__PURE__*/React.createElement("span", {
+      style: badgeStyle(C.gray)
+    }, "fase 3.1")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12.5,
+        color: 'var(--faint)',
+        marginTop: 3
+      }
+    }, meta.provedor, row?.chave_mascarada ? ' · ' + row.chave_mascarada : '')), meta.editavel ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("input", {
+      ref: el => chaveRefs.current[chave] = el,
+      placeholder: "Colar chave da API\u2026",
+      style: {
+        width: 190,
+        height: 38,
+        borderRadius: 9,
+        border: '1px solid var(--border)',
+        background: 'var(--panel2)',
+        color: 'var(--dim)',
+        padding: '0 12px',
+        fontSize: 12.5,
+        fontFamily: 'inherit',
+        letterSpacing: '.05em'
+      }
+    }), /*#__PURE__*/React.createElement("button", {
+      onClick: () => salvar(chave, categoria, provedor),
+      disabled: salvando === chave,
+      style: {
+        height: 38,
+        padding: '0 15px',
+        borderRadius: 9,
+        border: '1px solid var(--border)',
+        background: 'transparent',
+        color: 'var(--text)',
+        fontSize: 12.5,
+        fontFamily: 'inherit',
+        cursor: salvando === chave ? 'default' : 'pointer',
+        flexShrink: 0,
+        opacity: salvando === chave ? .6 : 1
+      }
+    }, salvando === chave ? 'Salvando…' : 'Salvar'), row && /*#__PURE__*/React.createElement("button", {
+      onClick: () => alternar(chave),
+      style: {
+        height: 38,
+        padding: '0 12px',
+        borderRadius: 9,
+        border: '1px solid var(--border)',
+        background: 'transparent',
+        color: 'var(--dim)',
+        fontSize: 12.5,
+        fontFamily: 'inherit',
+        cursor: 'pointer',
+        flexShrink: 0
+      }
+    }, row.ativo ? 'Desativar' : 'Ativar')) : /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12.5,
+        color: 'var(--faint)',
+        flexShrink: 0
+      }
+    }, "Em breve"));
+  }));
 }
 
 // ── Usuários ──────────────────────────────────────────────────────────────────
@@ -2954,72 +3237,80 @@ function Config() {
 
 // ── Monitoramento ─────────────────────────────────────────────────────────────
 function Monitor() {
-  const queues = [{
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    const load = () => fetch('/api/monitor/queues', {
+      credentials: 'same-origin'
+    }).then(r => r.json()).then(setData).catch(() => {});
+    load();
+    const id = setInterval(load, 15000);
+    return () => clearInterval(id);
+  }, []);
+  if (!data) {
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        color: 'var(--faint)',
+        fontSize: 13
+      }
+    }, "Carregando\u2026");
+  }
+  const queuesByKey = Object.fromEntries((data.queues || []).map(q => [q.key, q]));
+  const totalAtivos = (data.queues || []).reduce((s, q) => s + q.active, 0);
+  const totalEspera = (data.queues || []).reduce((s, q) => s + q.waiting, 0);
+  const totalConcluidos = (data.queues || []).reduce((s, q) => s + q.completed, 0);
+  const totalFalhos = (data.queues || []).reduce((s, q) => s + q.failed, 0);
+  const cards = [{
     label: 'Jobs ativos',
-    v: '42',
+    v: totalAtivos,
     color: C.blue
   }, {
     label: 'Em espera',
-    v: '1.205',
+    v: totalEspera,
     color: C.amber
   }, {
-    label: 'Concluídos · 24h',
-    v: '18,4 mil',
+    label: 'Concluídos (acumulado)',
+    v: fmtNum(totalConcluidos),
     color: C.green
   }, {
-    label: 'Falhos',
-    v: '7',
+    label: 'Falhos (acumulado)',
+    v: totalFalhos,
     color: C.red
   }];
-  const dlq = [{
-    job: 'enrich:cnpj',
-    ref: '18.402.551/0001-09',
-    motivo: 'Timeout API CNPJ · 3 tentativas',
-    quando: 'há 14 min'
+  const etapas = [{
+    key: 'descoberta',
+    label: '1. Descoberta (CNPJá)'
   }, {
-    job: 'validate:email',
-    ref: 'contato@verdevale.com.br',
-    motivo: 'Provedor retornou 502',
-    quando: 'há 38 min'
+    key: 'enriquecimento',
+    label: '2. Enriquecimento (Receita)'
   }, {
-    job: 'enrich:decisor',
-    ref: '31.556.092/0001-18',
-    motivo: 'Sócio não encontrado',
-    quando: 'há 1h'
-  }];
-  const logs = [{
-    nivel: 'ERRO',
-    cor: C.red,
-    txt: 'heartbeat timeout — busca #4 marcada como parada',
-    t: '14:32:08'
+    key: 'filtroContador',
+    label: '3. Filtro de contador'
   }, {
-    nivel: 'AVISO',
-    cor: C.amber,
-    txt: 'universo de "Clínicas NE" 82% varrido',
-    t: '14:21:55'
-  }, {
-    nivel: 'INFO',
-    cor: C.blue,
-    txt: 'validação de e-mail reconectada (NeverBounce)',
-    t: '13:48:12'
-  }, {
-    nivel: 'INFO',
-    cor: C.blue,
-    txt: 'lote de 120 leads enriquecido — busca #1',
-    t: '13:40:01'
+    key: 'score1',
+    label: '4. Score 1 + corte'
   }];
   return /*#__PURE__*/React.createElement("div", {
     style: {
       maxWidth: 1180
     }
-  }, /*#__PURE__*/React.createElement("div", {
+  }, !data.motor_conectado && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'rgba(251,191,36,.08)',
+      border: '1px solid ' + C.amber,
+      borderRadius: 12,
+      padding: '12px 16px',
+      marginBottom: 18,
+      fontSize: 12.5,
+      color: C.amber
+    }
+  }, "Motor (Redis/BullMQ) n\xE3o conectado ao painel \u2014 verifique REDIS_HOST no servi\xE7o hunter-api."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
       gridTemplateColumns: 'repeat(4,1fr)',
       gap: 14,
       marginBottom: 18
     }
-  }, queues.map(q => /*#__PURE__*/React.createElement("div", {
+  }, cards.map(q => /*#__PURE__*/React.createElement("div", {
     key: q.label,
     style: {
       background: 'var(--panel)',
@@ -3068,6 +3359,143 @@ function Monitor() {
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '15px 18px',
+      borderBottom: '1px solid var(--border)'
+    }
+  }, /*#__PURE__*/React.createElement("h3", {
+    style: {
+      fontSize: 14,
+      fontWeight: 600,
+      margin: 0
+    }
+  }, "Pipeline por etapa")), etapas.map(et => {
+    const q = queuesByKey[et.key] || {
+      waiting: 0,
+      active: 0,
+      completed: 0,
+      failed: 0
+    };
+    return /*#__PURE__*/React.createElement("div", {
+      key: et.key,
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 14,
+        padding: '12px 18px',
+        borderBottom: '1px solid var(--border)'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1,
+        fontSize: 12.5,
+        fontWeight: 500
+      }
+    }, et.label), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 11.5,
+        color: C.blue
+      }
+    }, q.active, " ativos"), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 11.5,
+        color: C.amber
+      }
+    }, q.waiting, " em espera"), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 11.5,
+        color: C.green
+      }
+    }, fmtNum(q.completed), " conclu\xEDdos"), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 11.5,
+        color: q.failed ? C.red : 'var(--faint)'
+      }
+    }, q.failed, " falhos"));
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'var(--panel)',
+      border: '1px solid var(--border)',
+      borderRadius: 14,
+      padding: 18
+    }
+  }, /*#__PURE__*/React.createElement("h3", {
+    style: {
+      fontSize: 14,
+      fontWeight: 600,
+      margin: '0 0 12px'
+    }
+  }, "Resumo do motor"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 10
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      fontSize: 12.5
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, "Buscas ativas"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontWeight: 600
+    }
+  }, data.buscas_ativas)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      fontSize: 12.5
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, "Empresas no ledger"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontWeight: 600
+    }
+  }, fmtNum(data.empresas_total))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      fontSize: 12.5
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, "Leads \u2014 \xFAltimas 24h"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontWeight: 600
+    }
+  }, fmtNum(data.leads_hoje))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      fontSize: 12.5
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, "Descartados pelo corte \u2014 24h"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontWeight: 600,
+      color: C.red
+    }
+  }, fmtNum(data.descartados_hoje)))))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'var(--panel)',
+      border: '1px solid var(--border)',
+      borderRadius: 14,
+      overflow: 'hidden'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '15px 18px',
       borderBottom: '1px solid var(--border)',
       display: 'flex',
       alignItems: 'center'
@@ -3082,10 +3510,16 @@ function Monitor() {
   }, "Dead-letter queue"), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 11,
-      color: C.red
+      color: (data.dlq || []).length ? C.red : 'var(--faint)'
     }
-  }, "3 jobs falharam todas as tentativas")), dlq.map(d => /*#__PURE__*/React.createElement("div", {
-    key: d.job,
+  }, (data.dlq || []).length, " job(s) com falha recente")), (data.dlq || []).length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '18px',
+      fontSize: 12.5,
+      color: 'var(--faint)'
+    }
+  }, "Nenhuma falha recente."), (data.dlq || []).map((d, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -3124,105 +3558,7 @@ function Monitor() {
       color: 'var(--faint)',
       whiteSpace: 'nowrap'
     }
-  }, d.quando), /*#__PURE__*/React.createElement("button", {
-    style: {
-      height: 30,
-      padding: '0 12px',
-      borderRadius: 8,
-      border: '1px solid var(--border)',
-      background: 'transparent',
-      color: 'var(--text)',
-      fontSize: 11.5,
-      fontFamily: 'inherit',
-      cursor: 'pointer',
-      flexShrink: 0
-    }
-  }, "Reprocessar")))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: 'var(--panel)',
-      border: '1px solid var(--border)',
-      borderRadius: 14,
-      padding: 18
-    }
-  }, /*#__PURE__*/React.createElement("h3", {
-    style: {
-      fontSize: 14,
-      fontWeight: 600,
-      margin: '0 0 6px'
-    }
-  }, "Consumo de API \xB7 CNPJ"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'baseline',
-      gap: 8,
-      marginBottom: 4
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 26,
-      fontWeight: 600
-    }
-  }, "12.840"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 12,
-      color: 'var(--faint)'
-    }
-  }, "consultas \xB7 7 dias")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12.5,
-      color: C.gold,
-      marginBottom: 14
-    }
-  }, "custo estimado R$ 642,00"), /*#__PURE__*/React.createElement(MiniChart, {
-    vals: [320, 410, 380, 520, 610, 540, 690, 720],
-    color: C.cyan
-  }))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      background: 'var(--panel)',
-      border: '1px solid var(--border)',
-      borderRadius: 14,
-      overflow: 'hidden'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '15px 18px',
-      borderBottom: '1px solid var(--border)'
-    }
-  }, /*#__PURE__*/React.createElement("h3", {
-    style: {
-      fontSize: 14,
-      fontWeight: 600,
-      margin: 0
-    }
-  }, "Logs de erro recentes")), logs.map((lg, i) => /*#__PURE__*/React.createElement("div", {
-    key: i,
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 12,
-      padding: '11px 18px',
-      borderBottom: '1px solid var(--border)',
-      fontFamily: 'ui-monospace,monospace'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 10.5,
-      fontWeight: 600,
-      color: lg.cor,
-      minWidth: 42
-    }
-  }, lg.nivel), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 11,
-      color: 'var(--faint)',
-      minWidth: 64
-    }
-  }, lg.t), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 12,
-      color: 'var(--text)'
-    }
-  }, lg.txt)))));
+  }, d.quando ? timeAgo(d.quando) : '')))));
 }
 
 // ── Lead Detail Slideover ─────────────────────────────────────────────────────
