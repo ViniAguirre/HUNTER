@@ -235,6 +235,71 @@ async function init() {
     CREATE INDEX IF NOT EXISTS idx_leads_busca   ON leads(busca_id);
   `);
 
+  // ── Fase 3: fundação do motor ────────────────────────────────────────────────
+  // empresas: memória PERMANENTE por CNPJ (1 linha por empresa, pra sempre).
+  // É o portão anti-duplicação e anti-desperdício de chave paga: antes de
+  // qualquer enriquecimento pago, o motor consulta aqui. Estados "travados"
+  // (qualificado / em_crm / descarte_duro) fazem o CNPJ ser pulado de vez.
+  // Firmografia e contatos_verificados ficam guardados e são reusados de graça
+  // por qualquer busca futura — só o score (local à busca) é recalculado.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS empresas (
+      cnpj                 TEXT PRIMARY KEY,
+      razao                TEXT, fantasia TEXT,
+      setor                TEXT, cnae TEXT, porte TEXT,
+      cidade               TEXT, uf TEXT,
+      situacao             TEXT, abertura TEXT, capital TEXT, endereco TEXT,
+      natureza_juridica    TEXT, opcao_simples BOOLEAN,
+      decisor              TEXT, cargo TEXT,
+      qsa                  JSONB NOT NULL DEFAULT '[]',
+      contatos_verificados JSONB NOT NULL DEFAULT '[]',
+      contato_receita      JSONB NOT NULL DEFAULT '[]',
+      flag_contador        BOOLEAN NOT NULL DEFAULT false,
+      estado_global        TEXT NOT NULL DEFAULT 'coletado'
+                             CHECK (estado_global IN ('coletado','qualificado','em_crm','descarte_duro')),
+      origem_descoberta    TEXT,
+      primeira_coleta      TIMESTAMPTZ NOT NULL DEFAULT now(),
+      atualizado_em        TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE INDEX IF NOT EXISTS idx_empresas_estado ON empresas(estado_global);
+    CREATE INDEX IF NOT EXISTS idx_empresas_uf     ON empresas(uf);
+    CREATE INDEX IF NOT EXISTS idx_empresas_cnae   ON empresas(cnae);
+  `);
+
+  // integracoes: chaves dos providers de verificação/CRM, plugáveis e em cascata.
+  // Suporta N providers (não é fixo) — cada um com ordem e on/off. A key é
+  // guardada cifrada (preenchida pela tela Integrações na 3.1).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS integracoes (
+      id            SERIAL PRIMARY KEY,
+      categoria     TEXT NOT NULL
+                      CHECK (categoria IN ('descoberta','contato','validacao_email','validacao_tel','crm','ia')),
+      provedor      TEXT NOT NULL,
+      key_cifrada   TEXT,
+      config        JSONB NOT NULL DEFAULT '{}',
+      ativo         BOOLEAN NOT NULL DEFAULT false,
+      ordem         INTEGER NOT NULL DEFAULT 100,
+      criado_em     TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (categoria, provedor)
+    );
+  `);
+
+  // Vínculo leads → empresas + controle de processamento do motor.
+  await pool.query(`
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS empresa_cnpj    TEXT REFERENCES empresas(cnpj) ON DELETE SET NULL;
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS motivo_descarte TEXT;
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS tentativas      INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS processado_em   TIMESTAMPTZ;
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_leads_busca_cnpj ON leads(busca_id, cnpj);
+  `);
+
+  // Heartbeat e progresso por busca (alimenta alertas do Dashboard e o "esgotada").
+  await pool.query(`
+    ALTER TABLE buscas ADD COLUMN IF NOT EXISTS universo_varrido INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE buscas ADD COLUMN IF NOT EXISTS ultimo_heartbeat TIMESTAMPTZ;
+    ALTER TABLE buscas ADD COLUMN IF NOT EXISTS corte_score      INTEGER NOT NULL DEFAULT 60;
+  `);
+
   const { rows:[{n:bCount}] } = await pool.query('SELECT COUNT(*)::int AS n FROM buscas');
   if (bCount === 0) {
     const { rows:[admin] } = await pool.query('SELECT id FROM usuarios LIMIT 1');
