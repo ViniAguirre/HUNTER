@@ -105,6 +105,9 @@ app.set('trust proxy', 1); // atrás do Traefik
 app.use(express.json());
 app.use(cookieParser());
 
+// ---- healthcheck público (verificação de deploy) ----
+app.get('/api/health', (req, res) => res.json({ ok: true, versao: 'fase1', ts: new Date().toISOString() }));
+
 // ---- API: autenticação ----
 const loginLimiter = rateLimit({ windowMs: 5 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false });
 
