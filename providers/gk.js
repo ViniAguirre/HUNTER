@@ -23,23 +23,37 @@ function client(backend, token) {
   });
 }
 
-// Traduz erros de rede/HTTP em mensagens claras (conforme a doc pede).
+// Traduz erros de rede/HTTP em mensagens claras — incluindo a resposta real da
+// API do GK, pra diagnóstico (a doc pede erros claros ao usuário).
 function traduzErro(err, contexto) {
   if (err.code === 'ECONNABORTED') return new Error(`${contexto}: timeout da API do CRM`);
   if (err.response) {
     const s = err.response.status;
-    if (s === 401 || s === 403) return new Error(`${contexto}: token inválido ou sem permissão`);
-    if (s === 404) return new Error(`${contexto}: recurso não encontrado (verifique o Backend)`);
-    return new Error(`${contexto}: HTTP ${s} — ${JSON.stringify(err.response.data).slice(0, 160)}`);
+    const d = err.response.data;
+    const corpo = (typeof d === 'string' ? d : JSON.stringify(d || {})).slice(0, 200);
+    if (s === 401 || s === 403) return new Error(`${contexto}: token inválido/sem permissão [HTTP ${s}] ${corpo}`);
+    if (s === 404) return new Error(`${contexto}: rota não encontrada [HTTP 404] ${corpo} — confira o Backend`);
+    return new Error(`${contexto} [HTTP ${s}] ${corpo}`);
   }
   return new Error(`${contexto}: backend indisponível (${err.message})`);
 }
 
 async function listarEmpresas(backend, token) {
+  // A doc lista /companies/all (sem /api), mas os outros endpoints usam /api.
+  // Tentamos o documentado e, se der 404, o /api/companies/all como alternativa.
+  const c = client(backend, token);
   try {
-    const { data } = await client(backend, token).get('/companies/all');
-    return (data || []).map(c => ({ id: c.id, name: c.name }));
-  } catch (err) { throw traduzErro(err, 'Buscar empresas'); }
+    const { data } = await c.get('/companies/all');
+    return (data || []).map(x => ({ id: x.id, name: x.name }));
+  } catch (err) {
+    if (err.response?.status === 404) {
+      try {
+        const { data } = await c.get('/api/companies/all');
+        return (data || []).map(x => ({ id: x.id, name: x.name }));
+      } catch (err2) { throw traduzErro(err2, 'Buscar empresas'); }
+    }
+    throw traduzErro(err, 'Buscar empresas');
+  }
 }
 
 async function listarFilas(backend, token) {
