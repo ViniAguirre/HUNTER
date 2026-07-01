@@ -24,13 +24,15 @@ module.exports = async function descoberta(job, pool, queues) {
   const { rows: [bCursor] } = await pool.query(`SELECT cursor_descoberta FROM buscas WHERE id=$1`, [busca_id]);
   const params = buildSearchParams(criterios, bCursor?.cursor_descoberta || null);
 
-  // Trava de segurança: sem cursor e sem NENHUM filtro (UF/CNAE), não varre o
-  // Brasil inteiro — isso queimaria crédito e encheria a busca de nicho errado.
-  if (!params.token && !params.states.length && !params.activities.length) {
+  // Trava de segurança: sem cursor e sem NENHUM filtro que restrinja de verdade
+  // (UF, CNAE ou município), não varre o Brasil inteiro — isso queimaria crédito
+  // e encheria a busca de nicho errado. Data/capital sozinhos não bastam.
+  const temFiltro = params.states.length || params.activities.length || (params.municipalities || []).length;
+  if (!params.token && !temFiltro) {
     await pool.query(
       `UPDATE buscas SET ultimo_heartbeat=now(), cursor_descoberta=NULL WHERE id=$1`, [busca_id]
     );
-    return { skipped: 'sem_filtro', motivo: 'busca sem UF nem CNAE — defina ao menos um filtro', novos: 0 };
+    return { skipped: 'sem_filtro', motivo: 'busca sem UF, CNAE nem município — defina ao menos um', novos: 0 };
   }
 
   const { offices, next } = await cnpja.search(params, ig.key_cifrada);
@@ -100,11 +102,16 @@ function buildSearchParams(criterios, token) {
   // situação ativa). Porte/Simples ficam pro Score 1 (grátis) — evita
   // depender de IDs de porte e não custa recall na descoberta.
   const p = criterios.params || {};
-  const out = { states: [], activities: [], limit: 20, token };
+  const out = { states: [], activities: [], municipalities: [], limit: 20, token };
 
-  if (p.ufs || p.cnaes) {
+  if (p.ufs || p.cnaes || p.municipios_cod || p.founded_gte || p.equity_gte != null) {
     out.states = p.ufs || [];
     out.activities = p.cnaes || [];
+    out.municipalities = p.municipios_cod || [];
+    out.foundedGte = p.founded_gte || null;
+    out.foundedLte = p.founded_lte || null;
+    out.equityGte = p.equity_gte != null ? p.equity_gte : null;
+    out.equityLte = p.equity_lte != null ? p.equity_lte : null;
     return out;
   }
 

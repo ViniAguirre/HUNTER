@@ -43,6 +43,11 @@ async function search(params, apiKey) {
   } else {
     (params.states || []).forEach(s => { if (s) qs.append('address.state.in', String(s).toUpperCase()); });
     (params.activities || []).forEach(a => { const c = String(a).replace(/\D/g, ''); if (c) qs.append('mainActivity.id.in', c); });
+    (params.municipalities || []).forEach(m => { const c = String(m).replace(/\D/g, ''); if (c) qs.append('address.municipality.in', c); });
+    if (params.foundedGte) qs.append('founded.gte', params.foundedGte);
+    if (params.foundedLte) qs.append('founded.lte', params.foundedLte);
+    if (params.equityGte != null) qs.append('company.equity.gte', String(params.equityGte));
+    if (params.equityLte != null) qs.append('company.equity.lte', String(params.equityLte));
     qs.append('status.id.in', '2'); // 2 = Ativa (só empresas ativas)
   }
   qs.set('limit', String(Math.min(params.limit || 20, 20)));

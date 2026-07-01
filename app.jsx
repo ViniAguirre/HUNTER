@@ -881,8 +881,38 @@ const PORTES_BR = ['Micro','Pequena','Média','Grande'];
 
 // Tabela CNAE (código + descrição) carregada uma vez e cacheada no módulo.
 let _cnaeCache = null;
+let _municCache = null;
 const semAcento = s => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 const fmtCnae = c => { const d = String(c).padStart(7, '0'); return `${d.slice(0,4)}-${d.slice(4,5)}/${d.slice(5,7)}`; };
+
+const ABERTURA_OPCOES = [
+  { k:'qualquer', label:'Qualquer \u00e9poca' },
+  { k:'6m',  label:'Abertas nos \u00faltimos 6 meses' },
+  { k:'1a',  label:'Abertas no \u00faltimo ano' },
+  { k:'2a',  label:'Abertas nos \u00faltimos 2 anos' },
+  { k:'5a',  label:'Abertas nos \u00faltimos 5 anos' },
+  { k:'+5a', label:'Com mais de 5 anos' },
+];
+const CAPITAL_OPCOES = [
+  { k:'qualquer', label:'Qualquer' },
+  { k:'ate50',    label:'At\u00e9 R$ 50 mil', lte:50000 },
+  { k:'50a500',   label:'R$ 50 mil a 500 mil', gte:50000, lte:500000 },
+  { k:'500a5mi',  label:'R$ 500 mil a 5 mi', gte:500000, lte:5000000 },
+  { k:'+5mi',     label:'Acima de R$ 5 mi', gte:5000000 },
+];
+function foundedFromPreset(k) {
+  const now = new Date();
+  const iso = d => d.toISOString().slice(0, 10);
+  const mAgo = m => { const d = new Date(now); d.setMonth(d.getMonth() - m); return iso(d); };
+  switch (k) {
+    case '6m':  return { gte: mAgo(6) };
+    case '1a':  return { gte: mAgo(12) };
+    case '2a':  return { gte: mAgo(24) };
+    case '5a':  return { gte: mAgo(60) };
+    case '+5a': return { lte: mAgo(60) };
+    default:    return {};
+  }
+}
 
 function NovaBusca({ onSalvar }) {
   const [tipo, setTipo] = useState('icp');
@@ -895,16 +925,37 @@ function NovaBusca({ onSalvar }) {
   const [cnaeSel, setCnaeSel] = useState([]);
   const [cnaeData, setCnaeData] = useState([]);
   const [cnaeFoco, setCnaeFoco] = useState(false);
+  const [municBusca, setMunicBusca] = useState('');
+  const [municSel, setMunicSel] = useState([]);
+  const [municData, setMunicData] = useState([]);
+  const [municFoco, setMunicFoco] = useState(false);
+  const [abertura, setAbertura] = useState('qualquer');
+  const [capital, setCapital] = useState('qualquer');
   const nomeRef = useRef();
   const criteriosRef = useRef();
 
   useEffect(() => {
-    if (_cnaeCache) { setCnaeData(_cnaeCache); return; }
-    fetch('/cnae.json', { credentials:'same-origin' })
-      .then(r => r.json())
-      .then(d => { _cnaeCache = d; setCnaeData(d); })
-      .catch(() => {});
+    if (_cnaeCache) { setCnaeData(_cnaeCache); }
+    else fetch('/cnae.json', { credentials:'same-origin' }).then(r => r.json())
+      .then(d => { _cnaeCache = d; setCnaeData(d); }).catch(() => {});
+    if (_municCache) { setMunicData(_municCache); }
+    else fetch('/municipios.json', { credentials:'same-origin' }).then(r => r.json())
+      .then(d => { _municCache = d; setMunicData(d); }).catch(() => {});
   }, []);
+
+  const municResultados = useMemo(() => {
+    const q = semAcento(municBusca.trim());
+    if (q.length < 2) return [];
+    const out = [];
+    for (const m of municData) {
+      if (ufs.length && !ufs.includes(m.uf)) continue; // respeita a UF escolhida
+      if (semAcento(m.n).includes(q)) { out.push(m); if (out.length >= 25) break; }
+    }
+    return out;
+  }, [municBusca, municData, ufs]);
+
+  const addMunic = m => { setMunicSel(prev => prev.find(x => x.c === m.c) ? prev : [...prev, m]); setMunicBusca(''); };
+  const removeMunic = c => setMunicSel(prev => prev.filter(x => x.c !== c));
 
   const cnaeResultados = useMemo(() => {
     const q = semAcento(cnaeBusca.trim());
@@ -948,13 +999,26 @@ function NovaBusca({ onSalvar }) {
     setSaving(true);
     try {
       const cnaes = cnaeSel.map(s => s.c);
+      const fnd = foundedFromPreset(abertura);
+      const cap = CAPITAL_OPCOES.find(o => o.k === capital) || {};
+      const aberturaLabel = ABERTURA_OPCOES.find(o => o.k === abertura)?.label;
+      const capitalLabel = CAPITAL_OPCOES.find(o => o.k === capital)?.label;
       const chips = [
         ...ufs.map(u => `UF: ${u}`),
+        ...municSel.map(m => `Município: ${m.n}`),
         ...portes.map(p => `Porte: ${p}`),
         ...cnaeSel.map(s => `CNAE: ${s.d}`),
+        ...(abertura !== 'qualquer' ? [`Abertura: ${aberturaLabel}`] : []),
+        ...(capital !== 'qualquer' ? [`Capital: ${capitalLabel}`] : []),
       ];
       const criterios = tipo === 'icp'
-        ? { chips, params: { ufs, portes, cnaes, cnaes_rotulos: cnaeSel, query: criteriosRef.current?.value || '' }, texto: criteriosRef.current?.value || '' }
+        ? { chips, params: {
+            ufs, portes, cnaes, cnaes_rotulos: cnaeSel,
+            municipios_cod: municSel.map(m => m.c), municipios_rotulos: municSel,
+            founded_gte: fnd.gte || null, founded_lte: fnd.lte || null,
+            equity_gte: cap.gte ?? null, equity_lte: cap.lte ?? null,
+            query: criteriosRef.current?.value || '',
+          }, texto: criteriosRef.current?.value || '' }
         : { texto: criteriosRef.current?.value || '' };
       const r = await fetch('/api/buscas', {
         method:'POST', credentials:'same-origin',
@@ -1055,6 +1119,66 @@ function NovaBusca({ onSalvar }) {
                     background: portes.includes(p) ? 'rgba(251,228,154,.1)' : 'transparent',
                     color: portes.includes(p) ? C.gold : 'var(--dim)' }}>{p}</span>
               ))}
+            </div>
+          </div>
+          <div style={{ marginBottom:18, position:'relative' }}>
+            <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>
+              Municípios <span style={{ color:'var(--faint)' }}>(opcional — busque por nome{ufs.length ? `, dentro de ${ufs.join('/')}` : ''})</span>
+            </label>
+            <input value={municBusca}
+              onChange={e => setMunicBusca(e.target.value)}
+              onFocus={() => setMunicFoco(true)}
+              onBlur={() => setTimeout(() => setMunicFoco(false), 150)}
+              placeholder="Ex: Porto Alegre, Caxias do Sul…"
+              style={{ width:'100%', height:40, borderRadius:9, border:'1px solid var(--border)',
+                background:'var(--panel2)', color:'var(--text)', padding:'0 12px', fontSize:13, fontFamily:'inherit' }}/>
+            {municFoco && municBusca.trim().length >= 2 && (
+              <div style={{ position:'absolute', zIndex:30, left:0, right:0, top:'100%', marginTop:4,
+                maxHeight:248, overflowY:'auto', background:'var(--panel2)', border:'1px solid var(--border)',
+                borderRadius:9, boxShadow:'0 10px 28px rgba(0,0,0,.45)' }}>
+                {municData.length === 0 ? (
+                  <div style={{ padding:'10px 12px', fontSize:12.5, color:'var(--faint)' }}>Carregando municípios…</div>
+                ) : municResultados.length === 0 ? (
+                  <div style={{ padding:'10px 12px', fontSize:12.5, color:'var(--faint)' }}>Nenhum município encontrado{ufs.length ? ' nessa(s) UF(s)' : ''}.</div>
+                ) : municResultados.map(m => (
+                  <div key={m.c} onMouseDown={() => addMunic(m)} className="row-hover"
+                    style={{ padding:'9px 12px', fontSize:12.5, cursor:'pointer', borderBottom:'1px solid var(--border)',
+                      display:'flex', justifyContent:'space-between', alignItems:'center', gap:10 }}>
+                    <span>{m.n}</span>
+                    <span style={{ color:'var(--faint)', flexShrink:0 }}>{m.uf}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {municSel.length > 0 && (
+              <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginTop:9 }}>
+                {municSel.map(m => (
+                  <span key={m.c} style={{ display:'inline-flex', alignItems:'center', gap:7, padding:'5px 10px',
+                    borderRadius:7, fontSize:11.5, border:`1px solid ${C.gold}`, background:'rgba(251,228,154,.1)', color:C.gold }}>
+                    {m.n} · {m.uf}
+                    <span onClick={() => removeMunic(m.c)} title="Remover"
+                      style={{ cursor:'pointer', fontWeight:700, fontSize:13, lineHeight:1, opacity:.8 }}>×</span>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginBottom:18 }}>
+            <div>
+              <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>Data de abertura</label>
+              <select value={abertura} onChange={e => setAbertura(e.target.value)}
+                style={{ width:'100%', height:40, borderRadius:9, border:'1px solid var(--border)',
+                  background:'var(--panel2)', color:'var(--text)', padding:'0 10px', fontSize:13, fontFamily:'inherit', cursor:'pointer' }}>
+                {ABERTURA_OPCOES.map(o => <option key={o.k} value={o.k}>{o.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>Capital social</label>
+              <select value={capital} onChange={e => setCapital(e.target.value)}
+                style={{ width:'100%', height:40, borderRadius:9, border:'1px solid var(--border)',
+                  background:'var(--panel2)', color:'var(--text)', padding:'0 10px', fontSize:13, fontFamily:'inherit', cursor:'pointer' }}>
+                {CAPITAL_OPCOES.map(o => <option key={o.k} value={o.k}>{o.label}</option>)}
+              </select>
             </div>
           </div>
           <div>

@@ -870,6 +870,7 @@ function gate(req, res, next) {
 }
 app.get('/app.js', gate, (req, res) => res.sendFile(path.join(PUBLIC, 'app.js')));
 app.get('/cnae.json', gate, (req, res) => res.sendFile(path.join(PUBLIC, 'cnae.json')));
+app.get('/municipios.json', gate, (req, res) => res.sendFile(path.join(PUBLIC, 'municipios.json')));
 app.use('/vendor', gate, express.static(path.join(PUBLIC, 'vendor')));
 
 app.get('*', (req, res) => {
