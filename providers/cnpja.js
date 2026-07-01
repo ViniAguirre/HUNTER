@@ -36,11 +36,16 @@ async function request(url, apiKey) {
 async function search(params, apiKey) {
   if (!apiKey) throw new Error('CNPJá: chave obrigatória para descoberta (configure em Integrações)');
   const qs = new URLSearchParams();
-  (params.states || []).forEach(s => { if (s) qs.append('address.state.in', String(s).toUpperCase()); });
-  (params.activities || []).forEach(a => { const c = String(a).replace(/\D/g, ''); if (c) qs.append('mainActivity.id.in', c); });
-  qs.append('status.id.in', '2'); // 2 = Ativa (só empresas ativas)
+  if (params.token) {
+    // O cursor já embute os filtros da 1ª página. A CNPJá rejeita (HTTP 400)
+    // se `token` vier junto de qualquer outro filtro — então mandamos só ele.
+    qs.set('token', params.token);
+  } else {
+    (params.states || []).forEach(s => { if (s) qs.append('address.state.in', String(s).toUpperCase()); });
+    (params.activities || []).forEach(a => { const c = String(a).replace(/\D/g, ''); if (c) qs.append('mainActivity.id.in', c); });
+    qs.append('status.id.in', '2'); // 2 = Ativa (só empresas ativas)
+  }
   qs.set('limit', String(Math.min(params.limit || 20, 20)));
-  if (params.token) qs.set('token', params.token);
 
   const data = await request(`${PAID_BASE}/office?${qs.toString()}`, apiKey);
   return { offices: (data.records || []).map(normalizeOffice), next: data.next || null };

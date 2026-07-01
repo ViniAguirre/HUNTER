@@ -23,6 +23,16 @@ module.exports = async function descoberta(job, pool, queues) {
 
   const { rows: [bCursor] } = await pool.query(`SELECT cursor_descoberta FROM buscas WHERE id=$1`, [busca_id]);
   const params = buildSearchParams(criterios, bCursor?.cursor_descoberta || null);
+
+  // Trava de segurança: sem cursor e sem NENHUM filtro (UF/CNAE), não varre o
+  // Brasil inteiro — isso queimaria crédito e encheria a busca de nicho errado.
+  if (!params.token && !params.states.length && !params.activities.length) {
+    await pool.query(
+      `UPDATE buscas SET ultimo_heartbeat=now(), cursor_descoberta=NULL WHERE id=$1`, [busca_id]
+    );
+    return { skipped: 'sem_filtro', motivo: 'busca sem UF nem CNAE — defina ao menos um filtro', novos: 0 };
+  }
+
   const { offices, next } = await cnpja.search(params, ig.key_cifrada);
 
   let novos = 0, pulados = 0, enfileirados = 0;

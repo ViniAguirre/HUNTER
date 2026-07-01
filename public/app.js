@@ -2163,6 +2163,10 @@ function NovaBusca({
       alert('Informe o nome da busca.');
       return;
     }
+    if (tipo === 'icp' && cnaeSel.length === 0) {
+      const ok = window.confirm('Nenhuma atividade selecionada.\n\nA busca vai trazer empresas de TODOS os ramos' + (ufs.length ? ' da(s) UF(s) escolhida(s)' : ' do Brasil') + '. Para filtrar por ramo, digite no campo "Atividade" e clique no resultado (vira chip dourado).\n\nContinuar mesmo assim?');
+      if (!ok) return;
+    }
     setSaving(true);
     try {
       const cnaes = cnaeSel.map(s => s.c);
