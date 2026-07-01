@@ -1021,15 +1021,16 @@ function NovaBusca({ onSalvar }) {
         ...(abertura !== 'qualquer' ? [`Abertura: ${aberturaLabel}`] : []),
         ...(capital !== 'qualquer' ? [`Capital: ${capitalLabel}`] : []),
       ];
+      const propostaValor = criteriosRef.current?.value || '';
       const criterios = tipo === 'icp'
         ? { chips, params: {
             ufs, portes, cnaes, cnaes_rotulos: cnaeSel,
             municipios_cod: municSel.map(m => m.c), municipios_rotulos: municSel,
             founded_gte: fnd.gte || null, founded_lte: fnd.lte || null,
             equity_gte: cap.gte ?? null, equity_lte: cap.lte ?? null,
-            query: criteriosRef.current?.value || '',
-          }, texto: criteriosRef.current?.value || '' }
-        : { texto: criteriosRef.current?.value || '' };
+            proposta_valor: propostaValor,
+          }, proposta_valor: propostaValor }
+        : { texto: propostaValor };
       const r = await fetch('/api/buscas', {
         method:'POST', credentials:'same-origin',
         headers:{ 'Content-Type':'application/json' },
@@ -1193,12 +1194,16 @@ function NovaBusca({ onSalvar }) {
           </div>
           <div>
             <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>
-              Descrição livre (opcional, contexto pro agente SWOT)
+              O que você vende — proposta de valor <span style={{ color:'var(--faint)' }}>(alimenta o agente SWOT)</span>
             </label>
-            <textarea ref={criteriosRef} placeholder="Ex: empresas com time comercial estruturado, foco em B2B"
+            <textarea ref={criteriosRef} placeholder="Ex: software de gestão de agenda para clínicas, que reduz faltas e lota horários ociosos"
               style={{ width:'100%', minHeight:70, borderRadius:12, border:'1px solid var(--border)',
                 background:'var(--panel2)', color:'var(--text)', padding:12, fontSize:13,
                 fontFamily:'inherit', lineHeight:1.5, resize:'vertical' }}/>
+            <div style={{ fontSize:11, color:'var(--faint)', marginTop:6, lineHeight:1.4 }}>
+              Descreva seu produto/serviço. O agente usa isso para gerar o gancho de abordagem
+              específico para cada empresa — quanto mais claro, melhor o briefing.
+            </div>
           </div>
         </div>
       ) : (

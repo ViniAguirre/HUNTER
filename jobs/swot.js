@@ -27,7 +27,8 @@ module.exports = async function swot(job, pool) {
   const empresa = empresaRes.rows[0];
   if (!empresa) return { error: 'empresa ausente', cnpj };
 
-  const contexto = buscaRes.rows[0]?.criterios?.texto || '';
+  const crit = buscaRes.rows[0]?.criterios || {};
+  const contexto = crit.params?.proposta_valor || crit.proposta_valor || crit.texto || '';
   const modelo = ig.config?.modelo || undefined;
 
   const briefing = await openai.gerarSwot(empresa, { apiKey: ig.key_cifrada, modelo, contexto });

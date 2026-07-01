@@ -2408,6 +2408,7 @@ function NovaBusca({
       const aberturaLabel = ABERTURA_OPCOES.find(o => o.k === abertura)?.label;
       const capitalLabel = CAPITAL_OPCOES.find(o => o.k === capital)?.label;
       const chips = [...ufs.map(u => `UF: ${u}`), ...municSel.map(m => `Município: ${m.n}`), ...portes.map(p => `Porte: ${p}`), ...cnaeSel.map(s => `CNAE: ${s.d}`), ...(abertura !== 'qualquer' ? [`Abertura: ${aberturaLabel}`] : []), ...(capital !== 'qualquer' ? [`Capital: ${capitalLabel}`] : [])];
+      const propostaValor = criteriosRef.current?.value || '';
       const criterios = tipo === 'icp' ? {
         chips,
         params: {
@@ -2421,11 +2422,11 @@ function NovaBusca({
           founded_lte: fnd.lte || null,
           equity_gte: cap.gte ?? null,
           equity_lte: cap.lte ?? null,
-          query: criteriosRef.current?.value || ''
+          proposta_valor: propostaValor
         },
-        texto: criteriosRef.current?.value || ''
+        proposta_valor: propostaValor
       } : {
-        texto: criteriosRef.current?.value || ''
+        texto: propostaValor
       };
       const r = await fetch('/api/buscas', {
         method: 'POST',
@@ -2841,9 +2842,13 @@ function NovaBusca({
       color: 'var(--dim)',
       marginBottom: 7
     }
-  }, "Descri\xE7\xE3o livre (opcional, contexto pro agente SWOT)"), /*#__PURE__*/React.createElement("textarea", {
+  }, "O que voc\xEA vende \u2014 proposta de valor ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, "(alimenta o agente SWOT)")), /*#__PURE__*/React.createElement("textarea", {
     ref: criteriosRef,
-    placeholder: "Ex: empresas com time comercial estruturado, foco em B2B",
+    placeholder: "Ex: software de gest\xE3o de agenda para cl\xEDnicas, que reduz faltas e lota hor\xE1rios ociosos",
     style: {
       width: '100%',
       minHeight: 70,
@@ -2857,7 +2862,14 @@ function NovaBusca({
       lineHeight: 1.5,
       resize: 'vertical'
     }
-  }))) : /*#__PURE__*/React.createElement("div", {
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)',
+      marginTop: 6,
+      lineHeight: 1.4
+    }
+  }, "Descreva seu produto/servi\xE7o. O agente usa isso para gerar o gancho de abordagem espec\xEDfico para cada empresa \u2014 quanto mais claro, melhor o briefing."))) : /*#__PURE__*/React.createElement("div", {
     style: {
       border: '1.5px dashed var(--border)',
       borderRadius: 14,
