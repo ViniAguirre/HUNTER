@@ -50,32 +50,25 @@ for (const [nome, w] of Object.entries(workers)) {
 async function runScheduler() {
   try {
     const { rows: buscas } = await pool.query(
-      `SELECT id, ritmo, criterios, corte_score, tipo FROM buscas WHERE status='Ativa' AND ritmo > 0`
+      `SELECT id, criterios FROM buscas WHERE status='Ativa'`
     );
 
     for (const busca of buscas) {
-      const { rows: [{ n }] } = await pool.query(
-        `SELECT COUNT(*)::int AS n FROM leads WHERE busca_id=$1 AND criado_em >= now() - interval '1 hour'`,
-        [busca.id]
-      );
-      if (n >= busca.ritmo) continue; // já bateu o ritmo (leads/h) na janela
-
-      // Um job por ciclo: a descoberta pagina por cursor (token da CNPJá),
-      // avançando ~20 empresas por vez, respeitando o ritmo da torneira.
+      // jobId ESTÁVEL por busca: enquanto a varredura anterior estiver na fila
+      // ou rodando, o BullMQ ignora novos disparos — evita varredura concorrente
+      // (custo duplicado). A descoberta varre o universo e marca 'Esgotada',
+      // então o scheduler não redispara sozinho.
       await queues.descoberta.add('descoberta', {
         busca_id: busca.id,
         criterios: busca.criterios,
-        tipo: busca.tipo,
       }, {
-        jobId: `busca-${busca.id}-${Date.now()}`,
-        removeOnComplete: { count: 200, age: 86400 },
+        jobId: `descoberta-busca-${busca.id}`,
+        removeOnComplete: { count: 200, age: 3600 },
         removeOnFail: { count: 100 },
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 5000 },
+        attempts: 2,
+        backoff: { type: 'exponential', delay: 10000 },
       });
     }
-
-    await pool.query(`UPDATE buscas SET ultimo_heartbeat=now() WHERE status='Ativa' AND ritmo > 0`);
   } catch (err) {
     console.error('[scheduler] erro:', err.message);
   }
