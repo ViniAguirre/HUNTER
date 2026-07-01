@@ -1922,15 +1922,9 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                   <p style={{ fontSize:13, lineHeight:1.55, margin:0, color:'var(--text)' }}>{l.swot.gancho}</p>
                 </div>
               )}
-              {l.swot.pergunta_abertura && (
-                <div style={{ display:'flex', alignItems:'flex-start', gap:9, fontSize:13, lineHeight:1.55, color:'var(--text)', padding:'0 2px' }}>
-                  <span style={{ color:C.blue, fontWeight:700 }}>“</span>
-                  <span style={{ fontStyle:'italic' }}>{l.swot.pergunta_abertura}</span>
-                </div>
-              )}
               <div style={{ marginTop:12 }}>
                 <button onClick={() => navigator.clipboard?.writeText(
-                    `${l.swot.resumo}\n\nGancho: ${l.swot.gancho}\n\nAbertura: ${l.swot.pergunta_abertura}`).catch(()=>{})}
+                    `${l.swot.resumo}\n\nGancho: ${l.swot.gancho}`).catch(()=>{})}
                   style={{ display:'flex', alignItems:'center', gap:6, height:31, padding:'0 12px',
                     borderRadius:7, border:'1px solid rgba(58,142,255,.3)', background:'transparent',
                     color:C.blue, fontSize:12, fontFamily:'inherit', cursor:'pointer' }}>Copiar briefing</button>

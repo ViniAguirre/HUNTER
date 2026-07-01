@@ -45,8 +45,7 @@ function montarPrompt(empresa, contexto) {
     "oportunidades": ["..."],
     "ameacas": ["..."]
   },
-  "gancho": "1-2 frases: por que essa empresa se beneficiaria do que vendemos",
-  "pergunta_abertura": "uma pergunta de abertura para o closer usar na primeira conversa"
+  "gancho": "1-2 frases: por que essa empresa se beneficiaria do que vendemos"
 }`;
 }
 
@@ -79,7 +78,6 @@ async function gerarSwot(empresa, { apiKey, modelo, contexto } = {}) {
         ameacas: parsed.swot?.ameacas || [],
       },
       gancho: parsed.gancho || '',
-      pergunta_abertura: parsed.pergunta_abertura || '',
       modelo: body.model,
       gerado_em: new Date().toISOString(),
     };

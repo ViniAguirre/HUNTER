@@ -4655,31 +4655,12 @@ function LeadDetailPanel({
       margin: 0,
       color: 'var(--text)'
     }
-  }, l.swot.gancho)), l.swot.pergunta_abertura && /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'flex-start',
-      gap: 9,
-      fontSize: 13,
-      lineHeight: 1.55,
-      color: 'var(--text)',
-      padding: '0 2px'
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: C.blue,
-      fontWeight: 700
-    }
-  }, "\u201C"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontStyle: 'italic'
-    }
-  }, l.swot.pergunta_abertura)), /*#__PURE__*/React.createElement("div", {
+  }, l.swot.gancho)), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 12
     }
   }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => navigator.clipboard?.writeText(`${l.swot.resumo}\n\nGancho: ${l.swot.gancho}\n\nAbertura: ${l.swot.pergunta_abertura}`).catch(() => {}),
+    onClick: () => navigator.clipboard?.writeText(`${l.swot.resumo}\n\nGancho: ${l.swot.gancho}`).catch(() => {}),
     style: {
       display: 'flex',
       alignItems: 'center',
