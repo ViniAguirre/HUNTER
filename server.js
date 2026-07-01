@@ -46,6 +46,7 @@ if (process.env.REDIS_HOST) {
     filtroContador: new Queue('hunter-filtro_contador', { connection: { ...redisOpts } }),
     score1: new Queue('hunter-score1', { connection: { ...redisOpts } }),
     swot: new Queue('hunter-swot', { connection: { ...redisOpts } }),
+    crm: new Queue('hunter-crm', { connection: { ...redisOpts } }),
   };
 }
 
@@ -310,6 +311,7 @@ async function init() {
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS tentativas      INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS processado_em   TIMESTAMPTZ;
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS swot            JSONB;
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS enviado_crm_em  TIMESTAMPTZ;
     CREATE UNIQUE INDEX IF NOT EXISTS uq_leads_busca_cnpj ON leads(busca_id, cnpj);
   `);
 
@@ -319,6 +321,7 @@ async function init() {
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS ultimo_heartbeat TIMESTAMPTZ;
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS corte_score      INTEGER NOT NULL DEFAULT 60;
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS cursor_descoberta TEXT;
+    ALTER TABLE buscas ADD COLUMN IF NOT EXISTS crm_auto         BOOLEAN NOT NULL DEFAULT false;
   `);
 
   // Garante a linha do provider de descoberta (CNPJá) pra tela de Integrações
@@ -326,7 +329,8 @@ async function init() {
   await pool.query(`
     INSERT INTO integracoes (categoria, provedor, ativo, ordem)
     VALUES ('descoberta', 'cnpja', false, 10),
-           ('ia', 'openai', false, 60)
+           ('ia', 'openai', false, 60),
+           ('crm', 'webhook', false, 40)
     ON CONFLICT (categoria, provedor) DO NOTHING
   `);
 
@@ -527,11 +531,12 @@ app.post('/api/buscas', requireAuth, requireEditor, async (req, res) => {
   const criterios = req.body.criterios || {};
   const corteScore = typeof req.body.corte_score === 'number'
     ? Math.max(0, Math.min(100, req.body.corte_score)) : 60;
+  const crmAuto = !!req.body.crm_auto;
   try {
     const { rows:[b] } = await pool.query(
-      `INSERT INTO buscas (nome, tipo, ritmo, criterios, corte_score, criador_id, ultima_ativ)
-       VALUES ($1,$2,$3,$4::jsonb,$5,$6,now()) RETURNING *`,
-      [nome, tipo, ritmo, JSON.stringify(criterios), corteScore, req.user.id]
+      `INSERT INTO buscas (nome, tipo, ritmo, criterios, corte_score, crm_auto, criador_id, ultima_ativ)
+       VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,now()) RETURNING *`,
+      [nome, tipo, ritmo, JSON.stringify(criterios), corteScore, crmAuto, req.user.id]
     );
     res.status(201).json({ ...b, health: computeHealth(b), criador_nome: req.user.nome });
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
@@ -695,13 +700,27 @@ app.patch('/api/leads/:id', requireAuth, requireEditor, async (req, res) => {
 });
 
 app.post('/api/leads/acoes', requireAuth, requireEditor, async (req, res) => {
-  const { ids, status } = req.body;
+  const { ids, status, acao } = req.body;
   if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ erro: 'ids obrigatório' });
-  if (!['Novo','Qualificado','Incompleto','Descartado','Enviado'].includes(status))
-    return res.status(400).json({ erro: 'status inválido' });
   const idsInt = ids.map(x => parseInt(x,10)).filter(x => !isNaN(x));
   if (!idsInt.length) return res.status(400).json({ erro: 'ids inválidos' });
   try {
+    // Envio manual ao CRM: enfileira cada lead na fila de webhook (com retry).
+    if (acao === 'enviar_crm') {
+      if (!monitorQueues?.crm) return res.status(503).json({ erro: 'motor de envio indisponível' });
+      const { rows: [ig] } = await pool.query(
+        `SELECT 1 FROM integracoes WHERE categoria='crm' AND provedor='webhook' AND ativo=true AND key_cifrada IS NOT NULL LIMIT 1`
+      );
+      if (!ig) return res.status(400).json({ erro: 'Configure o Webhook do CRM em Integrações e ative.' });
+      await Promise.all(idsInt.map(id =>
+        monitorQueues.crm.add('crm', { lead_id: id },
+          { jobId: `crm-manual-${id}-${Date.now()}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 4, backoff: { type: 'exponential', delay: 15000 } })
+      ));
+      return res.json({ ok: true, enfileirados: idsInt.length });
+    }
+
+    if (!['Novo','Qualificado','Incompleto','Descartado','Enviado'].includes(status))
+      return res.status(400).json({ erro: 'status inválido' });
     await pool.query(
       `UPDATE leads SET status=$1, atualizado_em=now() WHERE id = ANY($2::int[])`,
       [status, idsInt]);
@@ -729,6 +748,7 @@ app.get('/api/monitor/queues', requireAuth, async (req, res) => {
         ['filtroContador', 'Filtro Contador'],
         ['score1', 'Score 1'],
         ['swot', 'Agente SWOT'],
+        ['crm', 'Envio CRM'],
       ];
       queues = await Promise.all(entries.map(async ([key, label]) => {
         const q = monitorQueues[key];

@@ -28,6 +28,7 @@ const queues = {
   filtroContador: new Queue('hunter-filtro_contador', { connection: REDIS_OPTS }),
   score1: new Queue('hunter-score1', { connection: REDIS_OPTS }),
   swot: new Queue('hunter-swot', { connection: REDIS_OPTS }),
+  crm: new Queue('hunter-crm', { connection: REDIS_OPTS }),
 };
 
 const descobertaFn = require('./jobs/descoberta');
@@ -35,13 +36,15 @@ const enriquecimentoFn = require('./jobs/enriquecimento');
 const filtroContadorFn = require('./jobs/filtro-contador');
 const score1Fn = require('./jobs/score1');
 const swotFn = require('./jobs/swot');
+const crmFn = require('./jobs/crm');
 
 const workers = {
   descoberta: new Worker('hunter-descoberta', job => descobertaFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 2 }),
   enriquecimento: new Worker('hunter-enriquecimento', job => enriquecimentoFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 5 }),
   filtroContador: new Worker('hunter-filtro_contador', job => filtroContadorFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 10 }),
   score1: new Worker('hunter-score1', job => score1Fn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 10 }),
-  swot: new Worker('hunter-swot', job => swotFn(job, pool), { connection: REDIS_OPTS, concurrency: 3 }),
+  swot: new Worker('hunter-swot', job => swotFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 3 }),
+  crm: new Worker('hunter-crm', job => crmFn(job, pool), { connection: REDIS_OPTS, concurrency: 5 }),
 };
 
 for (const [nome, w] of Object.entries(workers)) {

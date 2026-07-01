@@ -7,36 +7,36 @@
  */
 const openai = require('../providers/openai');
 
-module.exports = async function swot(job, pool) {
+module.exports = async function swot(job, pool, queues) {
   const { cnpj, busca_id, lead_id } = job.data;
+
+  const { rows: [busca] } = await pool.query(`SELECT criterios, crm_auto FROM buscas WHERE id=$1`, [busca_id]);
 
   const { rows: [ig] } = await pool.query(
     `SELECT key_cifrada, config FROM integracoes
      WHERE categoria='ia' AND provedor='openai' AND ativo=true
      ORDER BY ordem LIMIT 1`
   );
-  if (!ig?.key_cifrada) {
-    // Sem chave: não é erro. O lead segue 'scored' e pode ganhar SWOT depois.
-    return { skipped: 'sem_chave_ia', lead_id };
+
+  if (ig?.key_cifrada) {
+    const { rows: [empresa] } = await pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [cnpj]);
+    if (empresa) {
+      const crit = busca?.criterios || {};
+      const contexto = crit.params?.proposta_valor || crit.proposta_valor || crit.texto || '';
+      const briefing = await openai.gerarSwot(empresa, { apiKey: ig.key_cifrada, modelo: ig.config?.modelo, contexto });
+      await pool.query(
+        `UPDATE leads SET swot=$2::jsonb, estagio='pronto', atualizado_em=now() WHERE id=$1`,
+        [lead_id, JSON.stringify(briefing)]
+      );
+    }
+  }
+  // Sem chave IA: o lead segue 'scored' (sem gasto). Mesmo assim pode ir ao CRM.
+
+  // Envio automático ao CRM, se a busca estiver em modo automático.
+  if (busca?.crm_auto && queues?.crm) {
+    await queues.crm.add('crm', { lead_id },
+      { jobId: `crm-${lead_id}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 4, backoff: { type: 'exponential', delay: 15000 } });
   }
 
-  const [empresaRes, buscaRes] = await Promise.all([
-    pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [cnpj]),
-    pool.query(`SELECT criterios FROM buscas WHERE id=$1`, [busca_id]),
-  ]);
-  const empresa = empresaRes.rows[0];
-  if (!empresa) return { error: 'empresa ausente', cnpj };
-
-  const crit = buscaRes.rows[0]?.criterios || {};
-  const contexto = crit.params?.proposta_valor || crit.proposta_valor || crit.texto || '';
-  const modelo = ig.config?.modelo || undefined;
-
-  const briefing = await openai.gerarSwot(empresa, { apiKey: ig.key_cifrada, modelo, contexto });
-
-  await pool.query(
-    `UPDATE leads SET swot=$2::jsonb, estagio='pronto', atualizado_em=now() WHERE id=$1`,
-    [lead_id, JSON.stringify(briefing)]
-  );
-
-  return { cnpj, lead_id, ok: true };
+  return { cnpj, lead_id, swot: !!ig?.key_cifrada, crm_auto: !!busca?.crm_auto };
 };

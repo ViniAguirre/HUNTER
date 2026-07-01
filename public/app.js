@@ -2317,6 +2317,7 @@ function NovaBusca({
   const [municFoco, setMunicFoco] = useState(false);
   const [abertura, setAbertura] = useState('qualquer');
   const [capital, setCapital] = useState('qualquer');
+  const [crmAuto, setCrmAuto] = useState(false);
   const nomeRef = useRef();
   const criteriosRef = useRef();
   useEffect(() => {
@@ -2439,6 +2440,7 @@ function NovaBusca({
           tipo,
           ritmo,
           corte_score: corte,
+          crm_auto: crmAuto,
           criterios
         })
       });
@@ -3029,7 +3031,49 @@ function NovaBusca({
       color: 'var(--faint)',
       marginTop: 5
     }
-  }, /*#__PURE__*/React.createElement("span", null, "permissivo"), /*#__PURE__*/React.createElement("span", null, "rigoroso"))))), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("span", null, "permissivo"), /*#__PURE__*/React.createElement("span", null, "rigoroso"))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      gridColumn: '1 / -1',
+      borderTop: '1px solid var(--border)',
+      paddingTop: 16
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 9
+    }
+  }, "Envio ao CRM (webhook)"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8
+    }
+  }, [['manual', 'Manual — envio após triagem'], ['auto', 'Automático — envia ao concluir a análise']].map(([k, label]) => {
+    const ativo = k === 'auto' === crmAuto;
+    return /*#__PURE__*/React.createElement("div", {
+      key: k,
+      onClick: () => setCrmAuto(k === 'auto'),
+      style: {
+        flex: 1,
+        cursor: 'pointer',
+        padding: '11px 13px',
+        borderRadius: 10,
+        fontSize: 12.5,
+        lineHeight: 1.35,
+        border: ativo ? `1.5px solid ${C.gold}` : '1.5px solid var(--border)',
+        background: ativo ? 'rgba(251,228,154,.08)' : 'transparent',
+        color: ativo ? 'var(--text)' : 'var(--dim)'
+      }
+    }, label);
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)',
+      marginTop: 7,
+      lineHeight: 1.4
+    }
+  }, "No autom\xE1tico, cada lead aprovado \xE9 enviado ao webhook ap\xF3s o SWOT. No manual, voc\xEA envia pela triagem. Configure a URL em Integra\xE7\xF5es.")))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 12
@@ -3070,11 +3114,12 @@ const INTEGRACOES_META = {
     icon: 'M14 2v6h6M14 2l6 6v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z',
     editavel: true
   },
-  'crm|rdstation': {
-    nome: 'CRM',
-    provedor: 'RD Station',
+  'crm|webhook': {
+    nome: 'CRM via Webhook',
+    provedor: 'Qualquer CRM (URL de webhook / n8n)',
     icon: 'M3 3h18v4H3zM3 10h18v4H3zM3 17h18v4H3z',
-    editavel: false
+    editavel: true,
+    placeholder: 'Colar URL do webhook…'
   },
   'validacao_email|neverbounce': {
     nome: 'Validação de e-mail',
@@ -3095,7 +3140,7 @@ const INTEGRACOES_META = {
     editavel: true
   }
 };
-const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'ia|openai', 'crm|rdstation', 'validacao_email|neverbounce', 'validacao_tel|twilio'];
+const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'ia|openai', 'crm|webhook', 'validacao_email|neverbounce', 'validacao_tel|twilio'];
 function Integracoes() {
   const [rows, setRows] = useState(null);
   const [erro, setErro] = useState(null);
@@ -3260,7 +3305,7 @@ function Integracoes() {
       }
     }, meta.provedor, row?.chave_mascarada ? ' · ' + row.chave_mascarada : '')), meta.editavel ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("input", {
       ref: el => chaveRefs.current[chave] = el,
-      placeholder: "Colar chave da API\u2026",
+      placeholder: meta.placeholder || 'Colar chave da API…',
       style: {
         width: 190,
         height: 38,
@@ -3884,6 +3929,9 @@ function Monitor() {
   }, {
     key: 'swot',
     label: '5. Agente SWOT (OpenAI)'
+  }, {
+    key: 'crm',
+    label: '6. Envio ao CRM (webhook)'
   }];
   return /*#__PURE__*/React.createElement("div", {
     style: {

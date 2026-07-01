@@ -941,6 +941,7 @@ function NovaBusca({ onSalvar }) {
   const [municFoco, setMunicFoco] = useState(false);
   const [abertura, setAbertura] = useState('qualquer');
   const [capital, setCapital] = useState('qualquer');
+  const [crmAuto, setCrmAuto] = useState(false);
   const nomeRef = useRef();
   const criteriosRef = useRef();
 
@@ -1034,7 +1035,7 @@ function NovaBusca({ onSalvar }) {
       const r = await fetch('/api/buscas', {
         method:'POST', credentials:'same-origin',
         headers:{ 'Content-Type':'application/json' },
-        body: JSON.stringify({ nome, tipo, ritmo, corte_score: corte, criterios })
+        body: JSON.stringify({ nome, tipo, ritmo, corte_score: corte, crm_auto: crmAuto, criterios })
       });
       if (!r.ok) { const d = await r.json().catch(()=>({})); throw new Error(d.erro || 'Erro ao criar busca.'); }
       onSalvar();
@@ -1250,6 +1251,26 @@ function NovaBusca({ onSalvar }) {
               <span>permissivo</span><span>rigoroso</span>
             </div>
           </div>
+          <div style={{ gridColumn:'1 / -1', borderTop:'1px solid var(--border)', paddingTop:16 }}>
+            <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:9 }}>Envio ao CRM (webhook)</label>
+            <div style={{ display:'flex', gap:8 }}>
+              {[['manual','Manual — envio após triagem'],['auto','Automático — envia ao concluir a análise']].map(([k,label]) => {
+                const ativo = (k === 'auto') === crmAuto;
+                return (
+                  <div key={k} onClick={() => setCrmAuto(k === 'auto')}
+                    style={{ flex:1, cursor:'pointer', padding:'11px 13px', borderRadius:10, fontSize:12.5, lineHeight:1.35,
+                      border: ativo ? `1.5px solid ${C.gold}` : '1.5px solid var(--border)',
+                      background: ativo ? 'rgba(251,228,154,.08)' : 'transparent',
+                      color: ativo ? 'var(--text)' : 'var(--dim)' }}>
+                    {label}
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ fontSize:11, color:'var(--faint)', marginTop:7, lineHeight:1.4 }}>
+              No automático, cada lead aprovado é enviado ao webhook após o SWOT. No manual, você envia pela triagem. Configure a URL em Integrações.
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1270,8 +1291,8 @@ function NovaBusca({ onSalvar }) {
 const INTEGRACOES_META = {
   'descoberta|cnpja': { nome:'Descoberta de empresas', provedor:'CNPJá',
     icon:'M14 2v6h6M14 2l6 6v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z', editavel:true },
-  'crm|rdstation': { nome:'CRM', provedor:'RD Station',
-    icon:'M3 3h18v4H3zM3 10h18v4H3zM3 17h18v4H3z', editavel:false },
+  'crm|webhook': { nome:'CRM via Webhook', provedor:'Qualquer CRM (URL de webhook / n8n)',
+    icon:'M3 3h18v4H3zM3 10h18v4H3zM3 17h18v4H3z', editavel:true, placeholder:'Colar URL do webhook…' },
   'validacao_email|neverbounce': { nome:'Validação de e-mail', provedor:'NeverBounce',
     icon:'M3 5h18v14H3zM3 7l9 6 9-6', editavel:false },
   'validacao_tel|twilio': { nome:'Validação de telefone', provedor:'Twilio Lookup',
@@ -1279,7 +1300,7 @@ const INTEGRACOES_META = {
   'ia|openai': { nome:'Inteligência (IA) — agente SWOT', provedor:'OpenAI (gpt-4o-mini)',
     icon:'M12 3v2M12 19v2M5 12H3M21 12h-2M7 7L5.5 5.5M18.5 18.5L17 17M17 7l1.5-1.5M5.5 18.5L7 17', editavel:true },
 };
-const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'ia|openai', 'crm|rdstation', 'validacao_email|neverbounce', 'validacao_tel|twilio'];
+const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'ia|openai', 'crm|webhook', 'validacao_email|neverbounce', 'validacao_tel|twilio'];
 
 function Integracoes() {
   const [rows, setRows] = useState(null);
@@ -1367,7 +1388,7 @@ function Integracoes() {
             </div>
             {meta.editavel ? (
               <>
-                <input ref={el => chaveRefs.current[chave] = el} placeholder="Colar chave da API…"
+                <input ref={el => chaveRefs.current[chave] = el} placeholder={meta.placeholder || 'Colar chave da API…'}
                   style={{ width:190, height:38, borderRadius:9, border:'1px solid var(--border)',
                     background:'var(--panel2)', color:'var(--dim)', padding:'0 12px', fontSize:12.5,
                     fontFamily:'inherit', letterSpacing:'.05em' }}/>
@@ -1630,6 +1651,7 @@ function Monitor() {
     { key:'filtroContador', label:'3. Filtro de contador' },
     { key:'score1', label:'4. Score 1 + corte' },
     { key:'swot', label:'5. Agente SWOT (OpenAI)' },
+    { key:'crm', label:'6. Envio ao CRM (webhook)' },
   ];
 
   return (
