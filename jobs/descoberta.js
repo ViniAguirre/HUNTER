@@ -21,8 +21,9 @@ module.exports = async function descoberta(job, pool, queues) {
     throw new Error('Nenhuma integração de descoberta (CNPJá) ativa — configure em Integrações.');
   }
 
-  const params = buildSearchParams(criterios, job.data.offset || 0);
-  const offices = await cnpja.search(params, ig.key_cifrada);
+  const { rows: [bCursor] } = await pool.query(`SELECT cursor_descoberta FROM buscas WHERE id=$1`, [busca_id]);
+  const params = buildSearchParams(criterios, bCursor?.cursor_descoberta || null);
+  const { offices, next } = await cnpja.search(params, ig.key_cifrada);
 
   let novos = 0, pulados = 0, enfileirados = 0;
 
@@ -73,49 +74,39 @@ module.exports = async function descoberta(job, pool, queues) {
     }
   }
 
+  // Avança o cursor de descoberta (next). Se acabou (next=null), reseta pra
+  // varrer de novo do início no próximo ciclo — o portão de existência evita
+  // reprocessar quem já está no ledger, então só empresas novas entram.
   await pool.query(
-    `UPDATE buscas SET universo_varrido = universo_varrido + $1, ultimo_heartbeat = now() WHERE id = $2`,
-    [offices.length, busca_id]
+    `UPDATE buscas SET universo_varrido = universo_varrido + $1, cursor_descoberta = $2, ultimo_heartbeat = now() WHERE id = $3`,
+    [offices.length, next, busca_id]
   );
 
-  return { novos, pulados, enfileirados, total: offices.length };
+  return { novos, pulados, enfileirados, total: offices.length, fim: !next };
 };
 
-function buildSearchParams(criterios, offset) {
-  if (criterios.params) {
-    return {
-      states: criterios.params.ufs || [],
-      activities: criterios.params.cnaes || [],
-      sizes: (criterios.params.portes || []).map(normPorteApi),
-      query: criterios.params.query || '',
-      limit: 20,
-      offset,
-    };
+function buildSearchParams(criterios, token) {
+  // Só filtros firmográficos confirmados pela API (UF + CNAE principal +
+  // situação ativa). Porte/Simples ficam pro Score 1 (grátis) — evita
+  // depender de IDs de porte e não custa recall na descoberta.
+  const p = criterios.params || {};
+  const out = { states: [], activities: [], limit: 20, token };
+
+  if (p.ufs || p.cnaes) {
+    out.states = p.ufs || [];
+    out.activities = p.cnaes || [];
+    return out;
   }
 
   // Critérios legados (chips em texto livre) — parse best-effort.
-  const params = { states: [], activities: [], sizes: [], query: '', limit: 20, offset };
   for (const chip of (criterios.chips || [])) {
     const idx = chip.indexOf(': ');
     if (idx === -1) continue;
     const key = chip.slice(0, idx).trim();
     const val = chip.slice(idx + 2).trim();
     if (!val) continue;
-    if (key === 'UF') params.states.push(val);
-    if (key === 'CNAE') params.activities.push(val.replace(/\D/g, ''));
-    if (key === 'Porte') params.sizes.push(normPorteApi(val));
+    if (key === 'UF') out.states.push(val);
+    if (key === 'CNAE') out.activities.push(val.replace(/\D/g, ''));
   }
-  if (!params.states.length && !params.activities.length && criterios.texto) {
-    params.query = criterios.texto;
-  }
-  return params;
-}
-
-function normPorteApi(v) {
-  const s = String(v).toUpperCase();
-  if (s.includes('MICRO') || s === 'MEI') return 'MEI';
-  if (s.includes('PEQU')) return 'ME';
-  if (s.includes('MED')) return 'EPP';
-  if (s.includes('GRAN')) return 'GRANDE';
-  return v;
+  return out;
 }

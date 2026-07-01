@@ -30,19 +30,20 @@ async function request(url, apiKey) {
 }
 
 // Busca por filtros (descoberta) — exige chave paga.
-// params: { states:['PR'], activities:['7311300'], sizes:['ME'], query:'', limit:20, offset:0 }
+// Formato oficial CNPJá /office: filtros "campo.operador" e paginação por
+// cursor (token). Resposta: { next, limit, count, records:[...] }.
+// params: { states:['RS'], activities:[8650004], token:null, limit:20 }
 async function search(params, apiKey) {
   if (!apiKey) throw new Error('CNPJá: chave obrigatória para descoberta (configure em Integrações)');
   const qs = new URLSearchParams();
-  if (params.query) qs.set('query', params.query);
-  (params.states || []).forEach(s => qs.append('state', s));
-  (params.activities || []).forEach(a => qs.append('activity', a));
-  (params.sizes || []).forEach(s => qs.append('size', s));
+  (params.states || []).forEach(s => { if (s) qs.append('address.state.in', String(s).toUpperCase()); });
+  (params.activities || []).forEach(a => { const c = String(a).replace(/\D/g, ''); if (c) qs.append('mainActivity.id.in', c); });
+  qs.append('status.id.in', '2'); // 2 = Ativa (só empresas ativas)
   qs.set('limit', String(Math.min(params.limit || 20, 20)));
-  if (params.offset) qs.set('offset', String(params.offset));
+  if (params.token) qs.set('token', params.token);
 
   const data = await request(`${PAID_BASE}/office?${qs.toString()}`, apiKey);
-  return (data.offices || data.data || []).map(normalizeOffice);
+  return { offices: (data.records || []).map(normalizeOffice), next: data.next || null };
 }
 
 // Enriquecimento individual — usa endpoint aberto (grátis, rate-limited) se

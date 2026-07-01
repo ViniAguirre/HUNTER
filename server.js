@@ -316,6 +316,7 @@ async function init() {
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS universo_varrido INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS ultimo_heartbeat TIMESTAMPTZ;
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS corte_score      INTEGER NOT NULL DEFAULT 60;
+    ALTER TABLE buscas ADD COLUMN IF NOT EXISTS cursor_descoberta TEXT;
   `);
 
   // Garante a linha do provider de descoberta (CNPJá) pra tela de Integrações
@@ -573,6 +574,27 @@ app.patch('/api/buscas/:id', requireAuth, requireEditor, async (req, res) => {
     if (!b) return res.status(404).json({ erro: 'não encontrada' });
     res.json({ ...b, health: computeHealth(b) });
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+app.delete('/api/buscas/:id', requireAuth, requireEditor, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Remove os leads da busca; as empresas ficam no ledger permanente (memória
+    // anti-desperdício), então excluir a busca não apaga o histórico global.
+    await client.query('DELETE FROM leads WHERE busca_id=$1', [id]);
+    const { rowCount } = await client.query('DELETE FROM buscas WHERE id=$1', [id]);
+    await client.query('COMMIT');
+    if (!rowCount) return res.status(404).json({ erro: 'não encontrada' });
+    res.json({ ok: true });
+  } catch(e) {
+    await client.query('ROLLBACK').catch(() => {});
+    console.error(e); res.status(500).json({ erro: 'erro interno' });
+  } finally {
+    client.release();
+  }
 });
 
 // ── API: leads ────────────────────────────────────────────────────────────────

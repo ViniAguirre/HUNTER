@@ -58,25 +58,21 @@ async function runScheduler() {
         `SELECT COUNT(*)::int AS n FROM leads WHERE busca_id=$1 AND criado_em >= now() - interval '1 hour'`,
         [busca.id]
       );
-      const slots = busca.ritmo - n;
-      if (slots <= 0) continue;
+      if (n >= busca.ritmo) continue; // já bateu o ritmo (leads/h) na janela
 
-      const batches = Math.min(Math.ceil(slots / 20), 10);
-      for (let i = 0; i < batches; i++) {
-        await queues.descoberta.add('descoberta', {
-          busca_id: busca.id,
-          criterios: busca.criterios,
-          corte_score: busca.corte_score,
-          tipo: busca.tipo,
-          offset: i * 20,
-        }, {
-          jobId: `busca-${busca.id}-offset-${i * 20}-${Date.now()}`,
-          removeOnComplete: { count: 200, age: 86400 },
-          removeOnFail: { count: 100 },
-          attempts: 3,
-          backoff: { type: 'exponential', delay: 5000 },
-        });
-      }
+      // Um job por ciclo: a descoberta pagina por cursor (token da CNPJá),
+      // avançando ~20 empresas por vez, respeitando o ritmo da torneira.
+      await queues.descoberta.add('descoberta', {
+        busca_id: busca.id,
+        criterios: busca.criterios,
+        tipo: busca.tipo,
+      }, {
+        jobId: `busca-${busca.id}-${Date.now()}`,
+        removeOnComplete: { count: 200, age: 86400 },
+        removeOnFail: { count: 100 },
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5000 },
+      });
     }
 
     await pool.query(`UPDATE buscas SET ultimo_heartbeat=now() WHERE status='Ativa' AND ritmo > 0`);

@@ -1614,11 +1614,26 @@ function Buscas({
   onOpen
 }) {
   const [buscas, setBuscas] = useState(null);
-  useEffect(() => {
+  const carregar = () => {
     fetch('/api/buscas', {
       credentials: 'same-origin'
     }).then(r => r.json()).then(d => setBuscas(Array.isArray(d) ? d : d.buscas || [])).catch(() => setBuscas([]));
-  }, []);
+  };
+  useEffect(carregar, []);
+  const excluir = async (e, b) => {
+    e.stopPropagation();
+    if (!window.confirm(`Excluir a busca "${b.nome}"?\nOs leads dela serão removidos. As empresas continuam no histórico global.`)) return;
+    const r = await fetch('/api/buscas/' + b.id, {
+      method: 'DELETE',
+      credentials: 'same-origin'
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      window.alert(d.erro || 'Erro ao excluir.');
+      return;
+    }
+    carregar();
+  };
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -1674,7 +1689,7 @@ function Buscas({
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
-      gridTemplateColumns: '24px 2.2fr 1fr 1fr .7fr .8fr .8fr .8fr 1fr',
+      gridTemplateColumns: '24px 2.2fr 1fr 1fr .7fr .8fr .8fr .8fr 1fr 40px',
       alignItems: 'center',
       gap: 10,
       padding: '12px 18px',
@@ -1685,7 +1700,7 @@ function Buscas({
       color: 'var(--faint)',
       textTransform: 'uppercase'
     }
-  }, /*#__PURE__*/React.createElement("div", null), /*#__PURE__*/React.createElement("div", null, "Nome"), /*#__PURE__*/React.createElement("div", null, "Status"), /*#__PURE__*/React.createElement("div", null, "Criada por"), /*#__PURE__*/React.createElement("div", null, "Ritmo"), /*#__PURE__*/React.createElement("div", null, "Encontr."), /*#__PURE__*/React.createElement("div", null, "Qualif."), /*#__PURE__*/React.createElement("div", null, "CRM"), /*#__PURE__*/React.createElement("div", null, "Atividade")), buscas === null && /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", null), /*#__PURE__*/React.createElement("div", null, "Nome"), /*#__PURE__*/React.createElement("div", null, "Status"), /*#__PURE__*/React.createElement("div", null, "Criada por"), /*#__PURE__*/React.createElement("div", null, "Ritmo"), /*#__PURE__*/React.createElement("div", null, "Encontr."), /*#__PURE__*/React.createElement("div", null, "Qualif."), /*#__PURE__*/React.createElement("div", null, "CRM"), /*#__PURE__*/React.createElement("div", null, "Atividade"), /*#__PURE__*/React.createElement("div", null)), buscas === null && /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '22px 18px',
       fontSize: 13,
@@ -1703,7 +1718,7 @@ function Buscas({
     className: "row-hover",
     style: {
       display: 'grid',
-      gridTemplateColumns: '24px 2.2fr 1fr 1fr .7fr .8fr .8fr .8fr 1fr',
+      gridTemplateColumns: '24px 2.2fr 1fr 1fr .7fr .8fr .8fr .8fr 1fr 40px',
       alignItems: 'center',
       gap: 10,
       padding: '14px 18px',
@@ -1752,7 +1767,28 @@ function Buscas({
       fontSize: 12,
       color: 'var(--faint)'
     }
-  }, timeAgo(b.ultima_ativ))))));
+  }, timeAgo(b.ultima_ativ)), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("button", {
+    onClick: e => excluir(e, b),
+    title: "Excluir busca",
+    style: {
+      width: 30,
+      height: 30,
+      borderRadius: 8,
+      border: '1px solid var(--border)',
+      background: 'transparent',
+      color: 'var(--dim)',
+      cursor: 'pointer',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center'
+    }
+  }, /*#__PURE__*/React.createElement(SvgMulti, {
+    w: 15,
+    h: 15,
+    sw: 1.7
+  }, /*#__PURE__*/React.createElement("path", {
+    d: "M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6M10 11v6M14 11v6"
+  }))))))));
 }
 
 // ── BuscaDetail ───────────────────────────────────────────────────────────────

@@ -629,12 +629,21 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
 function Buscas({ onOpen }) {
   const [buscas, setBuscas] = useState(null);
 
-  useEffect(() => {
+  const carregar = () => {
     fetch('/api/buscas', { credentials:'same-origin' })
       .then(r => r.json())
       .then(d => setBuscas(Array.isArray(d) ? d : (d.buscas || [])))
       .catch(() => setBuscas([]));
-  }, []);
+  };
+  useEffect(carregar, []);
+
+  const excluir = async (e, b) => {
+    e.stopPropagation();
+    if (!window.confirm(`Excluir a busca "${b.nome}"?\nOs leads dela serão removidos. As empresas continuam no histórico global.`)) return;
+    const r = await fetch('/api/buscas/' + b.id, { method:'DELETE', credentials:'same-origin' });
+    if (!r.ok) { const d = await r.json().catch(()=>({})); window.alert(d.erro || 'Erro ao excluir.'); return; }
+    carregar();
+  };
 
   return (
     <div>
@@ -650,11 +659,11 @@ function Buscas({ onOpen }) {
         </div>
       </div>
       <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden' }}>
-        <div style={{ display:'grid', gridTemplateColumns:'24px 2.2fr 1fr 1fr .7fr .8fr .8fr .8fr 1fr',
+        <div style={{ display:'grid', gridTemplateColumns:'24px 2.2fr 1fr 1fr .7fr .8fr .8fr .8fr 1fr 40px',
           alignItems:'center', gap:10, padding:'12px 18px', borderBottom:'1px solid var(--border)',
           fontSize:11, fontWeight:600, letterSpacing:'.04em', color:'var(--faint)', textTransform:'uppercase' }}>
           <div/><div>Nome</div><div>Status</div><div>Criada por</div><div>Ritmo</div>
-          <div>Encontr.</div><div>Qualif.</div><div>CRM</div><div>Atividade</div>
+          <div>Encontr.</div><div>Qualif.</div><div>CRM</div><div>Atividade</div><div/>
         </div>
         {buscas === null && (
           <div style={{ padding:'22px 18px', fontSize:13, color:'var(--faint)' }}>Carregando…</div>
@@ -664,7 +673,7 @@ function Buscas({ onOpen }) {
         )}
         {buscas && buscas.map(b => (
           <div key={b.id} onClick={() => onOpen(b.id)} className="row-hover"
-            style={{ display:'grid', gridTemplateColumns:'24px 2.2fr 1fr 1fr .7fr .8fr .8fr .8fr 1fr',
+            style={{ display:'grid', gridTemplateColumns:'24px 2.2fr 1fr 1fr .7fr .8fr .8fr .8fr 1fr 40px',
               alignItems:'center', gap:10, padding:'14px 18px', borderBottom:'1px solid var(--border)', cursor:'pointer' }}>
             <div><StatusDot color={healthColors[b.health]||C.gray} pulse={b.health==='green'}/></div>
             <div style={{ fontSize:13.5, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{b.nome}</div>
@@ -675,6 +684,13 @@ function Buscas({ onOpen }) {
             <div style={{ fontSize:13, color:'var(--dim)' }}>{fmtNum(b.qualificados ?? b.qual)}</div>
             <div style={{ fontSize:13, color:C.cyan }}>{fmtNum(b.enviados ?? b.crm)}</div>
             <div style={{ fontSize:12, color:'var(--faint)' }}>{timeAgo(b.ultima_ativ)}</div>
+            <div>
+              <button onClick={(e) => excluir(e, b)} title="Excluir busca"
+                style={{ width:30, height:30, borderRadius:8, border:'1px solid var(--border)', background:'transparent',
+                  color:'var(--dim)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                <SvgMulti w={15} h={15} sw={1.7}><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6M10 11v6M14 11v6"/></SvgMulti>
+              </button>
+            </div>
           </div>
         ))}
       </div>
