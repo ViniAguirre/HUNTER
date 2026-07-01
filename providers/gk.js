@@ -39,20 +39,19 @@ function traduzErro(err, contexto) {
 }
 
 async function listarEmpresas(backend, token) {
-  // A doc lista /companies/all (sem /api), mas os outros endpoints usam /api.
-  // Tentamos o documentado e, se der 404, o /api/companies/all como alternativa.
+  // Endpoint confirmado no CRM real: /api/companies/all (a doc dizia
+  // /companies/all, que responde 401). Tentamos o confirmado primeiro.
   const c = client(backend, token);
   try {
-    const { data } = await c.get('/companies/all');
+    const { data } = await c.get('/api/companies/all');
     return (data || []).map(x => ({ id: x.id, name: x.name }));
   } catch (err) {
-    if (err.response?.status === 404) {
-      try {
-        const { data } = await c.get('/api/companies/all');
-        return (data || []).map(x => ({ id: x.id, name: x.name }));
-      } catch (err2) { throw traduzErro(err2, 'Buscar empresas'); }
+    try {
+      const { data } = await c.get('/companies/all');
+      return (data || []).map(x => ({ id: x.id, name: x.name }));
+    } catch (_) {
+      throw traduzErro(err, 'Buscar empresas');
     }
-    throw traduzErro(err, 'Buscar empresas');
   }
 }
 
@@ -99,7 +98,7 @@ function montarContato(empresa, lead, extras = {}) {
     { name: 'Score do Lead', value: lead?.score != null ? String(lead.score) : '' },
     { name: 'Capturado em', value: new Date().toISOString() },
   ].filter(x => x.value);
-  return {
+  const contato = {
     name: e.decisor || e.fantasia || e.razao || 'Contato',
     number: tel,
     email: extras.email || '',
@@ -111,6 +110,9 @@ function montarContato(empresa, lead, extras = {}) {
     carteiraId: '',
     extraInfo,
   };
+  // O CRM exige o vínculo com a empresa (do config da integração).
+  if (extras.companyId) contato.companyId = extras.companyId;
+  return contato;
 }
 
 module.exports = { listarEmpresas, listarFilas, upsertContato, abrirTicket, montarContato, EP_CONTATO };

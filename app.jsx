@@ -1339,6 +1339,7 @@ function IntegracaoGK({ row, meta, onSaved }) {
 
   const salvar = async () => {
     if (!backend.trim() || !token.trim()) { setErro('Informe Backend e Token.'); return; }
+    if (!companyId) { setErro('Selecione a empresa (obrigatória para criar o contato).'); return; }
     if (!queueId) { setErro('Selecione a fila padrão.'); return; }
     setErro(null); setSalvando(true);
     try {
