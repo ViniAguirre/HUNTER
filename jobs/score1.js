@@ -17,7 +17,7 @@ const W = {
   SITUACAO_ATIVA: 5,
 };
 
-module.exports = async function score1(job, pool) {
+module.exports = async function score1(job, pool, queues) {
   const { cnpj, busca_id, lead_id } = job.data;
 
   const [empresaRes, buscaRes] = await Promise.all([
@@ -51,6 +51,12 @@ module.exports = async function score1(job, pool) {
       WHERE id=$1`,
       [lead_id, score, breakdownJson, empresa.situacao, empresa.abertura, empresa.capital, empresa.endereco]
     );
+    // Passou no corte → enfileira o agente SWOT (Fase 3.2). Se não houver chave
+    // OpenAI ativa, o job apenas ignora e o lead segue 'scored' (sem gasto).
+    if (queues?.swot) {
+      await queues.swot.add('swot', { cnpj, busca_id, lead_id },
+        { removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 2, backoff: { type: 'exponential', delay: 10000 } });
+    }
   } else {
     await pool.query(`
       UPDATE leads SET

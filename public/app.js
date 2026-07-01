@@ -3076,14 +3076,14 @@ const INTEGRACOES_META = {
     icon: 'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.6A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.3 1.8.6 2.6a2 2 0 0 1-.5 2.1L8 9.6a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.5c.8.3 1.7.5 2.6.6a2 2 0 0 1 1.7 2z',
     editavel: false
   },
-  'ia|claude': {
-    nome: 'Inteligência (IA)',
-    provedor: 'Claude · Anthropic',
+  'ia|openai': {
+    nome: 'Inteligência (IA) — agente SWOT',
+    provedor: 'OpenAI (gpt-4o-mini)',
     icon: 'M12 3v2M12 19v2M5 12H3M21 12h-2M7 7L5.5 5.5M18.5 18.5L17 17M17 7l1.5-1.5M5.5 18.5L7 17',
-    editavel: false
+    editavel: true
   }
 };
-const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'crm|rdstation', 'validacao_email|neverbounce', 'validacao_tel|twilio', 'ia|claude'];
+const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'ia|openai', 'crm|rdstation', 'validacao_email|neverbounce', 'validacao_tel|twilio'];
 function Integracoes() {
   const [rows, setRows] = useState(null);
   const [erro, setErro] = useState(null);
@@ -3869,6 +3869,9 @@ function Monitor() {
   }, {
     key: 'score1',
     label: '4. Score 1 + corte'
+  }, {
+    key: 'swot',
+    label: '5. Agente SWOT (OpenAI)'
   }];
   return /*#__PURE__*/React.createElement("div", {
     style: {
@@ -4546,7 +4549,7 @@ function LeadDetailPanel({
     }
   }, c.fonte, " \xB7 ", c.recencia)), /*#__PURE__*/React.createElement("span", {
     style: seloStyle(c.validado)
-  }, c.selo || (c.validado ? 'verificado' : 'não verif.')))))), l.abordagem && /*#__PURE__*/React.createElement("section", {
+  }, c.selo || (c.validado ? 'verificado' : 'não verif.')))))), l.swot && /*#__PURE__*/React.createElement("section", {
     style: {
       borderTop: '1px solid var(--border)',
       paddingTop: 18
@@ -4575,29 +4578,108 @@ function LeadDetailPanel({
       fontWeight: 600,
       letterSpacing: '.08em',
       color: C.blue,
-      textTransform: 'uppercase'
+      textTransform: 'uppercase',
+      flex: 1
     }
-  }, "Sugest\xE3o de abordagem \xB7 IA")), /*#__PURE__*/React.createElement("div", {
+  }, "Briefing SWOT \xB7 IA"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      color: 'var(--faint)'
+    }
+  }, l.swot.modelo || 'gpt-4o-mini')), l.swot.resumo && /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 13,
+      lineHeight: 1.6,
+      margin: '0 0 14px',
+      color: 'var(--text)'
+    }
+  }, l.swot.resumo), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: '1fr 1fr',
+      gap: 10,
+      marginBottom: 14
+    }
+  }, [['Forças', l.swot.swot?.forcas, C.green], ['Fraquezas', l.swot.swot?.fraquezas, C.red], ['Oportunidades', l.swot.swot?.oportunidades, C.blue], ['Ameaças', l.swot.swot?.ameacas, C.amber]].map(([titulo, itens, cor]) => /*#__PURE__*/React.createElement("div", {
+    key: titulo,
+    style: {
+      background: 'var(--panel2)',
+      border: '1px solid var(--border)',
+      borderRadius: 10,
+      padding: '11px 12px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      fontWeight: 600,
+      color: cor,
+      marginBottom: 6
+    }
+  }, titulo), /*#__PURE__*/React.createElement("ul", {
+    style: {
+      margin: 0,
+      padding: '0 0 0 15px',
+      fontSize: 12,
+      lineHeight: 1.5,
+      color: 'var(--dim)'
+    }
+  }, (Array.isArray(itens) ? itens : []).map((it, i) => /*#__PURE__*/React.createElement("li", {
+    key: i
+  }, it)), (!itens || !itens.length) && /*#__PURE__*/React.createElement("li", {
+    style: {
+      color: 'var(--faint)',
+      listStyle: 'none',
+      marginLeft: -15
+    }
+  }, "\u2014"))))), l.swot.gancho && /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'rgba(58,142,255,.07)',
       border: '1px solid rgba(58,142,255,.22)',
       borderRadius: 11,
-      padding: 14
+      padding: 14,
+      marginBottom: 10
     }
-  }, /*#__PURE__*/React.createElement("p", {
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10.5,
+      fontWeight: 600,
+      color: C.blue,
+      marginBottom: 5,
+      textTransform: 'uppercase',
+      letterSpacing: '.06em'
+    }
+  }, "Gancho de abordagem"), /*#__PURE__*/React.createElement("p", {
     style: {
       fontSize: 13,
-      lineHeight: 1.6,
-      margin: '0 0 12px',
+      lineHeight: 1.55,
+      margin: 0,
       color: 'var(--text)'
     }
-  }, l.abordagem), /*#__PURE__*/React.createElement("div", {
+  }, l.swot.gancho)), l.swot.pergunta_abertura && /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
-      gap: 8
+      alignItems: 'flex-start',
+      gap: 9,
+      fontSize: 13,
+      lineHeight: 1.55,
+      color: 'var(--text)',
+      padding: '0 2px'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: C.blue,
+      fontWeight: 700
+    }
+  }, "\u201C"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontStyle: 'italic'
+    }
+  }, l.swot.pergunta_abertura)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 12
     }
   }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => navigator.clipboard?.writeText(l.abordagem).catch(() => {}),
+    onClick: () => navigator.clipboard?.writeText(`${l.swot.resumo}\n\nGancho: ${l.swot.gancho}\n\nAbertura: ${l.swot.pergunta_abertura}`).catch(() => {}),
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -4612,7 +4694,7 @@ function LeadDetailPanel({
       fontFamily: 'inherit',
       cursor: 'pointer'
     }
-  }, "Copiar")))), breakdown.length > 0 && /*#__PURE__*/React.createElement("section", {
+  }, "Copiar briefing"))), breakdown.length > 0 && /*#__PURE__*/React.createElement("section", {
     style: {
       borderTop: '1px solid var(--border)',
       paddingTop: 18

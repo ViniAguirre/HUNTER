@@ -1271,10 +1271,10 @@ const INTEGRACOES_META = {
     icon:'M3 5h18v14H3zM3 7l9 6 9-6', editavel:false },
   'validacao_tel|twilio': { nome:'Validação de telefone', provedor:'Twilio Lookup',
     icon:'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.6A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.3 1.8.6 2.6a2 2 0 0 1-.5 2.1L8 9.6a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.5c.8.3 1.7.5 2.6.6a2 2 0 0 1 1.7 2z', editavel:false },
-  'ia|claude': { nome:'Inteligência (IA)', provedor:'Claude · Anthropic',
-    icon:'M12 3v2M12 19v2M5 12H3M21 12h-2M7 7L5.5 5.5M18.5 18.5L17 17M17 7l1.5-1.5M5.5 18.5L7 17', editavel:false },
+  'ia|openai': { nome:'Inteligência (IA) — agente SWOT', provedor:'OpenAI (gpt-4o-mini)',
+    icon:'M12 3v2M12 19v2M5 12H3M21 12h-2M7 7L5.5 5.5M18.5 18.5L17 17M17 7l1.5-1.5M5.5 18.5L7 17', editavel:true },
 };
-const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'crm|rdstation', 'validacao_email|neverbounce', 'validacao_tel|twilio', 'ia|claude'];
+const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'ia|openai', 'crm|rdstation', 'validacao_email|neverbounce', 'validacao_tel|twilio'];
 
 function Integracoes() {
   const [rows, setRows] = useState(null);
@@ -1624,6 +1624,7 @@ function Monitor() {
     { key:'enriquecimento', label:'2. Enriquecimento (Receita)' },
     { key:'filtroContador', label:'3. Filtro de contador' },
     { key:'score1', label:'4. Score 1 + corte' },
+    { key:'swot', label:'5. Agente SWOT (OpenAI)' },
   ];
 
   return (
@@ -1884,26 +1885,55 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
             </section>
           )}
 
-          {l.abordagem && (
+          {l.swot && (
             <section style={{ borderTop:'1px solid var(--border)', paddingTop:18 }}>
               <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:12 }}>
                 <SvgMulti w={14} h={14} sw={1.8} color={C.blue}>
                   <path d="M12 3v2M12 19v2M5 12H3M21 12h-2M7 7L5.5 5.5M18.5 18.5L17 17M17 7l1.5-1.5M5.5 18.5L7 17"/>
                   <circle cx={12} cy={12} r={4}/>
                 </SvgMulti>
-                <span style={{ fontSize:11, fontWeight:600, letterSpacing:'.08em', color:C.blue, textTransform:'uppercase' }}>
-                  Sugestão de abordagem · IA
+                <span style={{ fontSize:11, fontWeight:600, letterSpacing:'.08em', color:C.blue, textTransform:'uppercase', flex:1 }}>
+                  Briefing SWOT · IA
                 </span>
+                <span style={{ fontSize:10, color:'var(--faint)' }}>{l.swot.modelo || 'gpt-4o-mini'}</span>
               </div>
-              <div style={{ background:'rgba(58,142,255,.07)', border:'1px solid rgba(58,142,255,.22)',
-                borderRadius:11, padding:14 }}>
-                <p style={{ fontSize:13, lineHeight:1.6, margin:'0 0 12px', color:'var(--text)' }}>{l.abordagem}</p>
-                <div style={{ display:'flex', gap:8 }}>
-                  <button onClick={() => navigator.clipboard?.writeText(l.abordagem).catch(()=>{})}
-                    style={{ display:'flex', alignItems:'center', gap:6, height:31, padding:'0 12px',
-                      borderRadius:7, border:'1px solid rgba(58,142,255,.3)', background:'transparent',
-                      color:C.blue, fontSize:12, fontFamily:'inherit', cursor:'pointer' }}>Copiar</button>
+              {l.swot.resumo && (
+                <p style={{ fontSize:13, lineHeight:1.6, margin:'0 0 14px', color:'var(--text)' }}>{l.swot.resumo}</p>
+              )}
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:14 }}>
+                {[
+                  ['Forças', l.swot.swot?.forcas, C.green],
+                  ['Fraquezas', l.swot.swot?.fraquezas, C.red],
+                  ['Oportunidades', l.swot.swot?.oportunidades, C.blue],
+                  ['Ameaças', l.swot.swot?.ameacas, C.amber],
+                ].map(([titulo, itens, cor]) => (
+                  <div key={titulo} style={{ background:'var(--panel2)', border:'1px solid var(--border)', borderRadius:10, padding:'11px 12px' }}>
+                    <div style={{ fontSize:11, fontWeight:600, color:cor, marginBottom:6 }}>{titulo}</div>
+                    <ul style={{ margin:0, padding:'0 0 0 15px', fontSize:12, lineHeight:1.5, color:'var(--dim)' }}>
+                      {(Array.isArray(itens) ? itens : []).map((it,i) => <li key={i}>{it}</li>)}
+                      {(!itens || !itens.length) && <li style={{ color:'var(--faint)', listStyle:'none', marginLeft:-15 }}>—</li>}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+              {l.swot.gancho && (
+                <div style={{ background:'rgba(58,142,255,.07)', border:'1px solid rgba(58,142,255,.22)', borderRadius:11, padding:14, marginBottom:10 }}>
+                  <div style={{ fontSize:10.5, fontWeight:600, color:C.blue, marginBottom:5, textTransform:'uppercase', letterSpacing:'.06em' }}>Gancho de abordagem</div>
+                  <p style={{ fontSize:13, lineHeight:1.55, margin:0, color:'var(--text)' }}>{l.swot.gancho}</p>
                 </div>
+              )}
+              {l.swot.pergunta_abertura && (
+                <div style={{ display:'flex', alignItems:'flex-start', gap:9, fontSize:13, lineHeight:1.55, color:'var(--text)', padding:'0 2px' }}>
+                  <span style={{ color:C.blue, fontWeight:700 }}>“</span>
+                  <span style={{ fontStyle:'italic' }}>{l.swot.pergunta_abertura}</span>
+                </div>
+              )}
+              <div style={{ marginTop:12 }}>
+                <button onClick={() => navigator.clipboard?.writeText(
+                    `${l.swot.resumo}\n\nGancho: ${l.swot.gancho}\n\nAbertura: ${l.swot.pergunta_abertura}`).catch(()=>{})}
+                  style={{ display:'flex', alignItems:'center', gap:6, height:31, padding:'0 12px',
+                    borderRadius:7, border:'1px solid rgba(58,142,255,.3)', background:'transparent',
+                    color:C.blue, fontSize:12, fontFamily:'inherit', cursor:'pointer' }}>Copiar briefing</button>
               </div>
             </section>
           )}

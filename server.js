@@ -45,6 +45,7 @@ if (process.env.REDIS_HOST) {
     enriquecimento: new Queue('hunter-enriquecimento', { connection: { ...redisOpts } }),
     filtroContador: new Queue('hunter-filtro_contador', { connection: { ...redisOpts } }),
     score1: new Queue('hunter-score1', { connection: { ...redisOpts } }),
+    swot: new Queue('hunter-swot', { connection: { ...redisOpts } }),
   };
 }
 
@@ -308,6 +309,7 @@ async function init() {
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS motivo_descarte TEXT;
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS tentativas      INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS processado_em   TIMESTAMPTZ;
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS swot            JSONB;
     CREATE UNIQUE INDEX IF NOT EXISTS uq_leads_busca_cnpj ON leads(busca_id, cnpj);
   `);
 
@@ -323,7 +325,8 @@ async function init() {
   // ter o que mostrar mesmo antes da chave ser cadastrada.
   await pool.query(`
     INSERT INTO integracoes (categoria, provedor, ativo, ordem)
-    VALUES ('descoberta', 'cnpja', false, 10)
+    VALUES ('descoberta', 'cnpja', false, 10),
+           ('ia', 'openai', false, 60)
     ON CONFLICT (categoria, provedor) DO NOTHING
   `);
 
@@ -725,6 +728,7 @@ app.get('/api/monitor/queues', requireAuth, async (req, res) => {
         ['enriquecimento', 'Enriquecimento'],
         ['filtroContador', 'Filtro Contador'],
         ['score1', 'Score 1'],
+        ['swot', 'Agente SWOT'],
       ];
       queues = await Promise.all(entries.map(async ([key, label]) => {
         const q = monitorQueues[key];
