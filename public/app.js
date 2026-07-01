@@ -3366,14 +3366,14 @@ function IntegracaoGK({
       cursor: conectando ? 'default' : 'pointer',
       opacity: conectando ? .6 : 1
     }
-  }, conectando ? 'Conectando…' : 'Conectar e buscar empresas/filas')), (empresas.length > 0 || filas.length > 0) && /*#__PURE__*/React.createElement("div", {
+  }, conectando ? 'Conectando…' : 'Conectar e buscar empresas/filas')), filas.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
-      gridTemplateColumns: '1fr 1fr',
+      gridTemplateColumns: empresas.length > 0 ? '1fr 1fr' : '1fr',
       gap: 12,
       marginBottom: 12
     }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+  }, empresas.length > 0 && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
     style: {
       display: 'block',
       fontSize: 11,

@@ -908,10 +908,10 @@ app.post('/api/integracoes/gk/conectar', requireAuth, requireAdmin, async (req, 
   const token = String(req.body.token || '').trim();
   if (!backend || !token) return res.status(400).json({ erro: 'informe Backend e Token' });
   try {
-    const [empresas, filas] = await Promise.all([
-      gk.listarEmpresas(backend, token),
-      gk.listarFilas(backend, token).catch(() => []), // filas podem depender da empresa; não bloqueia
-    ]);
+    // Filas é o que importa pra abrir ticket (obrigatório). Empresas é opcional:
+    // tokens scoped a uma empresa não acessam /companies/all (401) — tudo bem.
+    const filas = await gk.listarFilas(backend, token);
+    const empresas = await gk.listarEmpresas(backend, token).catch(() => []);
     res.json({ ok: true, empresas, filas });
   } catch(e) {
     res.status(400).json({ erro: e.message });

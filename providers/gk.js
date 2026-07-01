@@ -59,7 +59,8 @@ async function listarEmpresas(backend, token) {
 async function listarFilas(backend, token) {
   try {
     const { data } = await client(backend, token).get('/api/company/queues');
-    return (data || []).map(q => ({ id: q.id, queue: q.queue }));
+    // A resposta real traz o nome em `name` (a doc dizia `queue`).
+    return (data || []).map(q => ({ id: q.id, queue: q.name || q.queue || `Fila ${q.id}` }));
   } catch (err) { throw traduzErro(err, 'Buscar filas'); }
 }
 

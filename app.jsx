@@ -1401,15 +1401,17 @@ function IntegracaoGK({ row, meta, onSaved }) {
         </button>
       </div>
 
-      {(empresas.length > 0 || filas.length > 0) && (
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:12 }}>
-          <div>
-            <label style={{ display:'block', fontSize:11, color:'var(--dim)', marginBottom:5 }}>Empresa</label>
-            <select value={companyId} onChange={e=>setCompanyId(e.target.value)} style={selStyle}>
-              <option value="">Selecione…</option>
-              {empresas.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </div>
+      {filas.length > 0 && (
+        <div style={{ display:'grid', gridTemplateColumns: empresas.length > 0 ? '1fr 1fr' : '1fr', gap:12, marginBottom:12 }}>
+          {empresas.length > 0 && (
+            <div>
+              <label style={{ display:'block', fontSize:11, color:'var(--dim)', marginBottom:5 }}>Empresa</label>
+              <select value={companyId} onChange={e=>setCompanyId(e.target.value)} style={selStyle}>
+                <option value="">Selecione…</option>
+                {empresas.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+          )}
           <div>
             <label style={{ display:'block', fontSize:11, color:'var(--dim)', marginBottom:5 }}>Fila padrão para novos leads</label>
             <select value={queueId} onChange={e=>setQueueId(e.target.value)} style={selStyle}>
