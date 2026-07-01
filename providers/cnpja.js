@@ -53,15 +53,20 @@ async function search(params, apiKey) {
   qs.set('limit', String(Math.min(params.limit || 20, 20)));
 
   const data = await request(`${PAID_BASE}/office?${qs.toString()}`, apiKey);
-  return { offices: (data.records || []).map(normalizeOffice), next: data.next || null };
+  // O record da busca já traz o cadastro COMPLETO (QSA, contatos, capital,
+  // Simples, endereço) — mesmo DTO da consulta individual. Usamos o parser
+  // completo aqui pra NÃO precisar re-consultar cada CNPJ (economia de crédito).
+  return { offices: (data.records || []).map(parseCompany), next: data.next || null };
 }
 
 // Enriquecimento individual — usa endpoint aberto (grátis, rate-limited) se
 // não houver chave configurada; usa a base paga (sem limite agressivo) se houver.
-async function enrichCnpj(cnpj, apiKey) {
+async function enrichCnpj(cnpj) {
+  // Fallback raro (empresa sem dados vindos da busca): usa SEMPRE o endpoint
+  // aberto (grátis, rate-limited). Nunca gasta crédito pago — a única consulta
+  // paga do fluxo é a descoberta filtrada.
   const clean = String(cnpj).replace(/\D/g, '').padStart(14, '0');
-  const base = apiKey ? PAID_BASE : OPEN_BASE;
-  const data = await request(`${base}/office/${clean}`, apiKey || null);
+  const data = await request(`${OPEN_BASE}/office/${clean}`, null);
   return parseCompany(data);
 }
 

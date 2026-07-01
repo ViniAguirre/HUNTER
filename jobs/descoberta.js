@@ -58,12 +58,21 @@ module.exports = async function descoberta(job, pool, queues) {
     if (leadExistente) { pulados++; continue; }
 
     if (!existente) {
+      // A busca já traz o cadastro COMPLETO — gravamos tudo aqui. Com
+      // atualizado_em=now(), o enriquecimento cai no cache (TTL) e NÃO faz
+      // nova consulta paga. A única consulta paga do fluxo é esta descoberta.
       await pool.query(`
-        INSERT INTO empresas (cnpj, razao, fantasia, cnae, setor, porte, cidade, uf, situacao, origem_descoberta)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'cnpja')
+        INSERT INTO empresas (cnpj, razao, fantasia, cnae, setor, porte, cidade, uf, situacao,
+          abertura, capital, endereco, natureza_juridica, opcao_simples, decisor, cargo,
+          qsa, contato_receita, origem_descoberta, atualizado_em)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18::jsonb,'cnpja',now())
         ON CONFLICT (cnpj) DO NOTHING`,
         [office.cnpj, office.razao, office.fantasia, office.cnae, office.setor,
-         office.porte, office.cidade, office.uf, office.situacao]
+         office.porte, office.cidade, office.uf, office.situacao,
+         office.abertura || null, office.capital || null, office.endereco || null,
+         office.natureza_juridica || null, office.opcao_simples ?? null,
+         office.decisor || null, office.cargo || null,
+         JSON.stringify(office.qsa || []), JSON.stringify(office.contato_receita || { telefones: [], emails: [] })]
       );
       novos++;
     }

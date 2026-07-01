@@ -29,14 +29,9 @@ module.exports = async function enriquecimento(job, pool, queues) {
     return { cached: true, cnpj };
   }
 
-  const { rows: [ig] } = await pool.query(
-    `SELECT key_cifrada FROM integracoes
-     WHERE categoria='descoberta' AND provedor='cnpja' AND ativo=true
-     ORDER BY ordem LIMIT 1`
-  );
-  const apiKey = ig?.key_cifrada || null;
-
-  const data = await cnpja.enrichCnpj(cnpj, apiKey);
+  // Fallback raro: empresa sem dados da busca ou fora do TTL. Usa o endpoint
+  // aberto (grátis) — nunca gasta crédito pago.
+  const data = await cnpja.enrichCnpj(cnpj);
 
   await pool.query(`
     UPDATE empresas SET
