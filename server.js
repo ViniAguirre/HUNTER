@@ -330,6 +330,7 @@ async function init() {
     INSERT INTO integracoes (categoria, provedor, ativo, ordem)
     VALUES ('descoberta', 'cnpja', false, 10),
            ('ia', 'openai', false, 60),
+           ('crm', 'gk', false, 35),
            ('crm', 'webhook', false, 40)
     ON CONFLICT (categoria, provedor) DO NOTHING
   `);
@@ -861,19 +862,21 @@ app.post('/api/integracoes', requireAuth, requireAdmin, async (req, res) => {
   const key = req.body.key != null ? String(req.body.key).trim() : null;
   const ativo = !!req.body.ativo;
   const ordem = Number.isInteger(req.body.ordem) ? req.body.ordem : 100;
+  const config = req.body.config && typeof req.body.config === 'object' ? JSON.stringify(req.body.config) : null;
   const categoriasValidas = ['descoberta','contato','validacao_email','validacao_tel','crm','ia'];
   if (!categoriasValidas.includes(categoria) || !provedor) {
     return res.status(400).json({ erro: 'categoria/provedor inválidos' });
   }
   try {
     const { rows: [row] } = await pool.query(`
-      INSERT INTO integracoes (categoria, provedor, key_cifrada, ativo, ordem)
-      VALUES ($1,$2,$3,$4,$5)
+      INSERT INTO integracoes (categoria, provedor, key_cifrada, config, ativo, ordem)
+      VALUES ($1,$2,$3,COALESCE($4::jsonb,'{}'::jsonb),$5,$6)
       ON CONFLICT (categoria, provedor) DO UPDATE SET
         key_cifrada = COALESCE(NULLIF($3,''), integracoes.key_cifrada),
-        ativo = $4, ordem = $5
-      RETURNING id, categoria, provedor, ativo, ordem`,
-      [categoria, provedor, key, ativo, ordem]
+        config = COALESCE($4::jsonb, integracoes.config),
+        ativo = $5, ordem = $6
+      RETURNING id, categoria, provedor, config, ativo, ordem`,
+      [categoria, provedor, key, config, ativo, ordem]
     );
     res.status(201).json(row);
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
@@ -885,16 +888,34 @@ app.patch('/api/integracoes/:id', requireAuth, requireAdmin, async (req, res) =>
   const sets = [], vals = [];
   if (typeof req.body.ativo === 'boolean') { sets.push(`ativo=$${sets.length+1}`); vals.push(req.body.ativo); }
   if (req.body.key) { sets.push(`key_cifrada=$${sets.length+1}`); vals.push(String(req.body.key)); }
+  if (req.body.config && typeof req.body.config === 'object') { sets.push(`config=$${sets.length+1}::jsonb`); vals.push(JSON.stringify(req.body.config)); }
   if (Number.isInteger(req.body.ordem)) { sets.push(`ordem=$${sets.length+1}`); vals.push(req.body.ordem); }
   if (!sets.length) return res.status(400).json({ erro: 'nada para atualizar' });
   vals.push(id);
   try {
     const { rows: [row] } = await pool.query(
-      `UPDATE integracoes SET ${sets.join(', ')} WHERE id=$${vals.length} RETURNING id, categoria, provedor, ativo, ordem`, vals
+      `UPDATE integracoes SET ${sets.join(', ')} WHERE id=$${vals.length} RETURNING id, categoria, provedor, config, ativo, ordem`, vals
     );
     if (!row) return res.status(404).json({ erro: 'não encontrado' });
     res.json(row);
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// GK CRM: testa a conexão (backend + token) e lista empresas + filas pra a UI.
+const gk = require('./providers/gk');
+app.post('/api/integracoes/gk/conectar', requireAuth, requireAdmin, async (req, res) => {
+  const backend = String(req.body.backend || '').trim();
+  const token = String(req.body.token || '').trim();
+  if (!backend || !token) return res.status(400).json({ erro: 'informe Backend e Token' });
+  try {
+    const [empresas, filas] = await Promise.all([
+      gk.listarEmpresas(backend, token),
+      gk.listarFilas(backend, token).catch(() => []), // filas podem depender da empresa; não bloqueia
+    ]);
+    res.json({ ok: true, empresas, filas });
+  } catch(e) {
+    res.status(400).json({ erro: e.message });
+  }
 });
 
 // ── arquivos estáticos ────────────────────────────────────────────────────────

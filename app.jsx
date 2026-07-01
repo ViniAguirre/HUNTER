@@ -1291,6 +1291,8 @@ function NovaBusca({ onSalvar }) {
 const INTEGRACOES_META = {
   'descoberta|cnpja': { nome:'Descoberta de empresas', provedor:'CNPJá',
     icon:'M14 2v6h6M14 2l6 6v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z', editavel:true },
+  'crm|gk': { nome:'CRM GK SaaS (nativo)', provedor:'Contato + ticket automático na fila',
+    icon:'M3 3h18v4H3zM3 10h18v4H3zM3 17h18v4H3z', especial:'gk' },
   'crm|webhook': { nome:'CRM via Webhook', provedor:'Qualquer CRM (URL de webhook / n8n)',
     icon:'M3 3h18v4H3zM3 10h18v4H3zM3 17h18v4H3z', editavel:true, placeholder:'Colar URL do webhook…' },
   'validacao_email|neverbounce': { nome:'Validação de e-mail', provedor:'NeverBounce',
@@ -1300,7 +1302,138 @@ const INTEGRACOES_META = {
   'ia|openai': { nome:'Inteligência (IA) — agente SWOT', provedor:'OpenAI (gpt-4o-mini)',
     icon:'M12 3v2M12 19v2M5 12H3M21 12h-2M7 7L5.5 5.5M18.5 18.5L17 17M17 7l1.5-1.5M5.5 18.5L7 17', editavel:true },
 };
-const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'ia|openai', 'crm|webhook', 'validacao_email|neverbounce', 'validacao_tel|twilio'];
+const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'ia|openai', 'crm|gk', 'crm|webhook', 'validacao_email|neverbounce', 'validacao_tel|twilio'];
+
+// Card especial do CRM GK: fluxo em etapas (conexão → empresas → filas → salvar).
+function IntegracaoGK({ row, meta, onSaved }) {
+  const cfg = row?.config || {};
+  const [backend, setBackend] = useState(cfg.backend || '');
+  const [token, setToken] = useState('');
+  const [empresas, setEmpresas] = useState([]);
+  const [filas, setFilas] = useState([]);
+  const [companyId, setCompanyId] = useState(cfg.companyId || '');
+  const [queueId, setQueueId] = useState(cfg.queueId || '');
+  const [conectando, setConectando] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState(null);
+  const [msg, setMsg] = useState(null);
+
+  const conectado = !!(row && row.ativo && row.tem_chave && cfg.backend && cfg.queueId);
+
+  const conectar = async () => {
+    setErro(null); setMsg(null); setConectando(true);
+    try {
+      const r = await fetch('/api/integracoes/gk/conectar', {
+        method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ backend: backend.trim(), token: token.trim() })
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.erro || 'Falha ao conectar.');
+      setEmpresas(d.empresas || []);
+      setFilas(d.filas || []);
+      if ((d.empresas || []).length === 1) setCompanyId(d.empresas[0].id);
+      setMsg('Conexão OK — selecione empresa e fila e salve.');
+    } catch (e) { setErro(e.message); }
+    finally { setConectando(false); }
+  };
+
+  const salvar = async () => {
+    if (!backend.trim() || !token.trim()) { setErro('Informe Backend e Token.'); return; }
+    if (!queueId) { setErro('Selecione a fila padrão.'); return; }
+    setErro(null); setSalvando(true);
+    try {
+      const r = await fetch('/api/integracoes', {
+        method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ categoria:'crm', provedor:'gk', ativo:true, key: token.trim(),
+          config: { backend: backend.trim(), companyId, queueId, status:'pending' } })
+      });
+      if (!r.ok) { const d = await r.json().catch(()=>({})); throw new Error(d.erro || 'Erro ao salvar.'); }
+      setToken('');
+      onSaved();
+    } catch (e) { setErro(e.message); }
+    finally { setSalvando(false); }
+  };
+
+  const inputStyle = { width:'100%', height:38, borderRadius:9, border:'1px solid var(--border)',
+    background:'var(--panel2)', color:'var(--text)', padding:'0 12px', fontSize:12.5, fontFamily:'inherit' };
+  const selStyle = { ...inputStyle, cursor:'pointer' };
+
+  return (
+    <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:'18px 20px' }}>
+      <div style={{ display:'flex', alignItems:'center', gap:16, marginBottom:16 }}>
+        <div style={{ width:42, height:42, borderRadius:11, background:'var(--panel2)',
+          display:'flex', alignItems:'center', justifyContent:'center', color:'var(--dim)', flexShrink:0 }}>
+          <Svg d={meta.icon} w={20} h={20} sw={1.6}/>
+        </div>
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:9 }}>
+            <span style={{ fontSize:14.5, fontWeight:600 }}>{meta.nome}</span>
+            <span style={badgeStyle(conectado ? C.green : C.gray)}>
+              <StatusDot color={conectado ? C.green : C.gray} pulse={false}/>
+              {conectado ? 'conectado' : 'desconectado'}
+            </span>
+          </div>
+          <div style={{ fontSize:12.5, color:'var(--faint)', marginTop:3 }}>
+            {meta.provedor}{conectado ? ' · ' + cfg.backend : ''}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:12 }}>
+        <div>
+          <label style={{ display:'block', fontSize:11, color:'var(--dim)', marginBottom:5 }}>Backend (URL da API)</label>
+          <input value={backend} onChange={e=>setBackend(e.target.value)} placeholder="https://api.gktechai.info" style={inputStyle}/>
+        </div>
+        <div>
+          <label style={{ display:'block', fontSize:11, color:'var(--dim)', marginBottom:5 }}>
+            Token Bearer {row?.chave_mascarada && <span style={{ color:'var(--faint)' }}>· salvo {row.chave_mascarada}</span>}
+          </label>
+          <input value={token} onChange={e=>setToken(e.target.value)} placeholder="API.GKPADRAO.xxxxxxxx" style={inputStyle}/>
+        </div>
+      </div>
+
+      <div style={{ display:'flex', gap:10, marginBottom:(empresas.length||filas.length)?12:0 }}>
+        <button onClick={conectar} disabled={conectando}
+          style={{ height:38, padding:'0 16px', borderRadius:9, border:'1px solid var(--border)',
+            background:'transparent', color:'var(--text)', fontSize:12.5, fontFamily:'inherit',
+            cursor: conectando?'default':'pointer', opacity: conectando?.6:1 }}>
+          {conectando ? 'Conectando…' : 'Conectar e buscar empresas/filas'}
+        </button>
+      </div>
+
+      {(empresas.length > 0 || filas.length > 0) && (
+        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:12 }}>
+          <div>
+            <label style={{ display:'block', fontSize:11, color:'var(--dim)', marginBottom:5 }}>Empresa</label>
+            <select value={companyId} onChange={e=>setCompanyId(e.target.value)} style={selStyle}>
+              <option value="">Selecione…</option>
+              {empresas.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label style={{ display:'block', fontSize:11, color:'var(--dim)', marginBottom:5 }}>Fila padrão para novos leads</label>
+            <select value={queueId} onChange={e=>setQueueId(e.target.value)} style={selStyle}>
+              <option value="">Selecione…</option>
+              {filas.map(q => <option key={q.id} value={q.id}>{q.queue}</option>)}
+            </select>
+          </div>
+        </div>
+      )}
+
+      {erro && <div style={{ fontSize:12, color:C.red, marginBottom:8 }}>{erro}</div>}
+      {msg && <div style={{ fontSize:12, color:C.green, marginBottom:8 }}>{msg}</div>}
+
+      <div style={{ display:'flex', gap:10 }}>
+        <button onClick={salvar} disabled={salvando}
+          style={{ height:38, padding:'0 16px', borderRadius:9, border:'none', background:'var(--gold)',
+            color:'#0E1936', fontWeight:600, fontSize:12.5, fontFamily:'inherit',
+            cursor: salvando?'default':'pointer', opacity: salvando?.6:1 }}>
+          {salvando ? 'Salvando…' : 'Salvar configuração'}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function Integracoes() {
   const [rows, setRows] = useState(null);
@@ -1365,6 +1498,9 @@ function Integracoes() {
         const meta = INTEGRACOES_META[chave];
         const [categoria, provedor] = chave.split('|');
         const row = porChave[chave];
+        if (meta.especial === 'gk') {
+          return <IntegracaoGK key={chave} row={row} meta={meta} onSaved={carregar}/>;
+        }
         const conectado = !!(row && row.ativo && row.tem_chave);
         return (
           <div key={chave} style={{ background:'var(--panel)', border:'1px solid var(--border)',
