@@ -8,7 +8,7 @@
 const cnpja = require('../providers/cnpja');
 
 const TRAVADOS = ['qualificado', 'em_crm', 'descarte_duro'];
-const TETO_PAGINAS = 50; // até ~1000 empresas por varredura (protege o crédito)
+const TETO_PAGINAS = 20; // com limit=100, até ~2000 empresas por varredura (rede de segurança de crédito)
 
 module.exports = async function descoberta(job, pool, queues) {
   const { busca_id, criterios = {} } = job.data;
@@ -114,7 +114,7 @@ module.exports = async function descoberta(job, pool, queues) {
 function buildSearchParams(criterios) {
   // Filtros confirmados pela API. Porte/Simples ficam pro Score 1 (grátis).
   const p = criterios.params || {};
-  const out = { states: [], activities: [], municipalities: [], limit: 20 };
+  const out = { states: [], activities: [], municipalities: [], limit: 100 };
 
   if (p.ufs || p.cnaes || p.municipios_cod || p.founded_gte || p.equity_gte != null) {
     out.states = p.ufs || [];

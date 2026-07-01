@@ -50,7 +50,7 @@ async function search(params, apiKey) {
     if (params.equityLte != null) qs.append('company.equity.lte', String(params.equityLte));
     qs.append('status.id.in', '2'); // 2 = Ativa (só empresas ativas)
   }
-  qs.set('limit', String(Math.min(params.limit || 20, 20)));
+  qs.set('limit', String(Math.min(params.limit || 100, 100))); // máx por página = menos requisições
 
   const data = await request(`${PAID_BASE}/office?${qs.toString()}`, apiKey);
   // O record da busca já traz o cadastro COMPLETO (QSA, contatos, capital,
