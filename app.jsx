@@ -760,7 +760,12 @@ function BuscaDetail({ buscaId, onBack, onOpenLead }) {
       .then(setData)
       .catch(() => {});
   };
-  useEffect(() => { if (buscaId) carregar(); }, [buscaId]);
+  useEffect(() => {
+    if (!buscaId) return;
+    carregar();
+    const id = setInterval(carregar, 15000); // auto-refresh enquanto a busca roda
+    return () => clearInterval(id);
+  }, [buscaId]);
 
   const toggleStatus = async () => {
     if (!data) return;
@@ -836,7 +841,12 @@ function BuscaDetail({ buscaId, onBack, onOpenLead }) {
             <h3 style={{ fontSize:14, fontWeight:600, margin:0 }}>Produção ao longo do tempo</h3>
             <span style={{ fontSize:12, color:'var(--faint)' }}>últimos 14 dias</span>
           </div>
-          <MiniChart vals={[8,14,11,19,24,18,27,31,26,34,29,38,33,42]} color={C.gold}/>
+          {(b.producao && b.producao.some(v => v > 0)) ? (
+            <MiniChart vals={b.producao} color={C.gold}/>
+          ) : (
+            <div style={{ height:120, display:'flex', alignItems:'center', justifyContent:'center',
+              fontSize:12.5, color:'var(--faint)' }}>Sem produção ainda — aguardando o motor.</div>
+          )}
         </div>
         <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:18 }}>
           <h3 style={{ fontSize:14, fontWeight:600, margin:'0 0 16px' }}>Universo estimado</h3>

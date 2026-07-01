@@ -538,7 +538,7 @@ app.get('/api/buscas/:id', requireAuth, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
   try {
-    const [bRow, leadsRow] = await Promise.all([
+    const [bRow, leadsRow, prodRow] = await Promise.all([
       pool.query(`
         SELECT b.*, u.nome AS criador_nome,
           COUNT(l.id)::int AS encontrados,
@@ -551,9 +551,23 @@ app.get('/api/buscas/:id', requireAuth, async (req, res) => {
         WHERE b.id=$1 GROUP BY b.id, u.nome`, [id]),
       pool.query(`SELECT id, fantasia, decisor, cidade, uf, score, status
         FROM leads WHERE busca_id=$1 ORDER BY score DESC LIMIT 20`, [id]),
+      pool.query(`
+        SELECT COUNT(l.id)::int AS n
+        FROM generate_series(current_date - interval '13 days', current_date, interval '1 day') d(dia)
+        LEFT JOIN leads l ON l.busca_id=$1 AND date(l.criado_em)=d.dia
+        GROUP BY d.dia ORDER BY d.dia`, [id]),
     ]);
-    if (!bRow.rows[0]) return res.status(404).json({ erro: 'não encontrada' });
-    res.json({ ...bRow.rows[0], health: computeHealth(bRow.rows[0]), leads: leadsRow.rows });
+    const b = bRow.rows[0];
+    if (!b) return res.status(404).json({ erro: 'não encontrada' });
+    res.json({
+      ...b,
+      health: computeHealth(b),
+      // aliases que o front do detalhe consome
+      enc: b.encontrados, qual: b.qualificados, crm: b.enviados,
+      universo_est: b.universo_varrido || 0,
+      producao: prodRow.rows.map(r => r.n),
+      leads: leadsRow.rows,
+    });
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 

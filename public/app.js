@@ -1921,7 +1921,10 @@ function BuscaDetail({
     }).then(r => r.json()).then(setData).catch(() => {});
   };
   useEffect(() => {
-    if (buscaId) carregar();
+    if (!buscaId) return;
+    carregar();
+    const id = setInterval(carregar, 15000); // auto-refresh enquanto a busca roda
+    return () => clearInterval(id);
   }, [buscaId]);
   const toggleStatus = async () => {
     if (!data) return;
@@ -2093,10 +2096,19 @@ function BuscaDetail({
       fontSize: 12,
       color: 'var(--faint)'
     }
-  }, "\xFAltimos 14 dias")), /*#__PURE__*/React.createElement(MiniChart, {
-    vals: [8, 14, 11, 19, 24, 18, 27, 31, 26, 34, 29, 38, 33, 42],
+  }, "\xFAltimos 14 dias")), b.producao && b.producao.some(v => v > 0) ? /*#__PURE__*/React.createElement(MiniChart, {
+    vals: b.producao,
     color: C.gold
-  })), /*#__PURE__*/React.createElement("div", {
+  }) : /*#__PURE__*/React.createElement("div", {
+    style: {
+      height: 120,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      fontSize: 12.5,
+      color: 'var(--faint)'
+    }
+  }, "Sem produ\xE7\xE3o ainda \u2014 aguardando o motor.")), /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'var(--panel)',
       border: '1px solid var(--border)',
