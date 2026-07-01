@@ -587,6 +587,154 @@ const TITLES = {
   config: ['Configurações', 'Parâmetros gerais do sistema'],
   monitor: ['Monitoramento', 'Saúde do sistema e filas']
 };
+function SinoAlertas() {
+  const [aberto, setAberto] = useState(false);
+  const [data, setData] = useState({
+    alertas: [],
+    total: 0
+  });
+  const carregar = () => fetch('/api/alertas', {
+    credentials: 'same-origin'
+  }).then(r => r.json()).then(d => setData(d && Array.isArray(d.alertas) ? d : {
+    alertas: [],
+    total: 0
+  })).catch(() => {});
+  useEffect(() => {
+    carregar();
+    const id = setInterval(carregar, 30000);
+    return () => clearInterval(id);
+  }, []);
+  const n = data.total || 0;
+  const corTipo = t => t === 'erro' ? C.red : t === 'aviso' ? C.amber : C.blue;
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'relative'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setAberto(a => !a),
+    title: "Alertas",
+    style: {
+      position: 'relative',
+      width: 38,
+      height: 38,
+      borderRadius: 9,
+      border: '1px solid var(--border)',
+      background: 'var(--panel)',
+      color: 'var(--dim)',
+      cursor: 'pointer',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center'
+    }
+  }, /*#__PURE__*/React.createElement(SvgMulti, {
+    w: 17,
+    h: 17,
+    sw: 1.7
+  }, /*#__PURE__*/React.createElement("path", {
+    d: "M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"
+  })), n > 0 && /*#__PURE__*/React.createElement("span", {
+    style: {
+      position: 'absolute',
+      top: -4,
+      right: -4,
+      minWidth: 16,
+      height: 16,
+      padding: '0 4px',
+      borderRadius: 8,
+      background: C.red,
+      color: '#fff',
+      fontSize: 10,
+      fontWeight: 700,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      border: '1.5px solid var(--bg)'
+    }
+  }, n > 9 ? '9+' : n)), aberto && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    onClick: () => setAberto(false),
+    style: {
+      position: 'fixed',
+      inset: 0,
+      zIndex: 40
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'absolute',
+      top: 46,
+      right: 0,
+      width: 340,
+      zIndex: 41,
+      background: 'var(--panel)',
+      border: '1px solid var(--border)',
+      borderRadius: 12,
+      boxShadow: '0 12px 32px rgba(0,0,0,.5)',
+      overflow: 'hidden'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '13px 16px',
+      borderBottom: '1px solid var(--border)',
+      fontSize: 13,
+      fontWeight: 600
+    }
+  }, "Alertas ", n > 0 && /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)',
+      fontWeight: 400
+    }
+  }, "\xB7 ", n)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      maxHeight: 340,
+      overflowY: 'auto'
+    }
+  }, data.alertas.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '22px 16px',
+      fontSize: 12.5,
+      color: 'var(--faint)',
+      textAlign: 'center'
+    }
+  }, "Nenhum alerta. Tudo tranquilo. \u2713") : data.alertas.map((a, i) => /*#__PURE__*/React.createElement("div", {
+    key: i,
+    style: {
+      display: 'flex',
+      gap: 10,
+      padding: '12px 16px',
+      borderBottom: '1px solid var(--border)'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      width: 7,
+      height: 7,
+      borderRadius: '50%',
+      flexShrink: 0,
+      marginTop: 5,
+      background: corTipo(a.tipo)
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      fontWeight: 500
+    }
+  }, a.titulo), a.detalhe && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--faint)',
+      marginTop: 2,
+      wordBreak: 'break-word'
+    }
+  }, a.detalhe), a.quando && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)',
+      marginTop: 2
+    }
+  }, timeAgo(a.quando)))))))));
+}
 function Topbar({
   screen,
   theme,
@@ -659,39 +807,7 @@ function Topbar({
   }), "Nova busca"), /*#__PURE__*/React.createElement(ThemeToggle, {
     theme: theme,
     onToggle: onTheme
-  }), /*#__PURE__*/React.createElement("button", {
-    title: "Alertas",
-    style: {
-      position: 'relative',
-      width: 38,
-      height: 38,
-      borderRadius: 9,
-      border: '1px solid var(--border)',
-      background: 'var(--panel)',
-      color: 'var(--dim)',
-      cursor: 'pointer',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center'
-    }
-  }, /*#__PURE__*/React.createElement(SvgMulti, {
-    w: 17,
-    h: 17,
-    sw: 1.7
-  }, /*#__PURE__*/React.createElement("path", {
-    d: "M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"
-  })), /*#__PURE__*/React.createElement("span", {
-    style: {
-      position: 'absolute',
-      top: 7,
-      right: 8,
-      width: 7,
-      height: 7,
-      borderRadius: '50%',
-      background: C.red,
-      border: '1.5px solid var(--panel)'
-    }
-  })), /*#__PURE__*/React.createElement("div", {
+  }), /*#__PURE__*/React.createElement(SinoAlertas, null), /*#__PURE__*/React.createElement("div", {
     style: {
       width: 34,
       height: 34,
@@ -3400,14 +3516,24 @@ function Config() {
 // ── Monitoramento ─────────────────────────────────────────────────────────────
 function Monitor() {
   const [data, setData] = useState(null);
+  const [limpando, setLimpando] = useState(false);
+  const load = () => fetch('/api/monitor/queues', {
+    credentials: 'same-origin'
+  }).then(r => r.json()).then(setData).catch(() => {});
   useEffect(() => {
-    const load = () => fetch('/api/monitor/queues', {
-      credentials: 'same-origin'
-    }).then(r => r.json()).then(setData).catch(() => {});
     load();
     const id = setInterval(load, 15000);
     return () => clearInterval(id);
   }, []);
+  const limparDlq = async () => {
+    setLimpando(true);
+    await fetch('/api/monitor/dlq/limpar', {
+      method: 'POST',
+      credentials: 'same-origin'
+    }).catch(() => {});
+    setLimpando(false);
+    load();
+  };
   if (!data) {
     return /*#__PURE__*/React.createElement("div", {
       style: {
@@ -3672,9 +3798,25 @@ function Monitor() {
   }, "Dead-letter queue"), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 11,
-      color: (data.dlq || []).length ? C.red : 'var(--faint)'
+      color: (data.dlq || []).length ? C.red : 'var(--faint)',
+      marginRight: 12
     }
-  }, (data.dlq || []).length, " job(s) com falha recente")), (data.dlq || []).length === 0 && /*#__PURE__*/React.createElement("div", {
+  }, (data.dlq || []).length, " job(s) com falha recente"), (data.dlq || []).length > 0 && /*#__PURE__*/React.createElement("button", {
+    onClick: limparDlq,
+    disabled: limpando,
+    style: {
+      height: 30,
+      padding: '0 12px',
+      borderRadius: 8,
+      border: '1px solid var(--border)',
+      background: 'transparent',
+      color: 'var(--dim)',
+      fontSize: 12,
+      fontFamily: 'inherit',
+      cursor: limpando ? 'default' : 'pointer',
+      opacity: limpando ? .6 : 1
+    }
+  }, limpando ? 'Limpando…' : 'Limpar')), (data.dlq || []).length === 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '18px',
       fontSize: 12.5,

@@ -744,6 +744,57 @@ app.get('/api/monitor/queues', requireAuth, async (req, res) => {
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
+// Limpa as falhas retidas nas filas (a DLQ é histórico; some ao limpar).
+app.post('/api/monitor/dlq/limpar', requireAuth, requireEditor, async (req, res) => {
+  if (!monitorQueues) return res.json({ ok: true, removidos: 0 });
+  try {
+    let removidos = 0;
+    for (const q of Object.values(monitorQueues)) {
+      const jobs = await q.getFailed(0, 999);
+      await Promise.all(jobs.map(j => j.remove().then(() => { removidos++; }).catch(() => {})));
+    }
+    res.json({ ok: true, removidos });
+  } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// Alertas do sino: falhas do motor, buscas paradas e o estado da conexão.
+app.get('/api/alertas', requireAuth, async (req, res) => {
+  try {
+    const alertas = [];
+
+    if (process.env.REDIS_HOST && !monitorQueues) {
+      alertas.push({ tipo: 'erro', titulo: 'Motor desconectado do painel', detalhe: 'Redis/BullMQ indisponível', quando: null });
+    }
+
+    if (monitorQueues) {
+      for (const [key, label] of [['descoberta','Descoberta'],['enriquecimento','Enriquecimento'],['filtroContador','Filtro Contador'],['score1','Score 1']]) {
+        const jobs = await monitorQueues[key].getFailed(0, 4);
+        for (const j of jobs) {
+          alertas.push({
+            tipo: 'erro',
+            titulo: `Falha em ${label}`,
+            detalhe: (j.failedReason || 'erro desconhecido').slice(0, 120),
+            quando: j.finishedOn ? new Date(j.finishedOn).toISOString() : null,
+          });
+        }
+      }
+    }
+
+    const { rows: paradas } = await pool.query(
+      `SELECT nome, ultimo_heartbeat FROM buscas
+       WHERE status='Ativa' AND ritmo > 0
+         AND (ultimo_heartbeat IS NULL OR ultimo_heartbeat < now() - interval '15 minutes')
+       ORDER BY ultimo_heartbeat NULLS FIRST LIMIT 5`
+    );
+    for (const b of paradas) {
+      alertas.push({ tipo: 'aviso', titulo: `Busca "${b.nome}" sem atividade`, detalhe: 'sem heartbeat há mais de 15 min', quando: b.ultimo_heartbeat ? new Date(b.ultimo_heartbeat).toISOString() : null });
+    }
+
+    alertas.sort((a, b) => (b.quando || '').localeCompare(a.quando || ''));
+    res.json({ alertas: alertas.slice(0, 15), total: alertas.length });
+  } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
 // ── API: integrações (chaves dos providers, Fase 3) ────────────────────────────
 // Cifragem real da key fica pra tela dedicada da Fase 3.1; por ora a tela de
 // Integrações usa estes endpoints pra ligar/desligar e trocar a chave do CNPJá.

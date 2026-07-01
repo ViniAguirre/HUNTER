@@ -249,6 +249,63 @@ const TITLES = {
   monitor: ['Monitoramento', 'Saúde do sistema e filas'],
 };
 
+function SinoAlertas() {
+  const [aberto, setAberto] = useState(false);
+  const [data, setData] = useState({ alertas: [], total: 0 });
+
+  const carregar = () => fetch('/api/alertas', { credentials:'same-origin' })
+    .then(r => r.json()).then(d => setData(d && Array.isArray(d.alertas) ? d : { alertas:[], total:0 })).catch(() => {});
+  useEffect(() => { carregar(); const id = setInterval(carregar, 30000); return () => clearInterval(id); }, []);
+
+  const n = data.total || 0;
+  const corTipo = t => t === 'erro' ? C.red : t === 'aviso' ? C.amber : C.blue;
+
+  return (
+    <div style={{ position:'relative' }}>
+      <button onClick={() => setAberto(a => !a)} title="Alertas"
+        style={{ position:'relative', width:38, height:38, borderRadius:9,
+          border:'1px solid var(--border)', background:'var(--panel)', color:'var(--dim)',
+          cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+        <SvgMulti w={17} h={17} sw={1.7}><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></SvgMulti>
+        {n > 0 && (
+          <span style={{ position:'absolute', top:-4, right:-4, minWidth:16, height:16, padding:'0 4px',
+            borderRadius:8, background:C.red, color:'#fff', fontSize:10, fontWeight:700,
+            display:'flex', alignItems:'center', justifyContent:'center', border:'1.5px solid var(--bg)' }}>
+            {n > 9 ? '9+' : n}
+          </span>
+        )}
+      </button>
+      {aberto && (
+        <>
+          <div onClick={() => setAberto(false)} style={{ position:'fixed', inset:0, zIndex:40 }}/>
+          <div style={{ position:'absolute', top:46, right:0, width:340, zIndex:41,
+            background:'var(--panel)', border:'1px solid var(--border)', borderRadius:12,
+            boxShadow:'0 12px 32px rgba(0,0,0,.5)', overflow:'hidden' }}>
+            <div style={{ padding:'13px 16px', borderBottom:'1px solid var(--border)',
+              fontSize:13, fontWeight:600 }}>Alertas {n > 0 && <span style={{ color:'var(--faint)', fontWeight:400 }}>· {n}</span>}</div>
+            <div style={{ maxHeight:340, overflowY:'auto' }}>
+              {data.alertas.length === 0 ? (
+                <div style={{ padding:'22px 16px', fontSize:12.5, color:'var(--faint)', textAlign:'center' }}>
+                  Nenhum alerta. Tudo tranquilo. ✓
+                </div>
+              ) : data.alertas.map((a, i) => (
+                <div key={i} style={{ display:'flex', gap:10, padding:'12px 16px', borderBottom:'1px solid var(--border)' }}>
+                  <span style={{ width:7, height:7, borderRadius:'50%', flexShrink:0, marginTop:5, background:corTipo(a.tipo) }}/>
+                  <div style={{ minWidth:0 }}>
+                    <div style={{ fontSize:12.5, fontWeight:500 }}>{a.titulo}</div>
+                    {a.detalhe && <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:2, wordBreak:'break-word' }}>{a.detalhe}</div>}
+                    {a.quando && <div style={{ fontSize:11, color:'var(--faint)', marginTop:2 }}>{timeAgo(a.quando)}</div>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function Topbar({ screen, theme, onTheme, onNova, user }) {
   const [title, sub] = TITLES[screen] || ['',''];
   const ini = (user?.nome || '').split(' ').slice(0,2).map(w=>w[0]).join('') || 'U';
@@ -268,13 +325,7 @@ function Topbar({ screen, theme, onTheme, onNova, user }) {
           Nova busca
         </button>
         <ThemeToggle theme={theme} onToggle={onTheme}/>
-        <button title="Alertas" style={{ position:'relative', width:38, height:38, borderRadius:9,
-          border:'1px solid var(--border)', background:'var(--panel)', color:'var(--dim)',
-          cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
-          <SvgMulti w={17} h={17} sw={1.7}><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></SvgMulti>
-          <span style={{ position:'absolute', top:7, right:8, width:7, height:7, borderRadius:'50%',
-            background:C.red, border:'1.5px solid var(--panel)' }}/>
-        </button>
+        <SinoAlertas/>
         <div style={{ width:34, height:34, borderRadius:9, background:C.blue, color:'#fff',
           display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:600, cursor:'pointer' }}>{ini}</div>
       </div>
@@ -1400,14 +1451,22 @@ function Config() {
 // ── Monitoramento ─────────────────────────────────────────────────────────────
 function Monitor() {
   const [data, setData] = useState(null);
+  const [limpando, setLimpando] = useState(false);
 
+  const load = () => fetch('/api/monitor/queues', { credentials:'same-origin' })
+    .then(r => r.json()).then(setData).catch(() => {});
   useEffect(() => {
-    const load = () => fetch('/api/monitor/queues', { credentials:'same-origin' })
-      .then(r => r.json()).then(setData).catch(() => {});
     load();
     const id = setInterval(load, 15000);
     return () => clearInterval(id);
   }, []);
+
+  const limparDlq = async () => {
+    setLimpando(true);
+    await fetch('/api/monitor/dlq/limpar', { method:'POST', credentials:'same-origin' }).catch(() => {});
+    setLimpando(false);
+    load();
+  };
 
   if (!data) {
     return <div style={{ color:'var(--faint)', fontSize:13 }}>Carregando…</div>;
@@ -1497,9 +1556,17 @@ function Monitor() {
       <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden' }}>
         <div style={{ padding:'15px 18px', borderBottom:'1px solid var(--border)', display:'flex', alignItems:'center' }}>
           <h3 style={{ fontSize:14, fontWeight:600, margin:0, flex:1 }}>Dead-letter queue</h3>
-          <span style={{ fontSize:11, color:(data.dlq||[]).length ? C.red : 'var(--faint)' }}>
+          <span style={{ fontSize:11, color:(data.dlq||[]).length ? C.red : 'var(--faint)', marginRight:12 }}>
             {(data.dlq||[]).length} job(s) com falha recente
           </span>
+          {(data.dlq||[]).length > 0 && (
+            <button onClick={limparDlq} disabled={limpando}
+              style={{ height:30, padding:'0 12px', borderRadius:8, border:'1px solid var(--border)',
+                background:'transparent', color:'var(--dim)', fontSize:12, fontFamily:'inherit',
+                cursor: limpando ? 'default' : 'pointer', opacity: limpando ? .6 : 1 }}>
+              {limpando ? 'Limpando…' : 'Limpar'}
+            </button>
+          )}
         </div>
         {(data.dlq||[]).length === 0 && (
           <div style={{ padding:'18px', fontSize:12.5, color:'var(--faint)' }}>Nenhuma falha recente.</div>
