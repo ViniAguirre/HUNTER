@@ -7,20 +7,20 @@
  */
 const cnpja = require('../providers/cnpja');
 
-const TTL_DIAS = 30;
-
 module.exports = async function enriquecimento(job, pool, queues) {
   const { cnpj, busca_id, lead_id } = job.data;
 
-  const { rows: [empresa] } = await pool.query(
-    `SELECT cnpj, atualizado_em FROM empresas WHERE cnpj=$1`, [cnpj]
-  );
+  const [{ rows: [empresa] }, { rows: [cfg] }] = await Promise.all([
+    pool.query(`SELECT cnpj, atualizado_em FROM empresas WHERE cnpj=$1`, [cnpj]),
+    pool.query(`SELECT ttl_cache_dias FROM config WHERE id=1`),
+  ]);
+  const ttlDias = cfg?.ttl_cache_dias || 30;
 
   const idadeDias = empresa
     ? (Date.now() - new Date(empresa.atualizado_em).getTime()) / (86400 * 1000)
     : Infinity;
 
-  if (empresa && idadeDias < TTL_DIAS) {
+  if (empresa && idadeDias < ttlDias) {
     await pool.query(
       `UPDATE leads SET estagio='enriquecido', atualizado_em=now() WHERE id=$1`, [lead_id]
     );

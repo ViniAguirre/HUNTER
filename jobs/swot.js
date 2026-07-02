@@ -11,6 +11,8 @@ module.exports = async function swot(job, pool, queues) {
   const { cnpj, busca_id, lead_id } = job.data;
 
   const { rows: [busca] } = await pool.query(`SELECT criterios, crm_auto FROM buscas WHERE id=$1`, [busca_id]);
+  const { rows: [cfg] } = await pool.query(`SELECT crm_auto_global FROM config WHERE id=1`);
+  const crmAuto = !!(busca?.crm_auto || cfg?.crm_auto_global);
 
   const { rows: [ig] } = await pool.query(
     `SELECT key_cifrada, config FROM integracoes
@@ -32,11 +34,11 @@ module.exports = async function swot(job, pool, queues) {
   }
   // Sem chave IA: o lead segue 'scored' (sem gasto). Mesmo assim pode ir ao CRM.
 
-  // Envio automático ao CRM, se a busca estiver em modo automático.
-  if (busca?.crm_auto && queues?.crm) {
+  // Envio automático ao CRM, se a busca OU a config global pedir.
+  if (crmAuto && queues?.crm) {
     await queues.crm.add('crm', { lead_id },
       { jobId: `crm-${lead_id}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 4, backoff: { type: 'exponential', delay: 15000 } });
   }
 
-  return { cnpj, lead_id, swot: !!ig?.key_cifrada, crm_auto: !!busca?.crm_auto };
+  return { cnpj, lead_id, swot: !!ig?.key_cifrada, crm_auto: crmAuto };
 };

@@ -324,6 +324,20 @@ async function init() {
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS crm_auto         BOOLEAN NOT NULL DEFAULT false;
   `);
 
+  // Configuração global do sistema (linha única / singleton).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS config (
+      id              INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+      ritmo_padrao    INTEGER NOT NULL DEFAULT 120,
+      corte_padrao    INTEGER NOT NULL DEFAULT 60,
+      ttl_cache_dias  INTEGER NOT NULL DEFAULT 30,
+      parada_min      INTEGER NOT NULL DEFAULT 30,
+      alerta_email    TEXT,
+      crm_auto_global BOOLEAN NOT NULL DEFAULT false
+    );
+    INSERT INTO config (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+  `);
+
   // Garante a linha do provider de descoberta (CNPJá) pra tela de Integrações
   // ter o que mostrar mesmo antes da chave ser cadastrada.
   await pool.query(`
@@ -837,14 +851,16 @@ app.get('/api/alertas', requireAuth, async (req, res) => {
       }
     }
 
+    const { rows: [cfg] } = await pool.query(`SELECT parada_min FROM config WHERE id=1`);
+    const paradaMin = cfg?.parada_min || 30;
     const { rows: paradas } = await pool.query(
       `SELECT nome, ultimo_heartbeat FROM buscas
        WHERE status='Ativa' AND ritmo > 0
-         AND (ultimo_heartbeat IS NULL OR ultimo_heartbeat < now() - interval '15 minutes')
-       ORDER BY ultimo_heartbeat NULLS FIRST LIMIT 5`
+         AND (ultimo_heartbeat IS NULL OR ultimo_heartbeat < now() - ($1 || ' minutes')::interval)
+       ORDER BY ultimo_heartbeat NULLS FIRST LIMIT 5`, [paradaMin]
     );
     for (const b of paradas) {
-      alertas.push({ tipo: 'aviso', titulo: `Busca "${b.nome}" sem atividade`, detalhe: 'sem heartbeat há mais de 15 min', quando: b.ultimo_heartbeat ? new Date(b.ultimo_heartbeat).toISOString() : null });
+      alertas.push({ tipo: 'aviso', titulo: `Busca "${b.nome}" sem atividade`, detalhe: `sem heartbeat há mais de ${paradaMin} min`, quando: b.ultimo_heartbeat ? new Date(b.ultimo_heartbeat).toISOString() : null });
     }
 
     alertas.sort((a, b) => (b.quando || '').localeCompare(a.quando || ''));
@@ -934,6 +950,32 @@ app.post('/api/integracoes/gk/conectar', requireAuth, requireAdmin, async (req, 
   } catch(e) {
     res.status(400).json({ erro: e.message });
   }
+});
+
+// ── API: configuração global ────────────────────────────────────────────────────
+app.get('/api/config', requireAuth, async (req, res) => {
+  try {
+    const { rows: [c] } = await pool.query(`SELECT * FROM config WHERE id=1`);
+    res.json(c || {});
+  } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+app.patch('/api/config', requireAuth, requireAdmin, async (req, res) => {
+  const b = req.body || {};
+  const sets = [], vals = [];
+  const num = (v, min, max) => { const n = parseInt(v, 10); return isNaN(n) ? null : Math.max(min, Math.min(max, n)); };
+  const add = (col, val) => { if (val != null) { sets.push(`${col}=$${sets.length+1}`); vals.push(val); } };
+  if ('ritmo_padrao'   in b) add('ritmo_padrao',   num(b.ritmo_padrao, 0, 100000));
+  if ('corte_padrao'   in b) add('corte_padrao',   num(b.corte_padrao, 0, 100));
+  if ('ttl_cache_dias' in b) add('ttl_cache_dias', num(b.ttl_cache_dias, 1, 3650));
+  if ('parada_min'     in b) add('parada_min',     num(b.parada_min, 1, 10080));
+  if ('alerta_email'   in b) { sets.push(`alerta_email=$${sets.length+1}`); vals.push(String(b.alerta_email || '').trim() || null); }
+  if ('crm_auto_global' in b) { sets.push(`crm_auto_global=$${sets.length+1}`); vals.push(!!b.crm_auto_global); }
+  if (!sets.length) return res.status(400).json({ erro: 'nada para atualizar' });
+  try {
+    const { rows: [c] } = await pool.query(`UPDATE config SET ${sets.join(', ')} WHERE id=1 RETURNING *`, vals);
+    res.json(c);
+  } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
 // ── arquivos estáticos ────────────────────────────────────────────────────────

@@ -952,6 +952,10 @@ function NovaBusca({ onSalvar }) {
     if (_municCache) { setMunicData(_municCache); }
     else fetch('/municipios.json', { credentials:'same-origin' }).then(r => r.json())
       .then(d => { _municCache = d; setMunicData(d); }).catch(() => {});
+    // Puxa os padrões da tela de Configurações como valores iniciais.
+    fetch('/api/config', { credentials:'same-origin' }).then(r => r.json())
+      .then(c => { if (c?.ritmo_padrao != null) setRitmo(c.ritmo_padrao); if (c?.corte_padrao != null) setCorte(c.corte_padrao); })
+      .catch(() => {});
   }, []);
 
   const municResultados = useMemo(() => {
@@ -1711,37 +1715,113 @@ function Usuarios() {
 
 // ── Configurações ─────────────────────────────────────────────────────────────
 function Config() {
+  const [cfg, setCfg] = useState(null);
+  const [salvando, setSalvando] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  useEffect(() => {
+    fetch('/api/config', { credentials:'same-origin' })
+      .then(r => r.json()).then(setCfg).catch(() => setCfg({}));
+  }, []);
+
+  const set = (k, v) => { setCfg(c => ({ ...c, [k]: v })); setMsg(null); };
+
+  const salvar = async () => {
+    setSalvando(true); setMsg(null);
+    try {
+      const r = await fetch('/api/config', {
+        method:'PATCH', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({
+          ritmo_padrao: cfg.ritmo_padrao, corte_padrao: cfg.corte_padrao,
+          ttl_cache_dias: cfg.ttl_cache_dias, parada_min: cfg.parada_min,
+          alerta_email: cfg.alerta_email, crm_auto_global: cfg.crm_auto_global,
+        })
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.erro || 'Erro ao salvar (apenas Admin).');
+      setCfg(d);
+      setMsg({ ok:true, txt:'Configurações salvas.' });
+    } catch (e) { setMsg({ ok:false, txt:e.message }); }
+    finally { setSalvando(false); }
+  };
+
+  if (!cfg) return <div style={{ color:'var(--faint)', fontSize:13 }}>Carregando…</div>;
+
+  const inp = { width:'100%', height:38, borderRadius:9, border:'1px solid var(--border)',
+    background:'var(--panel2)', color:'var(--text)', padding:'0 12px', fontSize:13, fontFamily:'inherit' };
+  const numField = (label, key, suf) => (
+    <div>
+      <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>{label}</label>
+      <div style={{ position:'relative' }}>
+        <input type="number" value={cfg[key] ?? ''} onChange={e => set(key, e.target.value === '' ? '' : +e.target.value)} style={inp}/>
+        {suf && <span style={{ position:'absolute', right:12, top:10, fontSize:12, color:'var(--faint)', pointerEvents:'none' }}>{suf}</span>}
+      </div>
+    </div>
+  );
+
   return (
     <div style={{ maxWidth:720, display:'flex', flexDirection:'column', gap:16 }}>
       <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:22 }}>
         <h3 style={{ fontSize:14, fontWeight:600, margin:'0 0 4px' }}>Parâmetros padrão</h3>
-        <p style={{ fontSize:12.5, color:'var(--faint)', margin:'0 0 18px' }}>Valores aplicados a novas buscas.</p>
+        <p style={{ fontSize:12.5, color:'var(--faint)', margin:'0 0 18px' }}>Valores iniciais aplicados a novas buscas e ao motor.</p>
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:16 }}>
-          {[['Ritmo padrão','120 leads/h'],['Corte de score','60'],['TTL de cache','30 dias']].map(([label,val]) => (
-            <div key={label}>
-              <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>{label}</label>
-              <input defaultValue={val} style={{ width:'100%', height:38, borderRadius:9, border:'1px solid var(--border)',
-                background:'var(--panel2)', color:'var(--text)', padding:'0 12px', fontSize:13, fontFamily:'inherit' }}/>
-            </div>
-          ))}
+          {numField('Ritmo padrão', 'ritmo_padrao', 'leads/h')}
+          {numField('Corte de score', 'corte_padrao', 'pts')}
+          {numField('TTL de cache', 'ttl_cache_dias', 'dias')}
         </div>
       </div>
+
+      <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:22 }}>
+        <h3 style={{ fontSize:14, fontWeight:600, margin:'0 0 4px' }}>Automação de envio ao CRM</h3>
+        <p style={{ fontSize:12.5, color:'var(--faint)', margin:'0 0 16px' }}>
+          Envia ao CRM conectado, automaticamente, os leads que passaram por todo o processo (captados, limpos, pontuados e analisados).
+        </p>
+        <div onClick={() => set('crm_auto_global', !cfg.crm_auto_global)}
+          style={{ display:'flex', alignItems:'center', gap:13, cursor:'pointer',
+            background:'var(--panel2)', border:'1px solid '+(cfg.crm_auto_global?C.gold:'var(--border)'),
+            borderRadius:11, padding:'14px 16px' }}>
+          <div style={{ width:42, height:24, borderRadius:12, flexShrink:0, position:'relative',
+            background: cfg.crm_auto_global ? C.gold : 'var(--border)', transition:'background .15s' }}>
+            <div style={{ position:'absolute', top:2, left: cfg.crm_auto_global ? 20 : 2, width:20, height:20,
+              borderRadius:'50%', background:'#fff', transition:'left .15s' }}/>
+          </div>
+          <div>
+            <div style={{ fontSize:13.5, fontWeight:500 }}>
+              {cfg.crm_auto_global ? 'Envio automático ativado' : 'Envio automático desativado'}
+            </div>
+            <div style={{ fontSize:12, color:'var(--faint)', marginTop:2 }}>
+              {cfg.crm_auto_global
+                ? 'Cada lead pronto é enviado ao CRM sem intervenção.'
+                : 'Os leads ficam para envio manual (botão "Enviar ao CRM" na triagem).'}
+            </div>
+          </div>
+        </div>
+        <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:10, lineHeight:1.4 }}>
+          Vale para todas as buscas. Cada busca também pode forçar o envio automático na sua própria configuração.
+        </div>
+      </div>
+
       <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:22 }}>
         <h3 style={{ fontSize:14, fontWeight:600, margin:'0 0 4px' }}>Alertas</h3>
-        <p style={{ fontSize:12.5, color:'var(--faint)', margin:'0 0 18px' }}>Limites do heartbeat e destinatários.</p>
+        <p style={{ fontSize:12.5, color:'var(--faint)', margin:'0 0 18px' }}>Quando considerar uma busca parada, e para quem avisar.</p>
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
-          {[['Parada considerada após','30 min sem pulso'],['Destinatários','ops@empresa.com.br']].map(([label,val]) => (
-            <div key={label}>
-              <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>{label}</label>
-              <input defaultValue={val} style={{ width:'100%', height:38, borderRadius:9, border:'1px solid var(--border)',
-                background:'var(--panel2)', color:'var(--text)', padding:'0 12px', fontSize:13, fontFamily:'inherit' }}/>
-            </div>
-          ))}
+          {numField('Parada considerada após', 'parada_min', 'min')}
+          <div>
+            <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>Destinatário dos alertas</label>
+            <input value={cfg.alerta_email || ''} onChange={e => set('alerta_email', e.target.value)}
+              placeholder="ops@empresa.com.br" style={inp}/>
+          </div>
         </div>
       </div>
-      <div>
-        <button style={{ height:44, padding:'0 22px', borderRadius:11, border:'none', background:'var(--gold)',
-          color:'#0E1936', fontWeight:600, fontSize:13.5, fontFamily:'inherit', cursor:'pointer' }}>Salvar alterações</button>
+
+      <div style={{ display:'flex', alignItems:'center', gap:14 }}>
+        <button onClick={salvar} disabled={salvando}
+          style={{ height:44, padding:'0 22px', borderRadius:11, border:'none', background:'var(--gold)',
+            color:'#0E1936', fontWeight:600, fontSize:13.5, fontFamily:'inherit',
+            cursor: salvando?'default':'pointer', opacity: salvando?.6:1 }}>
+          {salvando ? 'Salvando…' : 'Salvar alterações'}
+        </button>
+        {msg && <span style={{ fontSize:13, color: msg.ok ? C.green : C.red }}>{msg.txt}</span>}
       </div>
     </div>
   );
