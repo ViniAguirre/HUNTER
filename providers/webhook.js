@@ -38,6 +38,7 @@ function montarPayload(empresa, lead, busca) {
       endereco: e.endereco,
     },
     decisor: { nome: e.decisor || null, cargo: e.cargo || null },
+    contato_validado: lead?.contato_validado || null,
     swot: lead?.swot || null,
     busca: busca ? { id: busca.id, nome: busca.nome } : null,
   };

@@ -45,6 +45,7 @@ if (process.env.REDIS_HOST) {
     enriquecimento: new Queue('hunter-enriquecimento', { connection: { ...redisOpts } }),
     filtroContador: new Queue('hunter-filtro_contador', { connection: { ...redisOpts } }),
     score1: new Queue('hunter-score1', { connection: { ...redisOpts } }),
+    validacao: new Queue('hunter-validacao', { connection: { ...redisOpts } }),
     swot: new Queue('hunter-swot', { connection: { ...redisOpts } }),
     crm: new Queue('hunter-crm', { connection: { ...redisOpts } }),
   };
@@ -311,6 +312,7 @@ async function init() {
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS tentativas      INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS processado_em   TIMESTAMPTZ;
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS swot            JSONB;
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS contato_validado JSONB;
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS enviado_crm_em  TIMESTAMPTZ;
     CREATE UNIQUE INDEX IF NOT EXISTS uq_leads_busca_cnpj ON leads(busca_id, cnpj);
   `);
@@ -343,6 +345,7 @@ async function init() {
   await pool.query(`
     INSERT INTO integracoes (categoria, provedor, ativo, ordem)
     VALUES ('descoberta', 'cnpja', false, 10),
+           ('contato', 'econodata', false, 20),
            ('ia', 'openai', false, 60),
            ('crm', 'gk', false, 35),
            ('crm', 'webhook', false, 40)
@@ -780,6 +783,7 @@ app.get('/api/monitor/queues', requireAuth, async (req, res) => {
         ['enriquecimento', 'Enriquecimento'],
         ['filtroContador', 'Filtro Contador'],
         ['score1', 'Score 1'],
+        ['validacao', 'Validação de contato'],
         ['swot', 'Agente SWOT'],
         ['crm', 'Envio CRM'],
       ];

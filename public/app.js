@@ -3121,6 +3121,13 @@ const INTEGRACOES_META = {
     icon: 'M14 2v6h6M14 2l6 6v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z',
     editavel: true
   },
+  'contato|econodata': {
+    nome: 'Validação de contato do decisor',
+    provedor: 'Econodata (match por CNPJ)',
+    icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 11l-3 3-1.5-1.5',
+    editavel: true,
+    placeholder: 'Colar x-api-token…'
+  },
   'crm|gk': {
     nome: 'CRM GK SaaS (nativo)',
     provedor: 'Contato + ticket automático na fila',
@@ -3153,7 +3160,7 @@ const INTEGRACOES_META = {
     editavel: true
   }
 };
-const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'ia|openai', 'crm|gk', 'crm|webhook', 'validacao_email|neverbounce', 'validacao_tel|twilio'];
+const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'contato|econodata', 'ia|openai', 'crm|gk', 'crm|webhook'];
 
 // Card especial do CRM GK: fluxo em etapas (conexão → empresas → filas → salvar).
 function IntegracaoGK({
@@ -4390,11 +4397,14 @@ function Monitor() {
     key: 'score1',
     label: '4. Score 1 + corte'
   }, {
+    key: 'validacao',
+    label: '5. Validação de contato'
+  }, {
     key: 'swot',
-    label: '5. Agente SWOT (OpenAI)'
+    label: '6. Agente SWOT (OpenAI)'
   }, {
     key: 'crm',
-    label: '6. Envio ao CRM (webhook)'
+    label: '7. Envio ao CRM'
   }];
   return /*#__PURE__*/React.createElement("div", {
     style: {
@@ -5022,7 +5032,94 @@ function LeadDetailPanel({
     color: C.cyan
   }, /*#__PURE__*/React.createElement("path", {
     d: "M20 6L9 17l-5-5"
-  })), "Receita Federal"))), contatos.length > 0 && /*#__PURE__*/React.createElement("section", {
+  })), "Receita Federal"))), l.contato_validado && (l.contato_validado.telefone || l.contato_validado.email) && /*#__PURE__*/React.createElement("section", {
+    style: {
+      borderTop: '1px solid var(--border)',
+      paddingTop: 18
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 12
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      fontWeight: 600,
+      letterSpacing: '.08em',
+      color: C.green,
+      textTransform: 'uppercase',
+      flex: 1
+    }
+  }, "Contato do decisor \xB7 validado"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      color: 'var(--faint)'
+    }
+  }, l.contato_validado.fonte || 'econodata')), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 9
+    }
+  }, l.contato_validado.telefone && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 11,
+      background: 'rgba(74,222,128,.08)',
+      border: '1px solid rgba(74,222,128,.25)',
+      borderRadius: 10,
+      padding: '11px 13px'
+    }
+  }, /*#__PURE__*/React.createElement(Svg, {
+    d: "M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.6A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.3 1.8.6 2.6a2 2 0 0 1-.5 2.1L8 9.6a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.5c.8.3 1.7.5 2.6.6a2 2 0 0 1 1.7 2z",
+    color: C.green,
+    w: 16,
+    h: 16,
+    sw: 1.8
+  }), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 13.5,
+      flex: 1
+    }
+  }, l.contato_validado.telefone), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      fontWeight: 600,
+      color: C.green
+    }
+  }, "\u2713 validado")), l.contato_validado.email && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 11,
+      background: 'rgba(74,222,128,.08)',
+      border: '1px solid rgba(74,222,128,.25)',
+      borderRadius: 10,
+      padding: '11px 13px'
+    }
+  }, /*#__PURE__*/React.createElement(Svg, {
+    d: "M3 5h18v14H3zM3 7l9 6 9-6",
+    color: C.green,
+    w: 16,
+    h: 16,
+    sw: 1.8
+  }), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 13.5,
+      flex: 1,
+      wordBreak: 'break-all'
+    }
+  }, l.contato_validado.email), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      fontWeight: 600,
+      color: C.green
+    }
+  }, "\u2713 validado")))), contatos.length > 0 && /*#__PURE__*/React.createElement("section", {
     style: {
       borderTop: '1px solid var(--border)',
       paddingTop: 18

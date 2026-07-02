@@ -51,9 +51,12 @@ module.exports = async function score1(job, pool, queues) {
       WHERE id=$1`,
       [lead_id, score, breakdownJson, empresa.situacao, empresa.abertura, empresa.capital, empresa.endereco]
     );
-    // Passou no corte → enfileira o agente SWOT (Fase 3.2). Se não houver chave
-    // OpenAI ativa, o job apenas ignora e o lead segue 'scored' (sem gasto).
-    if (queues?.swot) {
+    // Passou no corte → validação de contato do decisor (que depois chama o
+    // SWOT). Sem provedor de validação ativo, a etapa só repassa pro SWOT.
+    if (queues?.validacao) {
+      await queues.validacao.add('validacao', { cnpj, busca_id, lead_id },
+        { removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 2, backoff: { type: 'exponential', delay: 10000 } });
+    } else if (queues?.swot) {
       await queues.swot.add('swot', { cnpj, busca_id, lead_id },
         { removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 2, backoff: { type: 'exponential', delay: 10000 } });
     }

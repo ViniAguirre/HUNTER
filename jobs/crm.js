@@ -20,7 +20,7 @@ module.exports = async function crm(job, pool) {
   if (!ig) return { skipped: 'sem_crm', lead_id };
 
   const { rows: [lead] } = await pool.query(
-    `SELECT l.id, l.cnpj, l.busca_id, l.score, l.swot, b.nome AS busca_nome
+    `SELECT l.id, l.cnpj, l.busca_id, l.score, l.swot, l.contato_validado, b.nome AS busca_nome
      FROM leads l LEFT JOIN buscas b ON b.id=l.busca_id WHERE l.id=$1`, [lead_id]
   );
   if (!lead) return { error: 'lead ausente', lead_id };
@@ -35,15 +35,16 @@ module.exports = async function crm(job, pool) {
       throw new Error('GK: configure Backend, Empresa e Fila em Integrações (empresa é obrigatória pro contato).');
     }
 
-    // Contato do decisor. O telefone/e-mail VALIDADO (fase de validação) entra
-    // aqui quando existir; por ora usamos o da Receita como ponto de partida,
-    // sempre marcado como não validado pra o closer confirmar.
+    // Contato do decisor. Prioriza o VALIDADO (Econodata); só cai no da Receita
+    // (contador) como último recurso, sempre marcado.
+    const cv = lead.contato_validado || {};
     const cr = empresa?.contato_receita || {};
-    const telefone = (Array.isArray(cr.telefones) && cr.telefones[0]) || '';
-    const email = (Array.isArray(cr.emails) && cr.emails[0]) || '';
+    const validado = !!(cv.telefone || cv.email);
+    const telefone = cv.telefone || (Array.isArray(cr.telefones) && cr.telefones[0]) || '';
+    const email = cv.email || (Array.isArray(cr.emails) && cr.emails[0]) || '';
 
     const contato = gk.montarContato(empresa, lead, { telefone, email, companyId: ig.config?.companyId || null });
-    contato.extraInfo.push({ name: 'Contato', value: telefone || email ? 'não validado (Receita)' : 'sem contato' });
+    contato.extraInfo.push({ name: 'Contato', value: validado ? 'validado (decisor)' : (telefone || email ? 'não validado (Receita)' : 'sem contato') });
     if (lead.swot?.resumo) contato.extraInfo.push({ name: 'Resumo IA', value: String(lead.swot.resumo).slice(0, 240) });
 
     const contactId = await gk.upsertContato(backend, token, contato);
