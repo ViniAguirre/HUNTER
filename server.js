@@ -706,13 +706,14 @@ app.post('/api/leads/acoes', requireAuth, requireEditor, async (req, res) => {
   const idsInt = ids.map(x => parseInt(x,10)).filter(x => !isNaN(x));
   if (!idsInt.length) return res.status(400).json({ erro: 'ids inválidos' });
   try {
-    // Envio manual ao CRM: enfileira cada lead na fila de webhook (com retry).
+    // Envio manual ao CRM: enfileira cada lead (com retry). Aceita qualquer
+    // provedor de CRM ativo (gk nativo ou webhook) — o job roteia pelo provedor.
     if (acao === 'enviar_crm') {
       if (!monitorQueues?.crm) return res.status(503).json({ erro: 'motor de envio indisponível' });
       const { rows: [ig] } = await pool.query(
-        `SELECT 1 FROM integracoes WHERE categoria='crm' AND provedor='webhook' AND ativo=true AND key_cifrada IS NOT NULL LIMIT 1`
+        `SELECT 1 FROM integracoes WHERE categoria='crm' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> '' LIMIT 1`
       );
-      if (!ig) return res.status(400).json({ erro: 'Configure o Webhook do CRM em Integrações e ative.' });
+      if (!ig) return res.status(400).json({ erro: 'Configure um CRM (GK ou Webhook) em Integrações e ative.' });
       await Promise.all(idsInt.map(id =>
         monitorQueues.crm.add('crm', { lead_id: id },
           { jobId: `crm-manual-${id}-${Date.now()}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 4, backoff: { type: 'exponential', delay: 15000 } })
@@ -726,6 +727,23 @@ app.post('/api/leads/acoes', requireAuth, requireEditor, async (req, res) => {
       `UPDATE leads SET status=$1, atualizado_em=now() WHERE id = ANY($2::int[])`,
       [status, idsInt]);
     res.json({ ok: true, atualizados: idsInt.length });
+  } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// CRM ativo (pro modal de envio mostrar o destino real).
+app.get('/api/crm/status', requireAuth, async (req, res) => {
+  try {
+    const { rows: [ig] } = await pool.query(
+      `SELECT provedor, config FROM integracoes
+       WHERE categoria='crm' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> ''
+       ORDER BY ordem LIMIT 1`
+    );
+    if (!ig) return res.json({ ativo: false });
+    const nomes = { gk: 'CRM GK SaaS', webhook: 'Webhook' };
+    const detalhe = ig.provedor === 'gk'
+      ? 'Cria/atualiza o contato e abre um ticket na fila configurada (status Aguardando).'
+      : 'Envia os dados do lead (empresa, decisor, score, SWOT) via POST para a URL de webhook.';
+    res.json({ ativo: true, provedor: ig.provedor, nome: nomes[ig.provedor] || ig.provedor, detalhe });
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 

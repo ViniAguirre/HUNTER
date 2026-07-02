@@ -5161,10 +5161,19 @@ function CrmModal({
   onConfirm
 }) {
   const [loading, setLoading] = useState(false);
+  const [crm, setCrm] = useState(null); // null=carregando
+
+  useEffect(() => {
+    fetch('/api/crm/status', {
+      credentials: 'same-origin'
+    }).then(r => r.json()).then(setCrm).catch(() => setCrm({
+      ativo: false
+    }));
+  }, []);
   const confirmar = async () => {
     setLoading(true);
     try {
-      await fetch('/api/leads/acoes', {
+      const r = await fetch('/api/leads/acoes', {
         method: 'POST',
         credentials: 'same-origin',
         headers: {
@@ -5172,17 +5181,21 @@ function CrmModal({
         },
         body: JSON.stringify({
           ids,
-          acao: 'enviar_crm',
-          crm_destino: 'RD Station'
+          acao: 'enviar_crm'
         })
       });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error(d.erro || 'Erro ao enviar ao CRM.');
+      }
       onConfirm();
-    } catch (_) {
-      alert('Erro ao enviar ao CRM.');
+    } catch (e) {
+      alert(e.message || 'Erro ao enviar ao CRM.');
     } finally {
       setLoading(false);
     }
   };
+  const semCrm = crm && !crm.ativo;
   return /*#__PURE__*/React.createElement("div", {
     style: {
       position: 'fixed',
@@ -5248,23 +5261,16 @@ function CrmModal({
       background: 'var(--panel2)',
       display: 'flex',
       alignItems: 'center',
-      justifyContent: 'space-between',
       padding: '0 14px',
       fontSize: 13.5
     }
-  }, /*#__PURE__*/React.createElement("span", null, "RD Station"), /*#__PURE__*/React.createElement(Svg, {
-    d: "M6 9l6 6 6-6",
-    w: 14,
-    h: 14,
-    color: "var(--dim)",
-    sw: 2
-  }))), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("span", null, crm === null ? 'Carregando…' : semCrm ? 'Nenhum CRM ativo' : crm.nome))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
       gap: 11,
-      background: 'var(--panel2)',
-      border: '1px solid var(--border)',
+      background: semCrm ? 'rgba(248,113,113,.08)' : 'var(--panel2)',
+      border: '1px solid ' + (semCrm ? 'rgba(248,113,113,.25)' : 'var(--border)'),
       borderRadius: 10,
       padding: '12px 14px'
     }
@@ -5272,7 +5278,7 @@ function CrmModal({
     w: 17,
     h: 17,
     sw: 1.8,
-    color: C.cyan
+    color: semCrm ? C.red : C.cyan
   }, /*#__PURE__*/React.createElement("circle", {
     cx: 12,
     cy: 12,
@@ -5282,10 +5288,10 @@ function CrmModal({
   })), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 12.5,
-      color: 'var(--dim)',
+      color: semCrm ? C.red : 'var(--dim)',
       lineHeight: 1.45
     }
-  }, "Mapeamento de campos validado \u2014 raz\xE3o social, decisor, contatos e score ser\xE3o sincronizados."))), /*#__PURE__*/React.createElement("div", {
+  }, semCrm ? 'Nenhum CRM configurado. Vá em Integrações e ative o CRM GK SaaS ou um Webhook.' : crm?.detalhe || 'Os dados do lead serão enviados ao CRM configurado.'))), /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '16px 24px',
       borderTop: '1px solid var(--border)',
@@ -5308,7 +5314,7 @@ function CrmModal({
     }
   }, "Cancelar"), /*#__PURE__*/React.createElement("button", {
     onClick: confirmar,
-    disabled: loading,
+    disabled: loading || semCrm || crm === null,
     style: {
       height: 42,
       padding: '0 20px',
@@ -5319,8 +5325,8 @@ function CrmModal({
       fontWeight: 600,
       fontSize: 13.5,
       fontFamily: 'inherit',
-      cursor: 'pointer',
-      opacity: loading ? .6 : 1
+      cursor: loading || semCrm || crm === null ? 'default' : 'pointer',
+      opacity: loading || semCrm || crm === null ? .6 : 1
     }
   }, loading ? 'Enviando…' : 'Confirmar envio'))));
 }

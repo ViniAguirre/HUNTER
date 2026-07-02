@@ -2142,21 +2142,30 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
 // ── CRM Modal ─────────────────────────────────────────────────────────────────
 function CrmModal({ ids, onClose, onConfirm }) {
   const [loading, setLoading] = useState(false);
+  const [crm, setCrm] = useState(null); // null=carregando
+
+  useEffect(() => {
+    fetch('/api/crm/status', { credentials:'same-origin' })
+      .then(r => r.json()).then(setCrm).catch(() => setCrm({ ativo:false }));
+  }, []);
+
   const confirmar = async () => {
     setLoading(true);
     try {
-      await fetch('/api/leads/acoes', {
+      const r = await fetch('/api/leads/acoes', {
         method:'POST', credentials:'same-origin',
         headers:{ 'Content-Type':'application/json' },
-        body: JSON.stringify({ ids, acao:'enviar_crm', crm_destino:'RD Station' })
+        body: JSON.stringify({ ids, acao:'enviar_crm' })
       });
+      if (!r.ok) { const d = await r.json().catch(()=>({})); throw new Error(d.erro || 'Erro ao enviar ao CRM.'); }
       onConfirm();
-    } catch (_) {
-      alert('Erro ao enviar ao CRM.');
+    } catch (e) {
+      alert(e.message || 'Erro ao enviar ao CRM.');
     } finally {
       setLoading(false);
     }
   };
+  const semCrm = crm && !crm.ativo;
   return (
     <div style={{ position:'fixed', inset:0, zIndex:80, display:'flex', alignItems:'center', justifyContent:'center' }}>
       <div onClick={onClose} style={{ position:'absolute', inset:0, background:'rgba(5,9,20,.6)' }}/>
@@ -2170,18 +2179,20 @@ function CrmModal({ ids, onClose, onConfirm }) {
           <div>
             <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>CRM de destino</label>
             <div style={{ height:42, borderRadius:10, border:'1px solid var(--border)', background:'var(--panel2)',
-              display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 14px', fontSize:13.5 }}>
-              <span>RD Station</span>
-              <Svg d="M6 9l6 6 6-6" w={14} h={14} color="var(--dim)" sw={2}/>
+              display:'flex', alignItems:'center', padding:'0 14px', fontSize:13.5 }}>
+              <span>{crm === null ? 'Carregando…' : semCrm ? 'Nenhum CRM ativo' : crm.nome}</span>
             </div>
           </div>
-          <div style={{ display:'flex', alignItems:'center', gap:11, background:'var(--panel2)',
-            border:'1px solid var(--border)', borderRadius:10, padding:'12px 14px' }}>
-            <SvgMulti w={17} h={17} sw={1.8} color={C.cyan}>
+          <div style={{ display:'flex', alignItems:'center', gap:11,
+            background: semCrm ? 'rgba(248,113,113,.08)' : 'var(--panel2)',
+            border:'1px solid '+(semCrm ? 'rgba(248,113,113,.25)' : 'var(--border)'), borderRadius:10, padding:'12px 14px' }}>
+            <SvgMulti w={17} h={17} sw={1.8} color={semCrm ? C.red : C.cyan}>
               <circle cx={12} cy={12} r={10}/><path d="M12 16v-4M12 8h.01"/>
             </SvgMulti>
-            <span style={{ fontSize:12.5, color:'var(--dim)', lineHeight:1.45 }}>
-              Mapeamento de campos validado — razão social, decisor, contatos e score serão sincronizados.
+            <span style={{ fontSize:12.5, color: semCrm ? C.red : 'var(--dim)', lineHeight:1.45 }}>
+              {semCrm
+                ? 'Nenhum CRM configurado. Vá em Integrações e ative o CRM GK SaaS ou um Webhook.'
+                : (crm?.detalhe || 'Os dados do lead serão enviados ao CRM configurado.')}
             </span>
           </div>
         </div>
@@ -2190,10 +2201,11 @@ function CrmModal({ ids, onClose, onConfirm }) {
           <button onClick={onClose} style={{ height:42, padding:'0 18px', borderRadius:10,
             border:'1px solid var(--border)', background:'transparent', color:'var(--text)',
             fontSize:13.5, fontFamily:'inherit', cursor:'pointer' }}>Cancelar</button>
-          <button onClick={confirmar} disabled={loading}
+          <button onClick={confirmar} disabled={loading || semCrm || crm === null}
             style={{ height:42, padding:'0 20px', borderRadius:10, border:'none', background:'var(--gold)',
-              color:'#0E1936', fontWeight:600, fontSize:13.5, fontFamily:'inherit', cursor:'pointer',
-              opacity:loading?.6:1 }}>
+              color:'#0E1936', fontWeight:600, fontSize:13.5, fontFamily:'inherit',
+              cursor:(loading||semCrm||crm===null)?'default':'pointer',
+              opacity:(loading||semCrm||crm===null)?.6:1 }}>
             {loading ? 'Enviando…' : 'Confirmar envio'}
           </button>
         </div>
