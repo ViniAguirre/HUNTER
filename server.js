@@ -345,6 +345,7 @@ async function init() {
   await pool.query(`
     INSERT INTO integracoes (categoria, provedor, ativo, ordem)
     VALUES ('descoberta', 'cnpja', false, 10),
+           ('contato', 'google', false, 18),
            ('contato', 'econodata', false, 20),
            ('ia', 'openai', false, 60),
            ('crm', 'gk', false, 35),

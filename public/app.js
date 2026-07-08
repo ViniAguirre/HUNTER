@@ -3121,9 +3121,16 @@ const INTEGRACOES_META = {
     icon: 'M14 2v6h6M14 2l6 6v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z',
     editavel: true
   },
+  'contato|google': {
+    nome: 'Contato comercial (Google Meu Negócio)',
+    provedor: 'Places API — telefone/WhatsApp + site → e-mail',
+    icon: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18M3 12h18',
+    editavel: true,
+    placeholder: 'Colar chave da Places API…'
+  },
   'contato|econodata': {
-    nome: 'Validação de contato do decisor',
-    provedor: 'Econodata (match por CNPJ)',
+    nome: 'Contato do decisor (premium)',
+    provedor: 'Econodata (match por CNPJ) — opcional',
     icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 11l-3 3-1.5-1.5',
     editavel: true,
     placeholder: 'Colar x-api-token…'
@@ -3160,7 +3167,7 @@ const INTEGRACOES_META = {
     editavel: true
   }
 };
-const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'contato|econodata', 'ia|openai', 'crm|gk', 'crm|webhook'];
+const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'contato|google', 'contato|econodata', 'ia|openai', 'crm|gk', 'crm|webhook'];
 
 // Card especial do CRM GK: fluxo em etapas (conexão → empresas → filas → salvar).
 function IntegracaoGK({
