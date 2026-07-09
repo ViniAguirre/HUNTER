@@ -829,10 +829,14 @@ function Dashboard({
   onOpenBusca
 }) {
   const [data, setData] = useState(null);
+  const [alertas, setAlertas] = useState([]);
   useEffect(() => {
     fetch('/api/dashboard', {
       credentials: 'same-origin'
     }).then(r => r.json()).then(setData).catch(() => {});
+    fetch('/api/alertas', {
+      credentials: 'same-origin'
+    }).then(r => r.json()).then(d => setAlertas(Array.isArray(d?.alertas) ? d.alertas : [])).catch(() => {});
   }, []);
   if (!data) {
     return /*#__PURE__*/React.createElement("div", {
@@ -886,19 +890,7 @@ function Dashboard({
     red: 'parada',
     gray: 'encerrada'
   };
-  const alertas = [{
-    color: C.red,
-    titulo: 'Busca "Construtoras SP" está parada há 2h',
-    tempo: 'erro de heartbeat'
-  }, {
-    color: C.amber,
-    titulo: 'Universo de "Clínicas NE" 82% varrido',
-    tempo: 'há 25 min'
-  }, {
-    color: C.blue,
-    titulo: 'Integração de validação de e-mail reconectada',
-    tempo: 'há 1h'
-  }];
+  const corAlerta = t => t === 'erro' ? C.red : t === 'aviso' ? C.amber : C.blue;
   return /*#__PURE__*/React.createElement("div", {
     style: {
       maxWidth: 1180
@@ -1058,7 +1050,13 @@ function Dashboard({
       fontWeight: 600,
       margin: '0 0 4px'
     }
-  }, "Alertas"), alertas.map((a, i) => /*#__PURE__*/React.createElement("div", {
+  }, "Alertas"), alertas.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: 'var(--faint)',
+      padding: '11px 0'
+    }
+  }, "Nenhum alerta no momento."), alertas.map((a, i) => /*#__PURE__*/React.createElement("div", {
     key: i,
     style: {
       display: 'flex',
@@ -1073,7 +1071,7 @@ function Dashboard({
       borderRadius: '50%',
       flexShrink: 0,
       marginTop: 5,
-      background: a.color
+      background: corAlerta(a.tipo)
     }
   }), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -1086,7 +1084,7 @@ function Dashboard({
       fontSize: 11.5,
       marginTop: 1
     }
-  }, a.tempo))))), /*#__PURE__*/React.createElement("div", {
+  }, a.detalhe, a.quando ? ` · ${timeAgo(a.quando)}` : ''))))), /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'var(--panel)',
       border: '1px solid var(--border)',
@@ -4461,15 +4459,45 @@ function Config() {
   const [msg, setMsg] = useState(null);
   const [sementes, setSementes] = useState(null);
   const [rotacionando, setRotacionando] = useState(false);
+  const [demo, setDemo] = useState(null);
+  const [limpandoDemo, setLimpandoDemo] = useState(false);
   const carregarSementes = () => fetch('/api/sementes/status', {
     credentials: 'same-origin'
   }).then(r => r.json()).then(setSementes).catch(() => {});
+  const carregarDemo = () => fetch('/api/admin/demo', {
+    credentials: 'same-origin'
+  }).then(r => r.json()).then(setDemo).catch(() => {});
   useEffect(() => {
     fetch('/api/config', {
       credentials: 'same-origin'
     }).then(r => r.json()).then(setCfg).catch(() => setCfg({}));
     carregarSementes();
+    carregarDemo();
   }, []);
+  const limparDemo = async () => {
+    if (!window.confirm(`Isso vai remover as buscas de demonstração e ${demo?.leads || 0} lead(s) que elas geraram ` + `(inclui os leads-exemplo e o que as buscas demo descobriram com critério amplo). ` + `As empresas ficam no cache. Não dá pra desfazer. Continuar?`)) return;
+    setLimpandoDemo(true);
+    try {
+      const r = await fetch('/api/admin/limpar-demo', {
+        method: 'POST',
+        credentials: 'same-origin'
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.erro || 'Falha ao limpar.');
+      setMsg({
+        ok: true,
+        txt: `Removidas ${d.buscas_removidas} busca(s) e ${d.leads_removidos} lead(s) de demonstração.`
+      });
+      carregarDemo();
+    } catch (e) {
+      setMsg({
+        ok: false,
+        txt: e.message
+      });
+    } finally {
+      setLimpandoDemo(false);
+    }
+  };
   const rotacionarSecret = async () => {
     setRotacionando(true);
     try {
@@ -4890,7 +4918,51 @@ function Config() {
     onChange: e => set('alerta_email', e.target.value),
     placeholder: "ops@empresa.com.br",
     style: inp
-  })))), /*#__PURE__*/React.createElement("div", {
+  })))), demo && (demo.buscas > 0 || demo.leads > 0) && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'var(--panel)',
+      border: '1px solid var(--border)',
+      borderRadius: 14,
+      padding: 22
+    }
+  }, /*#__PURE__*/React.createElement("h3", {
+    style: {
+      fontSize: 14,
+      fontWeight: 600,
+      margin: '0 0 4px'
+    }
+  }, "Manuten\xE7\xE3o \u2014 dados de demonstra\xE7\xE3o"), /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 12.5,
+      color: 'var(--faint)',
+      margin: '0 0 16px',
+      lineHeight: 1.5
+    }
+  }, "Detectei ", /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: 'var(--text)'
+    }
+  }, demo.buscas, " busca(s)"), " de demonstra\xE7\xE3o e", ' ', /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: 'var(--text)'
+    }
+  }, demo.leads, " lead(s)"), " gerados por elas (dados de exemplo do primeiro boot + o que essas buscas descobriram com crit\xE9rio amplo). Remova para o painel refletir s\xF3 o seu trabalho real. As empresas ficam no cache (gr\xE1tis)."), /*#__PURE__*/React.createElement("button", {
+    onClick: limparDemo,
+    disabled: limpandoDemo,
+    style: {
+      height: 40,
+      padding: '0 18px',
+      borderRadius: 10,
+      border: '1px solid ' + C.red,
+      background: 'transparent',
+      color: C.red,
+      fontWeight: 600,
+      fontSize: 13,
+      fontFamily: 'inherit',
+      cursor: limpandoDemo ? 'default' : 'pointer',
+      opacity: limpandoDemo ? .6 : 1
+    }
+  }, limpandoDemo ? 'Removendo…' : 'Limpar dados de demonstração')), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',

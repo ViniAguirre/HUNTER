@@ -336,11 +336,16 @@ function Topbar({ screen, theme, onTheme, onNova, user }) {
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 function Dashboard({ onOpenBusca }) {
   const [data, setData] = useState(null);
+  const [alertas, setAlertas] = useState([]);
 
   useEffect(() => {
     fetch('/api/dashboard', { credentials:'same-origin' })
       .then(r => r.json())
       .then(setData)
+      .catch(() => {});
+    fetch('/api/alertas', { credentials:'same-origin' })
+      .then(r => r.json())
+      .then(d => setAlertas(Array.isArray(d?.alertas) ? d.alertas : []))
       .catch(() => {});
   }, []);
 
@@ -361,12 +366,7 @@ function Dashboard({ onOpenBusca }) {
   ];
 
   const hlLabel = { green:'produzindo', amber:'ritmo lento', red:'parada', gray:'encerrada' };
-
-  const alertas = [
-    { color:C.red, titulo:'Busca "Construtoras SP" está parada há 2h', tempo:'erro de heartbeat' },
-    { color:C.amber, titulo:'Universo de "Clínicas NE" 82% varrido', tempo:'há 25 min' },
-    { color:C.blue, titulo:'Integração de validação de e-mail reconectada', tempo:'há 1h' },
-  ];
+  const corAlerta = t => t === 'erro' ? C.red : t === 'aviso' ? C.amber : C.blue;
 
   return (
     <div style={{ maxWidth:1180 }}>
@@ -413,12 +413,15 @@ function Dashboard({ onOpenBusca }) {
         <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
           <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:16 }}>
             <h3 style={{ fontSize:14, fontWeight:600, margin:'0 0 4px' }}>Alertas</h3>
+            {alertas.length === 0 && (
+              <div style={{ fontSize:12.5, color:'var(--faint)', padding:'11px 0' }}>Nenhum alerta no momento.</div>
+            )}
             {alertas.map((a,i) => (
               <div key={i} style={{ display:'flex', gap:10, padding:'11px 0', borderBottom:'1px solid var(--border)' }}>
-                <span style={{ width:7, height:7, borderRadius:'50%', flexShrink:0, marginTop:5, background:a.color }}/>
+                <span style={{ width:7, height:7, borderRadius:'50%', flexShrink:0, marginTop:5, background:corAlerta(a.tipo) }}/>
                 <div style={{ fontSize:12.5, lineHeight:1.45 }}>
                   <span>{a.titulo}</span>
-                  <div style={{ color:'var(--faint)', fontSize:11.5, marginTop:1 }}>{a.tempo}</div>
+                  <div style={{ color:'var(--faint)', fontSize:11.5, marginTop:1 }}>{a.detalhe}{a.quando ? ` · ${timeAgo(a.quando)}` : ''}</div>
                 </div>
               </div>
             ))}
@@ -1911,15 +1914,37 @@ function Config() {
   const [msg, setMsg] = useState(null);
   const [sementes, setSementes] = useState(null);
   const [rotacionando, setRotacionando] = useState(false);
+  const [demo, setDemo] = useState(null);
+  const [limpandoDemo, setLimpandoDemo] = useState(false);
 
   const carregarSementes = () => fetch('/api/sementes/status', { credentials:'same-origin' })
     .then(r => r.json()).then(setSementes).catch(() => {});
+  const carregarDemo = () => fetch('/api/admin/demo', { credentials:'same-origin' })
+    .then(r => r.json()).then(setDemo).catch(() => {});
 
   useEffect(() => {
     fetch('/api/config', { credentials:'same-origin' })
       .then(r => r.json()).then(setCfg).catch(() => setCfg({}));
     carregarSementes();
+    carregarDemo();
   }, []);
+
+  const limparDemo = async () => {
+    if (!window.confirm(
+      `Isso vai remover as buscas de demonstração e ${demo?.leads || 0} lead(s) que elas geraram ` +
+      `(inclui os leads-exemplo e o que as buscas demo descobriram com critério amplo). ` +
+      `As empresas ficam no cache. Não dá pra desfazer. Continuar?`
+    )) return;
+    setLimpandoDemo(true);
+    try {
+      const r = await fetch('/api/admin/limpar-demo', { method:'POST', credentials:'same-origin' });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.erro || 'Falha ao limpar.');
+      setMsg({ ok:true, txt:`Removidas ${d.buscas_removidas} busca(s) e ${d.leads_removidos} lead(s) de demonstração.` });
+      carregarDemo();
+    } catch (e) { setMsg({ ok:false, txt:e.message }); }
+    finally { setLimpandoDemo(false); }
+  };
 
   const rotacionarSecret = async () => {
     setRotacionando(true);
@@ -2096,6 +2121,24 @@ function Config() {
           </div>
         </div>
       </div>
+
+      {demo && (demo.buscas > 0 || demo.leads > 0) && (
+        <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:22 }}>
+          <h3 style={{ fontSize:14, fontWeight:600, margin:'0 0 4px' }}>Manutenção — dados de demonstração</h3>
+          <p style={{ fontSize:12.5, color:'var(--faint)', margin:'0 0 16px', lineHeight:1.5 }}>
+            Detectei <b style={{ color:'var(--text)' }}>{demo.buscas} busca(s)</b> de demonstração e
+            {' '}<b style={{ color:'var(--text)' }}>{demo.leads} lead(s)</b> gerados por elas (dados de exemplo do primeiro
+            boot + o que essas buscas descobriram com critério amplo). Remova para o painel refletir só o seu trabalho real.
+            As empresas ficam no cache (grátis).
+          </p>
+          <button onClick={limparDemo} disabled={limpandoDemo}
+            style={{ height:40, padding:'0 18px', borderRadius:10, border:'1px solid '+C.red,
+              background:'transparent', color:C.red, fontWeight:600, fontSize:13, fontFamily:'inherit',
+              cursor: limpandoDemo?'default':'pointer', opacity: limpandoDemo?.6:1 }}>
+            {limpandoDemo ? 'Removendo…' : 'Limpar dados de demonstração'}
+          </button>
+        </div>
+      )}
 
       <div style={{ display:'flex', alignItems:'center', gap:14 }}>
         <button onClick={salvar} disabled={salvando}

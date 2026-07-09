@@ -374,10 +374,14 @@ async function init() {
     ON CONFLICT (categoria, provedor) DO NOTHING
   `);
 
-  const { rows:[{n:bCount}] } = await pool.query('SELECT COUNT(*)::int AS n FROM buscas');
-  if (bCount === 0) {
-    const { rows:[admin] } = await pool.query('SELECT id FROM usuarios LIMIT 1');
-    await seed(admin?.id || null);
+  // Seed de demonstração: só roda se explicitamente pedido (SEED_DEMO=true).
+  // Em produção fica desligado — o painel começa limpo e só mostra dado real.
+  if (process.env.SEED_DEMO === 'true') {
+    const { rows:[{n:bCount}] } = await pool.query('SELECT COUNT(*)::int AS n FROM buscas');
+    if (bCount === 0) {
+      const { rows:[admin] } = await pool.query('SELECT id FROM usuarios LIMIT 1');
+      await seed(admin?.id || null);
+    }
   }
 
   console.log('[init] banco pronto.');
@@ -1198,6 +1202,69 @@ app.post('/api/cnae/sugerir', requireAuth, requireEditor, iaLimiter, async (req,
     console.error('[cnae/sugerir]', e.message);
     res.status(502).json({ sugestoes: [], erro: e.message });
   }
+});
+
+// ── Limpeza dos dados de demonstração (seed) ───────────────────────────────────
+const SEED_BUSCAS_NOMES = [
+  'Agências de marketing — Sul', 'Indústrias alimentícias — GO/MG', 'Clínicas médicas — capitais NE',
+  'Construtoras porte grande — SP', 'Escritórios de advocacia — DF', 'Startups SaaS — semelhantes',
+  'Restaurantes — POA',
+];
+const SEED_LEADS_CNPJS = [
+  '18402551000109','27918330000144','09221764000172','31556092000118','22044871000105',
+  '14880213000166','35112908000130','40337115000192','19770844000151','28901556000123',
+];
+
+// Acha as buscas do seed: nome conhecido + a "impressão digital" do seed
+// (critérios em `chips` legados e SEM `params` — buscas reais do usuário têm params).
+async function idsBuscasSeed() {
+  const { rows } = await pool.query(
+    `SELECT id FROM buscas
+     WHERE nome = ANY($1)
+       AND (criterios ? 'chips') AND NOT (criterios ? 'params')`,
+    [SEED_BUSCAS_NOMES]
+  );
+  return rows.map(r => r.id);
+}
+
+// Preview: quantos itens de demonstração existem (sem apagar).
+app.get('/api/admin/demo', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const ids = await idsBuscasSeed();
+    const { rows:[l] } = await pool.query(
+      `SELECT COUNT(*)::int n FROM leads
+       WHERE busca_id = ANY($1) OR regexp_replace(cnpj,'\\D','','g') = ANY($2)`,
+      [ids, SEED_LEADS_CNPJS]
+    );
+    res.json({ buscas: ids.length, leads: l.n });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// Apaga as buscas de demonstração + os leads que elas geraram + os 10 leads fake.
+// As empresas ficam (cache grátis da Receita; não aparecem no painel).
+app.post('/api/admin/limpar-demo', requireAuth, requireAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `SELECT id FROM buscas WHERE nome = ANY($1) AND (criterios ? 'chips') AND NOT (criterios ? 'params')`,
+      [SEED_BUSCAS_NOMES]
+    );
+    const ids = rows.map(r => r.id);
+    const dl = await client.query(
+      `DELETE FROM leads WHERE busca_id = ANY($1) OR regexp_replace(cnpj,'\\D','','g') = ANY($2)`,
+      [ids, SEED_LEADS_CNPJS]
+    );
+    const db = ids.length
+      ? await client.query(`DELETE FROM buscas WHERE id = ANY($1)`, [ids])
+      : { rowCount: 0 };
+    await client.query('COMMIT');
+    res.json({ ok: true, buscas_removidas: db.rowCount, leads_removidos: dl.rowCount });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('[limpar-demo]', e.message);
+    res.status(500).json({ erro: 'erro interno' });
+  } finally { client.release(); }
 });
 
 // ── arquivos estáticos ────────────────────────────────────────────────────────
