@@ -794,6 +794,12 @@ app.get('/api/leads/:id', requireAuth, async (req, res) => {
       `SELECT l.*, b.nome AS busca_nome FROM leads l
        LEFT JOIN buscas b ON b.id=l.busca_id WHERE l.id=$1`, [id]);
     if (!l) return res.status(404).json({ erro: 'não encontrado' });
+    // Qual provedor gerou o quê (modelo de IA, Google/Econodata/scrape) é sigiloso
+    // — só o master vê. O cliente só precisa do conteúdo (briefing, contato validado).
+    if (!req.user.master) {
+      if (l.swot) l.swot = { ...l.swot, modelo: undefined };
+      if (l.contato_validado) l.contato_validado = { ...l.contato_validado, fonte: undefined, resumo_fonte: undefined };
+    }
     res.json(l);
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
@@ -825,7 +831,7 @@ app.post('/api/leads/acoes', requireAuth, requireEditor, async (req, res) => {
       const { rows: [ig] } = await pool.query(
         `SELECT 1 FROM integracoes WHERE categoria='crm' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> '' LIMIT 1`
       );
-      if (!ig) return res.status(400).json({ erro: 'Configure um CRM (GK ou Webhook) em Integrações e ative.' });
+      if (!ig) return res.status(400).json({ erro: 'Nenhum CRM conectado no momento. Fale com o administrador do sistema.' });
       await Promise.all(idsInt.map(id =>
         monitorQueues.crm.add('crm', { lead_id: id },
           { jobId: `crm-manual-${id}-${Date.now()}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 4, backoff: { type: 'exponential', delay: 15000 } })
@@ -851,6 +857,9 @@ app.get('/api/crm/status', requireAuth, async (req, res) => {
        ORDER BY ordem LIMIT 1`
     );
     if (!ig) return res.json({ ativo: false });
+    // Nome/detalhe técnico (qual provedor) é sigiloso — só o master vê. Pro
+    // cliente, só importa que HÁ um CRM conectado.
+    if (!req.user.master) return res.json({ ativo: true, nome: 'CRM conectado', detalhe: 'Os dados do lead serão enviados ao CRM configurado.' });
     const nomes = { gk: 'CRM GK SaaS', webhook: 'Webhook' };
     const detalhe = ig.provedor === 'gk'
       ? 'Cria/atualiza o contato e abre um ticket na fila configurada (status Aguardando).'

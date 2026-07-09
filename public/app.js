@@ -58,6 +58,71 @@ const SvgMulti = ({
   strokeLinecap: "round",
   strokeLinejoin: "round"
 }, children);
+
+// Ícone "i" que mostra a explicação ao passar o mouse OU clicar (útil em telas
+// de toque). Usado pra tirar texto explicativo longo de dentro dos formulários.
+function InfoTip({
+  text,
+  width = 260,
+  align = 'left'
+}) {
+  const [open, setOpen] = useState(false);
+  return /*#__PURE__*/React.createElement("span", {
+    style: {
+      position: 'relative',
+      display: 'inline-flex',
+      verticalAlign: 'middle',
+      marginLeft: 6
+    },
+    onMouseEnter: () => setOpen(true),
+    onMouseLeave: () => setOpen(false)
+  }, /*#__PURE__*/React.createElement("span", {
+    onClick: e => {
+      e.stopPropagation();
+      setOpen(o => !o);
+    },
+    style: {
+      width: 15,
+      height: 15,
+      borderRadius: '50%',
+      border: '1px solid var(--faint)',
+      color: 'var(--faint)',
+      fontSize: 9.5,
+      fontWeight: 700,
+      fontStyle: 'italic',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      cursor: 'pointer',
+      flexShrink: 0,
+      userSelect: 'none'
+    }
+  }, "i"), open && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    onClick: () => setOpen(false),
+    style: {
+      position: 'fixed',
+      inset: 0,
+      zIndex: 59
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'absolute',
+      zIndex: 60,
+      top: '130%',
+      [align]: 0,
+      width,
+      padding: '10px 12px',
+      borderRadius: 9,
+      background: 'var(--panel2)',
+      border: '1px solid var(--border)',
+      boxShadow: '0 10px 28px rgba(0,0,0,.4)',
+      fontSize: 11.5,
+      lineHeight: 1.55,
+      color: 'var(--dim)',
+      fontWeight: 400
+    }
+  }, text)));
+}
 function scoreColor(s) {
   return s >= 75 ? C.green : s >= 50 ? C.amber : C.red;
 }
@@ -2268,7 +2333,7 @@ function PerfilMedio({
       marginTop: 12,
       lineHeight: 1.5
     }
-  }, "Esse perfil alimenta a descoberta (busca semelhantes na CNPJ\xE1) e o Score 1 \u2014 quanto mais parecida com o n\xFAcleo desta lista, maior a nota do lead."));
+  }, "Esse perfil alimenta a descoberta (busca semelhantes na nossa base) e o Score 1 \u2014 quanto mais parecida com o n\xFAcleo desta lista, maior a nota do lead."));
 }
 
 // ── BuscaDetail ───────────────────────────────────────────────────────────────
@@ -2807,7 +2872,7 @@ function NovaBusca({
       });
       const d = await r.json();
       if (d.erro === 'ia_inativa') {
-        setIaErro('Ative a integração de IA (OpenAI) em Integrações para a busca inteligente.');
+        setIaErro('A busca inteligente não está disponível no momento. Tente palavras-chave mais simples.');
       } else if (!r.ok || d.erro) {
         setIaErro('Não consegui consultar a IA agora. Tente palavras-chave mais simples.');
       } else if (!d.sugestoes?.length) {
@@ -2964,17 +3029,20 @@ function NovaBusca({
     }
   }, /*#__PURE__*/React.createElement("label", {
     style: {
-      display: 'block',
+      display: 'flex',
+      alignItems: 'center',
       fontSize: 12,
       color: 'var(--dim)',
       marginBottom: 9
     }
-  }, "Como descobrir as empresas"), /*#__PURE__*/React.createElement("div", {
+  }, "Como descobrir as empresas", /*#__PURE__*/React.createElement(InfoTip, {
+    text: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("b", null, "Base cadastral:"), " filtra por atividade, UF e palavra-chave \u2014 econ\xF4mico e direto.", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("b", null, "Internet:"), " busca pelo que a empresa anuncia e depois confirma os dados oficiais \u2014 pega nichos que a classifica\xE7\xE3o padr\xE3o n\xE3o cobre. Tende a ser mais caro. Nesse modo, a palavra-chave abaixo \xE9 o termo pesquisado; munic\xEDpio/UF ajudam a mirar a regi\xE3o.")
+  })), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 8
     }
-  }, [['cnpja', 'Pela base CNPJá', 'Filtra por CNAE/UF/palavra na Receita. Econômico e direto.'], ['web', 'Pela internet', 'Acha pelo que a empresa anuncia no Google e depois confirma na CNPJá. Pega nichos que o CNAE não classifica — mais caro.']].map(([k, t, d]) => {
+  }, [['cnpja', 'Base cadastral'], ['web', 'Internet']].map(([k, t]) => {
     const on = modoDesc === k;
     return /*#__PURE__*/React.createElement("div", {
       key: k,
@@ -2984,7 +3052,7 @@ function NovaBusca({
         cursor: 'pointer',
         padding: '11px 13px',
         borderRadius: 10,
-        lineHeight: 1.4,
+        textAlign: 'center',
         border: on ? `1.5px solid ${C.gold}` : '1.5px solid var(--border)',
         background: on ? 'color-mix(in srgb, var(--accent) 9%, transparent)' : 'transparent'
       }
@@ -2994,37 +3062,23 @@ function NovaBusca({
         fontWeight: 600,
         color: on ? 'var(--text)' : 'var(--dim)'
       }
-    }, t), /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 11,
-        color: 'var(--faint)',
-        marginTop: 3
-      }
-    }, d));
-  })), modoDesc === 'web' && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: 'var(--faint)',
-      marginTop: 8,
-      lineHeight: 1.45
-    }
-  }, "No modo internet, a ", /*#__PURE__*/React.createElement("b", null, "palavra-chave"), " (abaixo) \xE9 o termo pesquisado no Google. Munic\xEDpio/UF ajudam a mirar a regi\xE3o.")), /*#__PURE__*/React.createElement("div", {
+    }, t));
+  }))), /*#__PURE__*/React.createElement("div", {
     style: {
       marginBottom: 18,
       position: 'relative'
     }
   }, /*#__PURE__*/React.createElement("label", {
     style: {
-      display: 'block',
+      display: 'flex',
+      alignItems: 'center',
       fontSize: 12,
       color: 'var(--dim)',
       marginBottom: 7
     }
-  }, "Atividade \u2014 descreva em palavras quem voc\xEA quer ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: 'var(--faint)'
-    }
-  }, "(vira CNAE; se n\xE3o achar, use a busca inteligente)")), /*#__PURE__*/React.createElement("input", {
+  }, "Atividade \u2014 descreva em palavras quem voc\xEA quer", /*#__PURE__*/React.createElement(InfoTip, {
+    text: "A descri\xE7\xE3o vira uma atividade automaticamente. Se a busca n\xE3o achar nada parecido, use o bot\xE3o de busca inteligente que aparece logo abaixo do campo."
+  })), /*#__PURE__*/React.createElement("input", {
     value: cnaeBusca,
     onChange: e => {
       setCnaeBusca(e.target.value);
@@ -3214,19 +3268,23 @@ function NovaBusca({
     }
   }, /*#__PURE__*/React.createElement("label", {
     style: {
-      display: 'block',
+      display: 'flex',
+      alignItems: 'center',
       fontSize: 12,
       color: 'var(--dim)',
       marginBottom: 7
     }
   }, "Palavra-chave no nome ", /*#__PURE__*/React.createElement("span", {
     style: {
-      color: 'var(--faint)'
+      color: 'var(--faint)',
+      marginLeft: 4
     }
-  }, "(opcional \u2014 busca no nome/raz\xE3o social da empresa)")), /*#__PURE__*/React.createElement("input", {
+  }, "(opcional)"), /*#__PURE__*/React.createElement(InfoTip, {
+    text: /*#__PURE__*/React.createElement(React.Fragment, null, "Busca no nome/raz\xE3o social da empresa \u2014 use quando o ramo n\xE3o tem uma atividade espec\xEDfica (ex.: purificadores).", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("b", null, "V\xEDrgula = OU"), " (purificador, filtro \u2192 tem um ou outro). ", /*#__PURE__*/React.createElement("b", null, "Espa\xE7o = E"), " (purificador \xE1gua \u2192 tem os dois no nome). Dica: uma palavra espec\xEDfica j\xE1 basta. Pode combinar com atividade/UF.")
+  })), /*#__PURE__*/React.createElement("input", {
     value: kwText,
     onChange: e => setKwText(e.target.value),
-    placeholder: "Ex: purificador, filtro, \xE1gua \u2014 separe por v\xEDrgula (traz empresas com essas palavras no nome)",
+    placeholder: "Ex: purificador, filtro, \xE1gua \u2014 separe por v\xEDrgula",
     style: {
       width: '100%',
       height: 40,
@@ -3255,14 +3313,7 @@ function NovaBusca({
       background: 'color-mix(in srgb, var(--accent) 13%, transparent)',
       color: C.gold
     }
-  }, k))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: 'var(--faint)',
-      marginTop: 6,
-      lineHeight: 1.45
-    }
-  }, "Use quando o ramo n\xE3o tem CNAE pr\xF3prio (ex.: purificadores). ", /*#__PURE__*/React.createElement("b", null, "V\xEDrgula = OU"), " (purificador, filtro \u2192 tem um OU outro); ", /*#__PURE__*/React.createElement("b", null, "espa\xE7o = E"), " (purificador \xE1gua \u2192 tem os dois no nome). Dica: pra nicho, uma palavra espec\xEDfica como \"purificador\" j\xE1 basta. Pode combinar com CNAE/UF.")), /*#__PURE__*/React.createElement("div", {
+  }, k)))), /*#__PURE__*/React.createElement("div", {
     style: {
       marginBottom: 18
     }
@@ -3546,7 +3597,7 @@ function NovaBusca({
         marginBottom: 12,
         lineHeight: 1.45
       }
-    }, tipo === 'lookalike' ? 'O sistema lê a firmografia dessas empresas (grátis), monta um perfil médio — CNAE, UF, porte, capital — e busca semelhantes na base ativa da CNPJá. Quanto mais clientes, mais preciso o perfil.' : 'Cada CNPJ vira um lead e passa por todo o pipeline (contato, SWOT, CRM). Não expande para semelhantes.'), /*#__PURE__*/React.createElement("textarea", {
+    }, tipo === 'lookalike' ? 'O sistema lê a firmografia dessas empresas (grátis), monta um perfil médio — CNAE, UF, porte, capital — e busca semelhantes na nossa base de empresas ativas. Quanto mais clientes, mais preciso o perfil.' : 'Cada CNPJ vira um lead e passa por todo o pipeline (contato, SWOT, CRM). Não expande para semelhantes.'), /*#__PURE__*/React.createElement("textarea", {
       value: listaCnpj,
       onChange: e => setListaCnpj(e.target.value),
       placeholder: "Cole os CNPJs (um por linha, ou separados por v\xEDrgula). Ex: 12.345.678/0001-90",
@@ -6269,12 +6320,7 @@ function LeadDetailPanel({
       textTransform: 'uppercase',
       flex: 1
     }
-  }, "Contato do decisor \xB7 validado"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 10,
-      color: 'var(--faint)'
-    }
-  }, l.contato_validado.fonte || 'econodata')), /*#__PURE__*/React.createElement("div", {
+  }, "Contato do decisor \xB7 validado")), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       flexDirection: 'column',
@@ -6461,12 +6507,7 @@ function LeadDetailPanel({
       textTransform: 'uppercase',
       flex: 1
     }
-  }, "Briefing SWOT \xB7 IA"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 10,
-      color: 'var(--faint)'
-    }
-  }, l.swot.modelo || 'gpt-4o-mini')), l.swot.resumo && /*#__PURE__*/React.createElement("p", {
+  }, "Briefing SWOT \xB7 IA")), l.swot.resumo && /*#__PURE__*/React.createElement("p", {
     style: {
       fontSize: 13,
       lineHeight: 1.6,
@@ -6827,7 +6868,7 @@ function CrmModal({
       color: semCrm ? C.red : 'var(--dim)',
       lineHeight: 1.45
     }
-  }, semCrm ? 'Nenhum CRM configurado. Vá em Integrações e ative o CRM GK SaaS ou um Webhook.' : crm?.detalhe || 'Os dados do lead serão enviados ao CRM configurado.'))), /*#__PURE__*/React.createElement("div", {
+  }, semCrm ? 'Nenhum CRM conectado no momento. Fale com o administrador do sistema.' : crm?.detalhe || 'Os dados do lead serão enviados ao CRM configurado.'))), /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '16px 24px',
       borderTop: '1px solid var(--border)',

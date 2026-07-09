@@ -24,6 +24,31 @@ const SvgMulti = ({ children, w=16, h=16, color='currentColor', sw=1.7 }) => (
   </svg>
 );
 
+// Ícone "i" que mostra a explicação ao passar o mouse OU clicar (útil em telas
+// de toque). Usado pra tirar texto explicativo longo de dentro dos formulários.
+function InfoTip({ text, width = 260, align = 'left' }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span style={{ position:'relative', display:'inline-flex', verticalAlign:'middle', marginLeft:6 }}
+      onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
+      <span onClick={(e) => { e.stopPropagation(); setOpen(o => !o); }}
+        style={{ width:15, height:15, borderRadius:'50%', border:'1px solid var(--faint)', color:'var(--faint)',
+          fontSize:9.5, fontWeight:700, fontStyle:'italic', display:'flex', alignItems:'center', justifyContent:'center',
+          cursor:'pointer', flexShrink:0, userSelect:'none' }}>i</span>
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position:'fixed', inset:0, zIndex:59 }}/>
+          <div style={{ position:'absolute', zIndex:60, top:'130%', [align]:0, width,
+            padding:'10px 12px', borderRadius:9, background:'var(--panel2)', border:'1px solid var(--border)',
+            boxShadow:'0 10px 28px rgba(0,0,0,.4)', fontSize:11.5, lineHeight:1.55, color:'var(--dim)', fontWeight:400 }}>
+            {text}
+          </div>
+        </>
+      )}
+    </span>
+  );
+}
+
 function scoreColor(s) { return s >= 75 ? C.green : s >= 50 ? C.amber : C.red; }
 
 function badgeStyle(cor) {
@@ -884,7 +909,7 @@ function PerfilMedio({ perfil }) {
         )}
       </div>
       <div style={{ fontSize:11, color:'var(--faint)', marginTop:12, lineHeight:1.5 }}>
-        Esse perfil alimenta a descoberta (busca semelhantes na CNPJá) e o Score 1 — quanto mais parecida com o núcleo desta lista, maior a nota do lead.
+        Esse perfil alimenta a descoberta (busca semelhantes na nossa base) e o Score 1 — quanto mais parecida com o núcleo desta lista, maior a nota do lead.
       </div>
     </div>
   );
@@ -1178,7 +1203,7 @@ function NovaBusca({ onSalvar }) {
         body: JSON.stringify({ texto })
       });
       const d = await r.json();
-      if (d.erro === 'ia_inativa') { setIaErro('Ative a integração de IA (OpenAI) em Integrações para a busca inteligente.'); }
+      if (d.erro === 'ia_inativa') { setIaErro('A busca inteligente não está disponível no momento. Tente palavras-chave mais simples.'); }
       else if (!r.ok || d.erro) { setIaErro('Não consegui consultar a IA agora. Tente palavras-chave mais simples.'); }
       else if (!d.sugestoes?.length) { setIaErro('A IA não encontrou CNAE para essa descrição. Tente reformular.'); }
       else setIaSug(d.sugestoes);
@@ -1278,31 +1303,33 @@ function NovaBusca({ onSalvar }) {
       {tipo === 'icp' ? (
         <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:20, marginBottom:18 }}>
           <div style={{ marginBottom:18 }}>
-            <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:9 }}>Como descobrir as empresas</label>
+            <label style={{ display:'flex', alignItems:'center', fontSize:12, color:'var(--dim)', marginBottom:9 }}>
+              Como descobrir as empresas
+              <InfoTip text={<>
+                <b>Base cadastral:</b> filtra por atividade, UF e palavra-chave — econômico e direto.<br/><br/>
+                <b>Internet:</b> busca pelo que a empresa anuncia e depois confirma os dados oficiais — pega nichos que a
+                classificação padrão não cobre. Tende a ser mais caro. Nesse modo, a palavra-chave abaixo é o termo pesquisado;
+                município/UF ajudam a mirar a região.
+              </>}/>
+            </label>
             <div style={{ display:'flex', gap:8 }}>
-              {[['cnpja','Pela base CNPJá','Filtra por CNAE/UF/palavra na Receita. Econômico e direto.'],
-                ['web','Pela internet','Acha pelo que a empresa anuncia no Google e depois confirma na CNPJá. Pega nichos que o CNAE não classifica — mais caro.']].map(([k,t,d]) => {
+              {[['cnpja','Base cadastral'], ['web','Internet']].map(([k, t]) => {
                 const on = modoDesc === k;
                 return (
                   <div key={k} onClick={() => setModoDesc(k)}
-                    style={{ flex:1, cursor:'pointer', padding:'11px 13px', borderRadius:10, lineHeight:1.4,
+                    style={{ flex:1, cursor:'pointer', padding:'11px 13px', borderRadius:10, textAlign:'center',
                       border: on ? `1.5px solid ${C.gold}` : '1.5px solid var(--border)',
                       background: on ? 'color-mix(in srgb, var(--accent) 9%, transparent)' : 'transparent' }}>
                     <div style={{ fontSize:12.5, fontWeight:600, color: on ? 'var(--text)' : 'var(--dim)' }}>{t}</div>
-                    <div style={{ fontSize:11, color:'var(--faint)', marginTop:3 }}>{d}</div>
                   </div>
                 );
               })}
             </div>
-            {modoDesc === 'web' && (
-              <div style={{ fontSize:11, color:'var(--faint)', marginTop:8, lineHeight:1.45 }}>
-                No modo internet, a <b>palavra-chave</b> (abaixo) é o termo pesquisado no Google. Município/UF ajudam a mirar a região.
-              </div>
-            )}
           </div>
           <div style={{ marginBottom:18, position:'relative' }}>
-            <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>
-              Atividade — descreva em palavras quem você quer <span style={{ color:'var(--faint)' }}>(vira CNAE; se não achar, use a busca inteligente)</span>
+            <label style={{ display:'flex', alignItems:'center', fontSize:12, color:'var(--dim)', marginBottom:7 }}>
+              Atividade — descreva em palavras quem você quer
+              <InfoTip text="A descrição vira uma atividade automaticamente. Se a busca não achar nada parecido, use o botão de busca inteligente que aparece logo abaixo do campo."/>
             </label>
             <input value={cnaeBusca}
               onChange={e => { setCnaeBusca(e.target.value); setIaSug(null); setIaErro(null); }}
@@ -1377,11 +1404,16 @@ function NovaBusca({ onSalvar }) {
             )}
           </div>
           <div style={{ marginBottom:18 }}>
-            <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>
-              Palavra-chave no nome <span style={{ color:'var(--faint)' }}>(opcional — busca no nome/razão social da empresa)</span>
+            <label style={{ display:'flex', alignItems:'center', fontSize:12, color:'var(--dim)', marginBottom:7 }}>
+              Palavra-chave no nome <span style={{ color:'var(--faint)', marginLeft:4 }}>(opcional)</span>
+              <InfoTip text={<>
+                Busca no nome/razão social da empresa — use quando o ramo não tem uma atividade específica (ex.: purificadores).<br/><br/>
+                <b>Vírgula = OU</b> (purificador, filtro → tem um ou outro). <b>Espaço = E</b> (purificador água → tem os dois
+                no nome). Dica: uma palavra específica já basta. Pode combinar com atividade/UF.
+              </>}/>
             </label>
             <input value={kwText} onChange={e => setKwText(e.target.value)}
-              placeholder="Ex: purificador, filtro, água — separe por vírgula (traz empresas com essas palavras no nome)"
+              placeholder="Ex: purificador, filtro, água — separe por vírgula"
               style={{ width:'100%', height:40, borderRadius:9, border:'1px solid var(--border)',
                 background:'var(--panel2)', color:'var(--text)', padding:'0 12px', fontSize:13, fontFamily:'inherit' }}/>
             {keywords.length > 0 && (
@@ -1392,11 +1424,6 @@ function NovaBusca({ onSalvar }) {
                 ))}
               </div>
             )}
-            <div style={{ fontSize:11, color:'var(--faint)', marginTop:6, lineHeight:1.45 }}>
-              Use quando o ramo não tem CNAE próprio (ex.: purificadores). <b>Vírgula = OU</b> (purificador, filtro → tem
-              um OU outro); <b>espaço = E</b> (purificador água → tem os dois no nome). Dica: pra nicho, uma palavra
-              específica como "purificador" já basta. Pode combinar com CNAE/UF.
-            </div>
           </div>
           <div style={{ marginBottom:18 }}>
             <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>UFs</label>
@@ -1508,7 +1535,7 @@ function NovaBusca({ onSalvar }) {
           </div>
           <div style={{ fontSize:12, color:'var(--faint)', marginBottom:12, lineHeight:1.45 }}>
             {tipo === 'lookalike'
-              ? 'O sistema lê a firmografia dessas empresas (grátis), monta um perfil médio — CNAE, UF, porte, capital — e busca semelhantes na base ativa da CNPJá. Quanto mais clientes, mais preciso o perfil.'
+              ? 'O sistema lê a firmografia dessas empresas (grátis), monta um perfil médio — CNAE, UF, porte, capital — e busca semelhantes na nossa base de empresas ativas. Quanto mais clientes, mais preciso o perfil.'
               : 'Cada CNPJ vira um lead e passa por todo o pipeline (contato, SWOT, CRM). Não expande para semelhantes.'}
           </div>
           <textarea value={listaCnpj} onChange={e => setListaCnpj(e.target.value)}
@@ -2688,7 +2715,6 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                 <span style={{ fontSize:11, fontWeight:600, letterSpacing:'.08em', color:C.green, textTransform:'uppercase', flex:1 }}>
                   Contato do decisor · validado
                 </span>
-                <span style={{ fontSize:10, color:'var(--faint)' }}>{l.contato_validado.fonte || 'econodata'}</span>
               </div>
               <div style={{ display:'flex', flexDirection:'column', gap:9 }}>
                 {l.contato_validado.telefone && (
@@ -2756,7 +2782,6 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                 <span style={{ fontSize:11, fontWeight:600, letterSpacing:'.08em', color:C.blue, textTransform:'uppercase', flex:1 }}>
                   Briefing SWOT · IA
                 </span>
-                <span style={{ fontSize:10, color:'var(--faint)' }}>{l.swot.modelo || 'gpt-4o-mini'}</span>
               </div>
               {l.swot.resumo && (
                 <p style={{ fontSize:13, lineHeight:1.6, margin:'0 0 14px', color:'var(--text)' }}>{l.swot.resumo}</p>
@@ -2897,7 +2922,7 @@ function CrmModal({ ids, onClose, onConfirm }) {
             </SvgMulti>
             <span style={{ fontSize:12.5, color: semCrm ? C.red : 'var(--dim)', lineHeight:1.45 }}>
               {semCrm
-                ? 'Nenhum CRM configurado. Vá em Integrações e ative o CRM GK SaaS ou um Webhook.'
+                ? 'Nenhum CRM conectado no momento. Fale com o administrador do sistema.'
                 : (crm?.detalhe || 'Os dados do lead serão enviados ao CRM configurado.')}
             </span>
           </div>
