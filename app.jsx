@@ -1873,7 +1873,10 @@ function Usuarios() {
                 <span style={{ fontSize:13.5, fontWeight:500 }}>{u.nome}</span>
               </div>
               <div style={{ fontSize:12.5, color:'var(--dim)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{u.email}</div>
-              <div><span style={badgeStyle(papelColors[u.papel]||C.gray)}>{u.papel}</span></div>
+              <div style={{ display:'flex', gap:6, alignItems:'center' }}>
+                <span style={badgeStyle(papelColors[u.papel]||C.gray)}>{u.papel}</span>
+                {u.master && <span style={badgeStyle(C.gold)} title="Login MASTER da Hunter — vê Integrações/Config/Monitoramento">Master</span>}
+              </div>
               <div style={{ fontSize:12.5, color:'var(--faint)' }}>{fmtAcesso(u.ultimo_acesso)}</div>
               <div>
                 <span onClick={() => alternar(u)} title="Clique para ativar/desativar"

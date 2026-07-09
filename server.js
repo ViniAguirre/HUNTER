@@ -387,11 +387,16 @@ async function init() {
   }
 
   // Login MASTER (da Hunter): vê Integrações/Configurações/Monitoramento e os
-  // provedores de API. Definido por MASTER_EMAIL; se ninguém for master ainda,
-  // promove o admin mais antigo (não trava o acesso de quem já usa).
-  if (process.env.MASTER_EMAIL) {
-    await pool.query(`UPDATE usuarios SET master=true WHERE lower(email)=lower($1)`, [process.env.MASTER_EMAIL.trim()]);
+  // provedores de API. MASTER_EMAIL é a FONTE DA VERDADE — pode ser uma lista
+  // separada por vírgula. Esses e-mails viram master; todos os outros são
+  // rebaixados (garante que só a Hunter tenha esse acesso).
+  const masterEmails = (process.env.MASTER_EMAIL || '')
+    .split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+  if (masterEmails.length) {
+    await pool.query(`UPDATE usuarios SET master = (lower(email) = ANY($1))`, [masterEmails]);
   }
+  // Rede de segurança: se ninguém for master (ex.: o e-mail master ainda não foi
+  // cadastrado como usuário), promove o admin mais antigo pra não travar o acesso.
   await pool.query(
     `UPDATE usuarios SET master=true
      WHERE id = (SELECT id FROM usuarios WHERE papel='Admin' ORDER BY id LIMIT 1)
@@ -486,7 +491,7 @@ app.get('/api/auth/me', requireAuth, (req, res) =>
 
 app.get('/api/usuarios', requireAuth, requireAdmin, async (req, res) => {
   const { rows } = await pool.query(
-    'SELECT id, nome, email, papel, ativo, ultimo_acesso, criado_em FROM usuarios ORDER BY criado_em'
+    'SELECT id, nome, email, papel, master, ativo, ultimo_acesso, criado_em FROM usuarios ORDER BY criado_em'
   );
   res.json(rows);
 });

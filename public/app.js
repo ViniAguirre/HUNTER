@@ -4301,9 +4301,18 @@ function Usuarios() {
         overflow: 'hidden',
         textOverflow: 'ellipsis'
       }
-    }, u.email), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
+    }, u.email), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: 6,
+        alignItems: 'center'
+      }
+    }, /*#__PURE__*/React.createElement("span", {
       style: badgeStyle(papelColors[u.papel] || C.gray)
-    }, u.papel)), /*#__PURE__*/React.createElement("div", {
+    }, u.papel), u.master && /*#__PURE__*/React.createElement("span", {
+      style: badgeStyle(C.gold),
+      title: "Login MASTER da Hunter \u2014 v\xEA Integra\xE7\xF5es/Config/Monitoramento"
+    }, "Master")), /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 12.5,
         color: 'var(--faint)'
