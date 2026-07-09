@@ -351,6 +351,7 @@ async function init() {
     ALTER TABLE leads  ADD COLUMN IF NOT EXISTS crm_ref TEXT;
     CREATE INDEX IF NOT EXISTS idx_leads_crm_ref ON leads(crm_ref);
     ALTER TABLE config ADD COLUMN IF NOT EXISTS limite_diario INTEGER NOT NULL DEFAULT 350;
+    ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS master BOOLEAN NOT NULL DEFAULT false;
     CREATE TABLE IF NOT EXISTS sementes (
       id         SERIAL PRIMARY KEY,
       cnpj       TEXT NOT NULL,
@@ -385,6 +386,18 @@ async function init() {
     }
   }
 
+  // Login MASTER (da Hunter): vê Integrações/Configurações/Monitoramento e os
+  // provedores de API. Definido por MASTER_EMAIL; se ninguém for master ainda,
+  // promove o admin mais antigo (não trava o acesso de quem já usa).
+  if (process.env.MASTER_EMAIL) {
+    await pool.query(`UPDATE usuarios SET master=true WHERE lower(email)=lower($1)`, [process.env.MASTER_EMAIL.trim()]);
+  }
+  await pool.query(
+    `UPDATE usuarios SET master=true
+     WHERE id = (SELECT id FROM usuarios WHERE papel='Admin' ORDER BY id LIMIT 1)
+       AND NOT EXISTS (SELECT 1 FROM usuarios WHERE master=true)`
+  );
+
   console.log('[init] banco pronto.');
 }
 
@@ -392,7 +405,7 @@ async function init() {
 
 function setSession(res, user) {
   const token = jwt.sign(
-    { id: user.id, nome: user.nome, email: user.email, papel: user.papel },
+    { id: user.id, nome: user.nome, email: user.email, papel: user.papel, master: !!user.master },
     JWT_SECRET,
     { expiresIn: `${SESSION_HOURS}h` }
   );
@@ -417,8 +430,15 @@ function requireEditor(req, res, next) {
   next();
 }
 function requireAdmin(req, res, next) {
-  if (!req.user || req.user.papel !== 'Admin')
+  if (!req.user || (req.user.papel !== 'Admin' && !req.user.master))
     return res.status(403).json({ erro: 'apenas administradores' });
+  next();
+}
+// MASTER: login da Hunter. Só ele acessa integrações/config/monitoramento e
+// dados sigilosos (quais APIs alimentam o produto).
+function requireMaster(req, res, next) {
+  if (!req.user || !req.user.master)
+    return res.status(403).json({ erro: 'acesso restrito' });
   next();
 }
 
@@ -449,7 +469,7 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
     if (!await bcrypt.compare(senha, user.senha_hash)) return res.status(401).json({ erro: 'credenciais inválidas' });
     await pool.query('UPDATE usuarios SET ultimo_acesso=now() WHERE id=$1', [user.id]);
     setSession(res, user);
-    res.json({ nome: user.nome, email: user.email, papel: user.papel });
+    res.json({ nome: user.nome, email: user.email, papel: user.papel, master: !!user.master });
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
@@ -459,7 +479,7 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 app.get('/api/auth/me', requireAuth, (req, res) =>
-  res.json({ id: req.user.id, nome: req.user.nome, email: req.user.email, papel: req.user.papel })
+  res.json({ id: req.user.id, nome: req.user.nome, email: req.user.email, papel: req.user.papel, master: !!req.user.master })
 );
 
 // ── API: usuários ─────────────────────────────────────────────────────────────
@@ -493,6 +513,11 @@ app.post('/api/usuarios', requireAuth, requireAdmin, async (req, res) => {
 
 app.patch('/api/usuarios/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = parseInt(req.params.id, 10);
+  // Só um master mexe em outro master (protege a conta da Hunter).
+  if (!req.user.master) {
+    const { rows:[alvo] } = await pool.query('SELECT master FROM usuarios WHERE id=$1', [id]);
+    if (alvo?.master) return res.status(403).json({ erro: 'acesso restrito' });
+  }
   const sets = [], vals = [];
   if (typeof req.body.ativo === 'boolean') { sets.push(`ativo=$${sets.length+1}`); vals.push(req.body.ativo); }
   if (['Admin','Operador','Visualizador'].includes(req.body.papel)) { sets.push(`papel=$${sets.length+1}`); vals.push(req.body.papel); }
@@ -509,6 +534,10 @@ app.patch('/api/usuarios/:id', requireAuth, requireAdmin, async (req, res) => {
 app.delete('/api/usuarios/:id', requireAuth, requireAdmin, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (req.user.id === id) return res.status(400).json({ erro: 'não é possível excluir a si mesmo' });
+  if (!req.user.master) {
+    const { rows:[alvo] } = await pool.query('SELECT master FROM usuarios WHERE id=$1', [id]);
+    if (alvo?.master) return res.status(403).json({ erro: 'acesso restrito' });
+  }
   await pool.query('DELETE FROM usuarios WHERE id=$1', [id]);
   res.json({ ok: true });
 });
@@ -793,7 +822,7 @@ app.get('/api/crm/status', requireAuth, async (req, res) => {
 
 // ── API: monitoramento do motor (Fase 3) ───────────────────────────────────────
 
-app.get('/api/monitor/queues', requireAuth, async (req, res) => {
+app.get('/api/monitor/queues', requireAuth, requireMaster, async (req, res) => {
   try {
     const [leadsHoje, empresasTotal, buscasAtivas, descartados] = await Promise.all([
       pool.query(`SELECT COUNT(*)::int AS n FROM leads WHERE criado_em >= now() - interval '1 day'`),
@@ -847,7 +876,7 @@ app.get('/api/monitor/queues', requireAuth, async (req, res) => {
 });
 
 // Limpa as falhas retidas nas filas (a DLQ é histórico; some ao limpar).
-app.post('/api/monitor/dlq/limpar', requireAuth, requireEditor, async (req, res) => {
+app.post('/api/monitor/dlq/limpar', requireAuth, requireMaster, async (req, res) => {
   if (!monitorQueues) return res.json({ ok: true, removidos: 0 });
   try {
     let removidos = 0;
@@ -863,12 +892,15 @@ app.post('/api/monitor/dlq/limpar', requireAuth, requireEditor, async (req, res)
 app.get('/api/alertas', requireAuth, async (req, res) => {
   try {
     const alertas = [];
+    // Alertas de MOTOR/PROVEDOR (citam CNPJá, chaves de API, filas) são sigilosos
+    // — só o MASTER da Hunter os recebe. O cliente nunca vê essa informação.
+    const master = !!req.user.master;
 
-    if (process.env.REDIS_HOST && !monitorQueues) {
+    if (master && process.env.REDIS_HOST && !monitorQueues) {
       alertas.push({ tipo: 'erro', titulo: 'Motor desconectado do painel', detalhe: 'Redis/BullMQ indisponível', quando: null });
     }
 
-    if (monitorQueues) {
+    if (master && monitorQueues) {
       for (const [key, label] of [['descoberta','Descoberta'],['enriquecimento','Enriquecimento'],['filtroContador','Filtro Contador'],['score1','Score 1']]) {
         const jobs = await monitorQueues[key].getFailed(0, 4);
         for (const j of jobs) {
@@ -909,7 +941,7 @@ function maskKey(k) {
   return s.length <= 4 ? '••••' : '•'.repeat(Math.max(0, s.length - 4)) + s.slice(-4);
 }
 
-app.get('/api/integracoes', requireAuth, requireAdmin, async (req, res) => {
+app.get('/api/integracoes', requireAuth, requireMaster, async (req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT id, categoria, provedor, config, ativo, ordem, criado_em,
@@ -921,7 +953,7 @@ app.get('/api/integracoes', requireAuth, requireAdmin, async (req, res) => {
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
-app.post('/api/integracoes', requireAuth, requireAdmin, async (req, res) => {
+app.post('/api/integracoes', requireAuth, requireMaster, async (req, res) => {
   const categoria = String(req.body.categoria || '').trim();
   const provedor = String(req.body.provedor || '').trim();
   const key = req.body.key != null ? String(req.body.key).trim() : null;
@@ -947,7 +979,7 @@ app.post('/api/integracoes', requireAuth, requireAdmin, async (req, res) => {
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
-app.patch('/api/integracoes/:id', requireAuth, requireAdmin, async (req, res) => {
+app.patch('/api/integracoes/:id', requireAuth, requireMaster, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
   const sets = [], vals = [];
@@ -968,7 +1000,7 @@ app.patch('/api/integracoes/:id', requireAuth, requireAdmin, async (req, res) =>
 
 // GK CRM: testa a conexão (backend + token) e lista empresas + filas pra a UI.
 const gk = require('./providers/gk');
-app.post('/api/integracoes/gk/conectar', requireAuth, requireAdmin, async (req, res) => {
+app.post('/api/integracoes/gk/conectar', requireAuth, requireMaster, async (req, res) => {
   const backend = String(req.body.backend || '').trim();
   const token = String(req.body.token || '').trim();
   if (!backend || !token) return res.status(400).json({ erro: 'informe Backend e Token' });
@@ -984,14 +1016,14 @@ app.post('/api/integracoes/gk/conectar', requireAuth, requireAdmin, async (req, 
 });
 
 // ── API: configuração global ────────────────────────────────────────────────────
-app.get('/api/config', requireAuth, async (req, res) => {
+app.get('/api/config', requireAuth, requireMaster, async (req, res) => {
   try {
     const { rows: [c] } = await pool.query(`SELECT * FROM config WHERE id=1`);
     res.json(c || {});
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
-app.patch('/api/config', requireAuth, requireAdmin, async (req, res) => {
+app.patch('/api/config', requireAuth, requireMaster, async (req, res) => {
   const b = req.body || {};
   const sets = [], vals = [];
   const num = (v, min, max) => { const n = parseInt(v, 10); return isNaN(n) ? null : Math.max(min, Math.min(max, n)); };
@@ -1147,7 +1179,7 @@ async function garantirBuscaLookalikeAuto(total) {
 }
 
 // Gera/rotaciona o segredo do webhook de entrada (só admin).
-app.post('/api/webhooks/rotacionar-secret', requireAuth, requireAdmin, async (req, res) => {
+app.post('/api/webhooks/rotacionar-secret', requireAuth, requireMaster, async (req, res) => {
   try {
     const secret = crypto.randomBytes(24).toString('hex');
     await pool.query(`UPDATE config SET webhook_entrada_secret=$1 WHERE id=1`, [secret]);
@@ -1156,7 +1188,7 @@ app.post('/api/webhooks/rotacionar-secret', requireAuth, requireAdmin, async (re
 });
 
 // Situação da lista de semelhantes alimentada pelo CRM (pra tela de Config).
-app.get('/api/sementes/status', requireAuth, async (req, res) => {
+app.get('/api/sementes/status', requireAuth, requireMaster, async (req, res) => {
   try {
     const { rows:[{ n }] } = await pool.query(`SELECT COUNT(*)::int n FROM sementes WHERE lista='conversoes_crm'`);
     const { rows:[b] } = await pool.query(
@@ -1230,7 +1262,7 @@ async function idsBuscasSeed() {
 }
 
 // Preview: quantos itens de demonstração existem (sem apagar).
-app.get('/api/admin/demo', requireAuth, requireAdmin, async (req, res) => {
+app.get('/api/admin/demo', requireAuth, requireMaster, async (req, res) => {
   try {
     const ids = await idsBuscasSeed();
     const { rows:[l] } = await pool.query(
@@ -1244,7 +1276,7 @@ app.get('/api/admin/demo', requireAuth, requireAdmin, async (req, res) => {
 
 // Apaga as buscas de demonstração + os leads que elas geraram + os 10 leads fake.
 // As empresas ficam (cache grátis da Receita; não aparecem no painel).
-app.post('/api/admin/limpar-demo', requireAuth, requireAdmin, async (req, res) => {
+app.post('/api/admin/limpar-demo', requireAuth, requireMaster, async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -1270,7 +1302,7 @@ app.post('/api/admin/limpar-demo', requireAuth, requireAdmin, async (req, res) =
 });
 
 // Contagem da base operacional inteira (pra tela de manutenção).
-app.get('/api/admin/base', requireAuth, requireAdmin, async (req, res) => {
+app.get('/api/admin/base', requireAuth, requireMaster, async (req, res) => {
   try {
     const { rows:[c] } = await pool.query(
       `SELECT (SELECT COUNT(*)::int FROM buscas) buscas,
@@ -1284,7 +1316,7 @@ app.get('/api/admin/base', requireAuth, requireAdmin, async (req, res) => {
 
 // Zera TODA a base operacional (buscas, leads, empresas, sementes). Mantém
 // usuários, configurações e integrações (chaves). Ação irreversível.
-app.post('/api/admin/limpar-tudo', requireAuth, requireAdmin, async (req, res) => {
+app.post('/api/admin/limpar-tudo', requireAuth, requireMaster, async (req, res) => {
   try {
     await pool.query(`TRUNCATE leads, sementes, buscas, empresas RESTART IDENTITY CASCADE`);
     res.json({ ok: true });

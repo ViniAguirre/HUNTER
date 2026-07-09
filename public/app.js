@@ -421,23 +421,36 @@ const NAV_MAIN = [{
   label: 'Leads',
   icon: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM12 3v3M12 18v3M3 12h3M18 12h3'
 }];
+// acesso: 'master' → só o login MASTER da Hunter (dados sigilosos: quais APIs
+// alimentam o produto). 'admin' → admin do cliente (gestão do próprio time).
 const NAV_ADMIN = [{
   key: 'integracoes',
   label: 'Integrações',
+  acesso: 'master',
   icon: 'M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 0 1 0 10h-2M8 12h8'
 }, {
   key: 'usuarios',
   label: 'Usuários',
+  acesso: 'admin',
   icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8'
 }, {
   key: 'config',
   label: 'Configurações',
+  acesso: 'master',
   icon: 'M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6'
 }, {
   key: 'monitor',
   label: 'Monitoramento',
+  acesso: 'master',
   icon: 'M22 12h-4l-3 9L9 3l-3 9H2'
 }];
+// Telas que exigem MASTER (usado também na guarda de navegação do App).
+const TELAS_MASTER = new Set(['integracoes', 'config', 'monitor']);
+function podeVer(it, user) {
+  if (it.acesso === 'master') return !!user?.master;
+  if (it.acesso === 'admin') return !!user?.master || user?.papel === 'Admin';
+  return true;
+}
 function Sidebar({
   screen,
   onNav,
@@ -445,8 +458,9 @@ function Sidebar({
   user
 }) {
   const nome = user?.nome || '…';
-  const papel = user?.papel || '';
+  const papel = user?.master ? 'Master' : user?.papel || '';
   const ini = nome.split(' ').slice(0, 2).map(w => w[0]).join('');
+  const adminItems = NAV_ADMIN.filter(it => podeVer(it, user));
   const navStyle = key => {
     const active = screen === key || key === 'buscas' && screen === 'buscaDetail';
     return {
@@ -459,9 +473,9 @@ function Sidebar({
       fontWeight: 500,
       cursor: 'pointer',
       textDecoration: 'none',
-      color: active ? '#FBE49A' : 'var(--dim)',
+      color: active ? 'var(--accent)' : 'var(--dim)',
       background: active ? 'var(--panel2)' : 'transparent',
-      boxShadow: active ? 'inset 2px 0 0 #FBE49A' : 'none',
+      boxShadow: active ? 'inset 2px 0 0 var(--accent)' : 'none',
       transition: 'background .12s'
     };
   };
@@ -475,7 +489,7 @@ function Sidebar({
     height: 18,
     viewBox: "0 0 24 24",
     fill: "none",
-    stroke: screen === it.key || it.key === 'buscas' && screen === 'buscaDetail' ? '#FBE49A' : '#8A95B4',
+    stroke: screen === it.key || it.key === 'buscas' && screen === 'buscaDetail' ? 'var(--accent)' : '#8A95B4',
     strokeWidth: 1.7,
     strokeLinecap: "round",
     strokeLinejoin: "round",
@@ -526,7 +540,7 @@ function Sidebar({
       flex: 1,
       overflowY: 'auto'
     }
-  }, renderNav(NAV_MAIN), /*#__PURE__*/React.createElement("div", {
+  }, renderNav(NAV_MAIN), adminItems.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 10,
       fontWeight: 600,
@@ -534,7 +548,7 @@ function Sidebar({
       color: 'var(--faint)',
       padding: '18px 12px 8px'
     }
-  }, "ADMINISTRA\xC7\xC3O"), renderNav(NAV_ADMIN)), /*#__PURE__*/React.createElement("div", {
+  }, "ADMINISTRA\xC7\xC3O"), renderNav(adminItems)), /*#__PURE__*/React.createElement("div", {
     onClick: onLogout,
     style: {
       padding: '14px 16px',
@@ -6391,6 +6405,13 @@ function App() {
     ...cssVarObj
   };
   const renderScreen = () => {
+    // Guarda: telas sigilosas (Integrações/Config/Monitoramento) só para o MASTER.
+    if (TELAS_MASTER.has(screen) && !user?.master) return /*#__PURE__*/React.createElement(Dashboard, {
+      onOpenBusca: openBusca
+    });
+    if (screen === 'usuarios' && !(user?.master || user?.papel === 'Admin')) return /*#__PURE__*/React.createElement(Dashboard, {
+      onOpenBusca: openBusca
+    });
     switch (screen) {
       case 'dashboard':
         return /*#__PURE__*/React.createElement(Dashboard, {
