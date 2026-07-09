@@ -6309,7 +6309,34 @@ function LeadDetailPanel({
       margin: '0 0 14px',
       color: 'var(--text)'
     }
-  }, l.swot.resumo), /*#__PURE__*/React.createElement("div", {
+  }, l.swot.resumo), Array.isArray(l.swot.dores_provaveis) && l.swot.dores_provaveis.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'color-mix(in srgb, ' + C.amber + ' 9%, transparent)',
+      border: '1px solid color-mix(in srgb, ' + C.amber + ' 28%, transparent)',
+      borderRadius: 11,
+      padding: '12px 14px',
+      marginBottom: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10.5,
+      fontWeight: 600,
+      color: C.amber,
+      marginBottom: 6,
+      textTransform: 'uppercase',
+      letterSpacing: '.06em'
+    }
+  }, "Dores prov\xE1veis"), /*#__PURE__*/React.createElement("ul", {
+    style: {
+      margin: 0,
+      padding: '0 0 0 16px',
+      fontSize: 12.5,
+      lineHeight: 1.6,
+      color: 'var(--text)'
+    }
+  }, l.swot.dores_provaveis.map((d, i) => /*#__PURE__*/React.createElement("li", {
+    key: i
+  }, d)))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
       gridTemplateColumns: '1fr 1fr',
@@ -6376,7 +6403,7 @@ function LeadDetailPanel({
       marginTop: 12
     }
   }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => navigator.clipboard?.writeText(`${l.swot.resumo}\n\nGancho: ${l.swot.gancho}`).catch(() => {}),
+    onClick: () => navigator.clipboard?.writeText([l.swot.resumo, l.swot.dores_provaveis?.length ? 'Dores prováveis:\n- ' + l.swot.dores_provaveis.join('\n- ') : '', l.swot.gancho ? 'Gancho: ' + l.swot.gancho : ''].filter(Boolean).join('\n\n')).catch(() => {}),
     style: {
       display: 'flex',
       alignItems: 'center',

@@ -13,9 +13,14 @@ const axios = require('axios');
 const API_URL = 'https://api.openai.com/v1/chat/completions';
 const MODELO_PADRAO = 'gpt-4o-mini';
 
-const SYSTEM = `Você é um analista de inteligência comercial B2B brasileiro. Recebe os dados
-cadastrais de uma empresa (firmografia da Receita Federal) e produz um briefing curto e
-acionável para um closer (vendedor) abordar essa empresa. Seja concreto, evite generalidades.
+const SYSTEM = `Você é um analista de inteligência comercial B2B brasileiro. A partir dos dados de
+uma empresa-alvo (firmografia da Receita + o que o site dela diz sobre si) e do que NÓS vendemos,
+produz um briefing curto e acionável para o closer abordar essa empresa. Regras:
+(1) O SWOT é sob a ÓTICA DA NOSSA VENDA: "oportunidades" e "ameaças" tratam de onde a nossa solução
+    encaixa (ou o que atrapalha o fechamento), não macroeconomia genérica.
+(2) NÃO invente fatos que os dados não sustentam. Se a base for rala, trabalhe com o provável e não
+    afirme como certo. Prefira "provavelmente/tende a" a inventar números ou clientes.
+(3) Seja concreto e ESPECÍFICO desta empresa (use o texto do site quando houver); evite frases de efeito.
 Responda SEMPRE em português do Brasil e SOMENTE com um JSON válido no formato pedido.`;
 
 function montarPrompt(empresa, contexto, perfilEmpresa) {
@@ -41,16 +46,17 @@ function montarPrompt(empresa, contexto, perfilEmpresa) {
   return `Empresa a analisar:\n${linhas.join('\n')}\n` +
     (resumoSite ? `\nO que o site oficial da empresa diz sobre ela mesma:\n"${resumoSite}"\n` : '') +
     (ctx ? `\nContexto do que estamos vendendo / ICP:\n${ctx}\n` : '') +
-    `\nProduza o briefing no formato JSON:
+    `\nProduza o briefing no formato JSON (todas as listas com 2 a 4 itens curtos):
 {
-  "resumo": "2 frases: o que a empresa faz, porte e maturidade",
+  "resumo": "2 frases: o que a empresa faz (use o que o site diz, se houver), porte e maturidade",
+  "dores_provaveis": ["dores/desafios que uma empresa deste tipo provavelmente enfrenta e que o que vendemos ajuda a resolver"],
   "swot": {
-    "forcas": ["..."],
-    "fraquezas": ["..."],
-    "oportunidades": ["..."],
-    "ameacas": ["..."]
+    "forcas": ["forças da empresa relevantes pra decisão de compra"],
+    "fraquezas": ["fraquezas/lacunas que a nossa solução endereça"],
+    "oportunidades": ["onde a nossa solução gera ganho concreto pra ela"],
+    "ameacas": ["objeções ou obstáculos ao fechamento (ex.: já ter fornecedor, orçamento, momento)"]
   },
-  "gancho": "1-2 frases: por que essa empresa se beneficiaria do que vendemos"
+  "gancho": "1-2 frases: abertura concreta pro closer, conectando uma dor provável ao que vendemos"
 }`;
 }
 
@@ -65,8 +71,9 @@ async function gerarSwot(empresa, { apiKey, modelo, contexto, perfilEmpresa } = 
     ],
     response_format: { type: 'json_object' },
     temperature: 0.4,
-    max_tokens: 700,
+    max_tokens: 900,
   };
+  const arr = v => Array.isArray(v) ? v.filter(Boolean).map(x => String(x)) : (v ? [String(v)] : []);
   try {
     const { data } = await axios.post(API_URL, body, {
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
@@ -76,13 +83,15 @@ async function gerarSwot(empresa, { apiKey, modelo, contexto, perfilEmpresa } = 
     const parsed = JSON.parse(txt);
     return {
       resumo: parsed.resumo || '',
+      dores_provaveis: arr(parsed.dores_provaveis),
       swot: {
-        forcas: parsed.swot?.forcas || [],
-        fraquezas: parsed.swot?.fraquezas || [],
-        oportunidades: parsed.swot?.oportunidades || [],
-        ameacas: parsed.swot?.ameacas || [],
+        forcas: arr(parsed.swot?.forcas),
+        fraquezas: arr(parsed.swot?.fraquezas),
+        oportunidades: arr(parsed.swot?.oportunidades),
+        ameacas: arr(parsed.swot?.ameacas),
       },
       gancho: parsed.gancho || '',
+      baseado_em_site: !!perfilEmpresa?.resumoSite,
       modelo: body.model,
       gerado_em: new Date().toISOString(),
     };
