@@ -749,6 +749,66 @@ function Buscas({ onOpen }) {
   );
 }
 
+// ── PerfilMedio: mostra o perfil destilado da lista (lookalike) ────────────────
+function PerfilMedio({ perfil }) {
+  const confCor = perfil.confianca === 'alta' ? C.green : perfil.confianca === 'média' ? C.gold : '#F59E0B';
+  const cnaeNome = c => (_cnaeCache || []).find(x => x.c === c)?.d || c;
+  const barra = (label, freq, extra) => (
+    <div key={label} style={{ marginBottom:8 }}>
+      <div style={{ display:'flex', justifyContent:'space-between', fontSize:12, marginBottom:3 }}>
+        <span style={{ color:'var(--text)' }}>{label}</span>
+        <span style={{ color:'var(--faint)', fontVariantNumeric:'tabular-nums' }}>{Math.round(freq*100)}%{extra || ''}</span>
+      </div>
+      <div style={{ height:5, borderRadius:3, background:'var(--panel2)' }}>
+        <div style={{ height:'100%', borderRadius:3, width:`${Math.round(freq*100)}%`, background:C.gold }}/>
+      </div>
+    </div>
+  );
+  return (
+    <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:18, marginBottom:18 }}>
+      <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:14 }}>
+        <h3 style={{ fontSize:14, fontWeight:600, margin:0 }}>Perfil médio detectado</h3>
+        <span style={{ fontSize:11, padding:'2px 9px', borderRadius:20, color:confCor, border:`1px solid ${confCor}` }}>
+          confiança {perfil.confianca}
+        </span>
+        <span style={{ fontSize:12, color:'var(--faint)' }}>{perfil.amostra} empresas analisadas</span>
+      </div>
+      <div style={{ display:'grid', gridTemplateColumns:'1.4fr 1fr', gap:22 }}>
+        <div>
+          <div style={{ fontSize:11.5, color:'var(--faint)', marginBottom:8, textTransform:'uppercase', letterSpacing:.4 }}>Atividades (CNAE)</div>
+          {(perfil.cnaes || []).slice(0, 5).map(x => barra(cnaeNome(x.c), x.freq))}
+        </div>
+        <div>
+          <div style={{ fontSize:11.5, color:'var(--faint)', marginBottom:8, textTransform:'uppercase', letterSpacing:.4 }}>UF</div>
+          {(perfil.ufs || []).slice(0, 4).map(x => barra(x.uf, x.freq))}
+          <div style={{ fontSize:11.5, color:'var(--faint)', margin:'12px 0 8px', textTransform:'uppercase', letterSpacing:.4 }}>Porte</div>
+          {(perfil.portes || []).slice(0, 3).map(x => barra(x.porte, x.freq))}
+        </div>
+      </div>
+      <div style={{ display:'flex', flexWrap:'wrap', gap:8, marginTop:14, borderTop:'1px solid var(--border)', paddingTop:14 }}>
+        {perfil.capitais?.[0] && (
+          <span style={{ fontSize:11.5, padding:'4px 10px', borderRadius:7, background:'var(--panel2)', border:'1px solid var(--border)', color:'var(--dim)' }}>
+            Capital típico: {perfil.capitais[0].faixa}
+          </span>
+        )}
+        {perfil.simples_prop != null && (
+          <span style={{ fontSize:11.5, padding:'4px 10px', borderRadius:7, background:'var(--panel2)', border:'1px solid var(--border)', color:'var(--dim)' }}>
+            Simples: {Math.round(perfil.simples_prop*100)}% optantes
+          </span>
+        )}
+        {perfil.abertura?.de && (
+          <span style={{ fontSize:11.5, padding:'4px 10px', borderRadius:7, background:'var(--panel2)', border:'1px solid var(--border)', color:'var(--dim)' }}>
+            Abertura: {String(perfil.abertura.de).slice(0,4)}–{String(perfil.abertura.ate).slice(0,4)}
+          </span>
+        )}
+      </div>
+      <div style={{ fontSize:11, color:'var(--faint)', marginTop:12, lineHeight:1.5 }}>
+        Esse perfil alimenta a descoberta (busca semelhantes na CNPJá) e o Score 1 — quanto mais parecida com o núcleo desta lista, maior a nota do lead.
+      </div>
+    </div>
+  );
+}
+
 // ── BuscaDetail ───────────────────────────────────────────────────────────────
 function BuscaDetail({ buscaId, onBack, onOpenLead }) {
   const [data, setData] = useState(null);
@@ -861,6 +921,8 @@ function BuscaDetail({ buscaId, onBack, onOpenLead }) {
         </div>
       </div>
 
+      {criterios.params?.perfil && <PerfilMedio perfil={criterios.params.perfil}/>}
+
       <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden' }}>
         <div style={{ padding:'15px 18px', borderBottom:'1px solid var(--border)' }}>
           <h3 style={{ fontSize:14, fontWeight:600, margin:0 }}>Leads desta busca</h3>
@@ -942,8 +1004,21 @@ function NovaBusca({ onSalvar }) {
   const [abertura, setAbertura] = useState('qualquer');
   const [capital, setCapital] = useState('qualquer');
   const [crmAuto, setCrmAuto] = useState(false);
+  const [listaCnpj, setListaCnpj] = useState('');
   const nomeRef = useRef();
-  const criteriosRef = useRef();
+  const criteriosRef = useRef();   // proposta de valor (ICP)
+  const propostaRef = useRef();    // proposta de valor (lista/lookalike)
+
+  // CNPJs válidos (14 dígitos, sem repetição) colados na aba lista/lookalike.
+  const cnpjsParsed = useMemo(() => {
+    const vistos = new Set();
+    for (const item of listaCnpj.split(/[\s,;]+/)) {
+      const c = item.replace(/\D/g, '');
+      if (c.length === 14) vistos.add(c);
+    }
+    return [...vistos];
+  }, [listaCnpj]);
+  const MIN_LOOKALIKE = 3;
 
   useEffect(() => {
     if (_cnaeCache) { setCnaeData(_cnaeCache); }
@@ -1003,6 +1078,13 @@ function NovaBusca({ onSalvar }) {
   const salvar = async () => {
     const nome = nomeRef.current?.value?.trim();
     if (!nome) { alert('Informe o nome da busca.'); return; }
+    if ((tipo === 'cnpj' || tipo === 'lookalike') && cnpjsParsed.length < MIN_LOOKALIKE) {
+      alert(`Poucos CNPJs válidos (${cnpjsParsed.length}). ` +
+        (tipo === 'lookalike'
+          ? `Para o sistema traçar um perfil médio confiável, envie ao menos ${MIN_LOOKALIKE} (recomendado 15+).`
+          : `Envie ao menos ${MIN_LOOKALIKE} CNPJs válidos (14 dígitos).`));
+      return;
+    }
     if (tipo === 'icp' && cnaeSel.length === 0) {
       const ok = window.confirm(
         'Nenhuma atividade selecionada.\n\nA busca vai trazer empresas de TODOS os ramos' +
@@ -1026,7 +1108,7 @@ function NovaBusca({ onSalvar }) {
         ...(abertura !== 'qualquer' ? [`Abertura: ${aberturaLabel}`] : []),
         ...(capital !== 'qualquer' ? [`Capital: ${capitalLabel}`] : []),
       ];
-      const propostaValor = criteriosRef.current?.value || '';
+      const propostaValor = (tipo === 'icp' ? criteriosRef.current?.value : propostaRef.current?.value) || '';
       const criterios = tipo === 'icp'
         ? { chips, params: {
             ufs, portes, cnaes, cnaes_rotulos: cnaeSel,
@@ -1035,7 +1117,7 @@ function NovaBusca({ onSalvar }) {
             equity_gte: cap.gte ?? null, equity_lte: cap.lte ?? null,
             proposta_valor: propostaValor,
           }, proposta_valor: propostaValor }
-        : { texto: propostaValor };
+        : { cnpjs: cnpjsParsed, proposta_valor: propostaValor };
       const r = await fetch('/api/buscas', {
         method:'POST', credentials:'same-origin',
         headers:{ 'Content-Type':'application/json' },
@@ -1211,19 +1293,57 @@ function NovaBusca({ onSalvar }) {
             </div>
           </div>
         </div>
-      ) : (
-        <div style={{ border:'1.5px dashed var(--border)', borderRadius:14, padding:40,
-          textAlign:'center', marginBottom:24 }}>
-          <Svg d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"
-            color="var(--faint)" w={34} h={34} sw={1.5} extra={{ marginBottom:12 }}/>
-          <div style={{ fontSize:14, fontWeight:500 }}>Arraste um arquivo CSV ou clique para enviar</div>
-          <div style={{ fontSize:12, color:'var(--faint)', marginTop:5 }}>Uma coluna de CNPJ, ou cole a lista no campo abaixo</div>
-          <textarea ref={criteriosRef} placeholder="Cole a lista de CNPJs (um por linha)"
-            style={{ width:'100%', minHeight:70, marginTop:16, borderRadius:12, border:'1px solid var(--border)',
+      ) : (() => {
+        const n = cnpjsParsed.length;
+        const ok = n >= MIN_LOOKALIKE;
+        const conf = n < 6 ? 'baixa' : n < 15 ? 'média' : 'alta';
+        const confCor = conf === 'alta' ? '#4ADE80' : conf === 'média' ? C.gold : '#F59E0B';
+        return (
+        <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:20, marginBottom:18 }}>
+          <div style={{ fontSize:13, fontWeight:600, marginBottom:4 }}>
+            {tipo === 'lookalike' ? 'Suba sua lista de clientes que já converteram' : 'Cole a lista de CNPJs a importar'}
+          </div>
+          <div style={{ fontSize:12, color:'var(--faint)', marginBottom:12, lineHeight:1.45 }}>
+            {tipo === 'lookalike'
+              ? 'O sistema lê a firmografia dessas empresas (grátis), monta um perfil médio — CNAE, UF, porte, capital — e busca semelhantes na base ativa da CNPJá. Quanto mais clientes, mais preciso o perfil.'
+              : 'Cada CNPJ vira um lead e passa por todo o pipeline (contato, SWOT, CRM). Não expande para semelhantes.'}
+          </div>
+          <textarea value={listaCnpj} onChange={e => setListaCnpj(e.target.value)}
+            placeholder="Cole os CNPJs (um por linha, ou separados por vírgula). Ex: 12.345.678/0001-90"
+            style={{ width:'100%', minHeight:110, borderRadius:12, border:'1px solid var(--border)',
               background:'var(--panel2)', color:'var(--text)', padding:12, fontSize:13,
-              fontFamily:'inherit', lineHeight:1.5, resize:'vertical' }}/>
+              fontFamily:'inherit', lineHeight:1.6, resize:'vertical' }}/>
+          <div style={{ display:'flex', alignItems:'center', gap:10, marginTop:9, flexWrap:'wrap' }}>
+            <span style={{ fontSize:12, fontWeight:600, color: ok ? 'var(--text)' : '#F59E0B' }}>
+              {n} CNPJ{n === 1 ? '' : 's'} válido{n === 1 ? '' : 's'}
+            </span>
+            {n > 0 && tipo === 'lookalike' && (
+              <span style={{ fontSize:11, padding:'2px 9px', borderRadius:20, color:confCor,
+                border:`1px solid ${confCor}`, background:'transparent' }}>
+                confiança do perfil: {conf}
+              </span>
+            )}
+            {!ok && (
+              <span style={{ fontSize:11.5, color:'#F59E0B' }}>
+                mínimo {MIN_LOOKALIKE}{tipo === 'lookalike' ? ' · recomendado 15+' : ''}
+              </span>
+            )}
+          </div>
+
+          {tipo === 'lookalike' && (
+            <div style={{ marginTop:18, borderTop:'1px solid var(--border)', paddingTop:16 }}>
+              <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>
+                O que você vende — proposta de valor <span style={{ color:'var(--faint)' }}>(alimenta o agente SWOT)</span>
+              </label>
+              <textarea ref={propostaRef} placeholder="Ex: software de gestão de agenda para clínicas, que reduz faltas e lota horários ociosos"
+                style={{ width:'100%', minHeight:64, borderRadius:12, border:'1px solid var(--border)',
+                  background:'var(--panel2)', color:'var(--text)', padding:12, fontSize:13,
+                  fontFamily:'inherit', lineHeight:1.5, resize:'vertical' }}/>
+            </div>
+          )}
         </div>
-      )}
+        );
+      })()}
 
       <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:20, marginBottom:18 }}>
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'18px 22px' }}>

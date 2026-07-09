@@ -7,6 +7,8 @@
  * contato bruto da Receita NUNCA entra aqui como sinal positivo.
  */
 
+const perfilamento = require('../providers/perfil');
+
 const W = {
   CNAE_EXATO: 35,
   CNAE_GRUPO: 15,
@@ -91,6 +93,12 @@ function parseCriterios(criterios) {
 }
 
 function computeScore1(emp, params) {
+  // Busca lookalike: nota por PROXIMIDADE ao perfil médio da lista (mesma
+  // escala 0–100, mesmo corte). Quem se parece com o núcleo da lista pontua mais.
+  if (params?.perfil) {
+    return perfilamento.pontuarProximidade(emp, params.perfil, W);
+  }
+
   let score = 0;
   const breakdown = [];
   const add = (item, pts) => { if (pts) { score += pts; breakdown.push({ item, pts }); } };

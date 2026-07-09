@@ -1907,6 +1907,157 @@ function Buscas({
   }))))))));
 }
 
+// ── PerfilMedio: mostra o perfil destilado da lista (lookalike) ────────────────
+function PerfilMedio({
+  perfil
+}) {
+  const confCor = perfil.confianca === 'alta' ? C.green : perfil.confianca === 'média' ? C.gold : '#F59E0B';
+  const cnaeNome = c => (_cnaeCache || []).find(x => x.c === c)?.d || c;
+  const barra = (label, freq, extra) => /*#__PURE__*/React.createElement("div", {
+    key: label,
+    style: {
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      fontSize: 12,
+      marginBottom: 3
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--text)'
+    }
+  }, label), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)',
+      fontVariantNumeric: 'tabular-nums'
+    }
+  }, Math.round(freq * 100), "%", extra || '')), /*#__PURE__*/React.createElement("div", {
+    style: {
+      height: 5,
+      borderRadius: 3,
+      background: 'var(--panel2)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      height: '100%',
+      borderRadius: 3,
+      width: `${Math.round(freq * 100)}%`,
+      background: C.gold
+    }
+  })));
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'var(--panel)',
+      border: '1px solid var(--border)',
+      borderRadius: 14,
+      padding: 18,
+      marginBottom: 18
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      marginBottom: 14
+    }
+  }, /*#__PURE__*/React.createElement("h3", {
+    style: {
+      fontSize: 14,
+      fontWeight: 600,
+      margin: 0
+    }
+  }, "Perfil m\xE9dio detectado"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      padding: '2px 9px',
+      borderRadius: 20,
+      color: confCor,
+      border: `1px solid ${confCor}`
+    }
+  }, "confian\xE7a ", perfil.confianca), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 12,
+      color: 'var(--faint)'
+    }
+  }, perfil.amostra, " empresas analisadas")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: '1.4fr 1fr',
+      gap: 22
+    }
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--faint)',
+      marginBottom: 8,
+      textTransform: 'uppercase',
+      letterSpacing: .4
+    }
+  }, "Atividades (CNAE)"), (perfil.cnaes || []).slice(0, 5).map(x => barra(cnaeNome(x.c), x.freq))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--faint)',
+      marginBottom: 8,
+      textTransform: 'uppercase',
+      letterSpacing: .4
+    }
+  }, "UF"), (perfil.ufs || []).slice(0, 4).map(x => barra(x.uf, x.freq)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--faint)',
+      margin: '12px 0 8px',
+      textTransform: 'uppercase',
+      letterSpacing: .4
+    }
+  }, "Porte"), (perfil.portes || []).slice(0, 3).map(x => barra(x.porte, x.freq)))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: 8,
+      marginTop: 14,
+      borderTop: '1px solid var(--border)',
+      paddingTop: 14
+    }
+  }, perfil.capitais?.[0] && /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11.5,
+      padding: '4px 10px',
+      borderRadius: 7,
+      background: 'var(--panel2)',
+      border: '1px solid var(--border)',
+      color: 'var(--dim)'
+    }
+  }, "Capital t\xEDpico: ", perfil.capitais[0].faixa), perfil.simples_prop != null && /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11.5,
+      padding: '4px 10px',
+      borderRadius: 7,
+      background: 'var(--panel2)',
+      border: '1px solid var(--border)',
+      color: 'var(--dim)'
+    }
+  }, "Simples: ", Math.round(perfil.simples_prop * 100), "% optantes"), perfil.abertura?.de && /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11.5,
+      padding: '4px 10px',
+      borderRadius: 7,
+      background: 'var(--panel2)',
+      border: '1px solid var(--border)',
+      color: 'var(--dim)'
+    }
+  }, "Abertura: ", String(perfil.abertura.de).slice(0, 4), "\u2013", String(perfil.abertura.ate).slice(0, 4))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)',
+      marginTop: 12,
+      lineHeight: 1.5
+    }
+  }, "Esse perfil alimenta a descoberta (busca semelhantes na CNPJ\xE1) e o Score 1 \u2014 quanto mais parecida com o n\xFAcleo desta lista, maior a nota do lead."));
+}
+
 // ── BuscaDetail ───────────────────────────────────────────────────────────────
 function BuscaDetail({
   buscaId,
@@ -2148,7 +2299,9 @@ function BuscaDetail({
       marginTop: 12,
       lineHeight: 1.5
     }
-  }, "Ritmo atual: ", b.ritmo || 0, " leads/h. \xDAltima atividade: ", timeAgo(b.ultima_ativ), "."))), /*#__PURE__*/React.createElement("div", {
+  }, "Ritmo atual: ", b.ritmo || 0, " leads/h. \xDAltima atividade: ", timeAgo(b.ultima_ativ), "."))), criterios.params?.perfil && /*#__PURE__*/React.createElement(PerfilMedio, {
+    perfil: criterios.params.perfil
+  }), /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'var(--panel)',
       border: '1px solid var(--border)',
@@ -2318,8 +2471,21 @@ function NovaBusca({
   const [abertura, setAbertura] = useState('qualquer');
   const [capital, setCapital] = useState('qualquer');
   const [crmAuto, setCrmAuto] = useState(false);
+  const [listaCnpj, setListaCnpj] = useState('');
   const nomeRef = useRef();
-  const criteriosRef = useRef();
+  const criteriosRef = useRef(); // proposta de valor (ICP)
+  const propostaRef = useRef(); // proposta de valor (lista/lookalike)
+
+  // CNPJs válidos (14 dígitos, sem repetição) colados na aba lista/lookalike.
+  const cnpjsParsed = useMemo(() => {
+    const vistos = new Set();
+    for (const item of listaCnpj.split(/[\s,;]+/)) {
+      const c = item.replace(/\D/g, '');
+      if (c.length === 14) vistos.add(c);
+    }
+    return [...vistos];
+  }, [listaCnpj]);
+  const MIN_LOOKALIKE = 3;
   useEffect(() => {
     if (_cnaeCache) {
       setCnaeData(_cnaeCache);
@@ -2404,6 +2570,10 @@ function NovaBusca({
       alert('Informe o nome da busca.');
       return;
     }
+    if ((tipo === 'cnpj' || tipo === 'lookalike') && cnpjsParsed.length < MIN_LOOKALIKE) {
+      alert(`Poucos CNPJs válidos (${cnpjsParsed.length}). ` + (tipo === 'lookalike' ? `Para o sistema traçar um perfil médio confiável, envie ao menos ${MIN_LOOKALIKE} (recomendado 15+).` : `Envie ao menos ${MIN_LOOKALIKE} CNPJs válidos (14 dígitos).`));
+      return;
+    }
     if (tipo === 'icp' && cnaeSel.length === 0) {
       const ok = window.confirm('Nenhuma atividade selecionada.\n\nA busca vai trazer empresas de TODOS os ramos' + (ufs.length ? ' da(s) UF(s) escolhida(s)' : ' do Brasil') + '. Para filtrar por ramo, digite no campo "Atividade" e clique no resultado (vira chip dourado).\n\nContinuar mesmo assim?');
       if (!ok) return;
@@ -2416,7 +2586,7 @@ function NovaBusca({
       const aberturaLabel = ABERTURA_OPCOES.find(o => o.k === abertura)?.label;
       const capitalLabel = CAPITAL_OPCOES.find(o => o.k === capital)?.label;
       const chips = [...ufs.map(u => `UF: ${u}`), ...municSel.map(m => `Município: ${m.n}`), ...portes.map(p => `Porte: ${p}`), ...cnaeSel.map(s => `CNAE: ${s.d}`), ...(abertura !== 'qualquer' ? [`Abertura: ${aberturaLabel}`] : []), ...(capital !== 'qualquer' ? [`Capital: ${capitalLabel}`] : [])];
-      const propostaValor = criteriosRef.current?.value || '';
+      const propostaValor = (tipo === 'icp' ? criteriosRef.current?.value : propostaRef.current?.value) || '';
       const criterios = tipo === 'icp' ? {
         chips,
         params: {
@@ -2434,7 +2604,8 @@ function NovaBusca({
         },
         proposta_valor: propostaValor
       } : {
-        texto: propostaValor
+        cnpjs: cnpjsParsed,
+        proposta_valor: propostaValor
       };
       const r = await fetch('/api/buscas', {
         method: 'POST',
@@ -2878,52 +3049,112 @@ function NovaBusca({
       marginTop: 6,
       lineHeight: 1.4
     }
-  }, "Descreva seu produto/servi\xE7o. O agente usa isso para gerar o gancho de abordagem espec\xEDfico para cada empresa \u2014 quanto mais claro, melhor o briefing."))) : /*#__PURE__*/React.createElement("div", {
-    style: {
-      border: '1.5px dashed var(--border)',
-      borderRadius: 14,
-      padding: 40,
-      textAlign: 'center',
-      marginBottom: 24
-    }
-  }, /*#__PURE__*/React.createElement(Svg, {
-    d: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12",
-    color: "var(--faint)",
-    w: 34,
-    h: 34,
-    sw: 1.5,
-    extra: {
-      marginBottom: 12
-    }
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 14,
-      fontWeight: 500
-    }
-  }, "Arraste um arquivo CSV ou clique para enviar"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      color: 'var(--faint)',
-      marginTop: 5
-    }
-  }, "Uma coluna de CNPJ, ou cole a lista no campo abaixo"), /*#__PURE__*/React.createElement("textarea", {
-    ref: criteriosRef,
-    placeholder: "Cole a lista de CNPJs (um por linha)",
-    style: {
-      width: '100%',
-      minHeight: 70,
-      marginTop: 16,
-      borderRadius: 12,
-      border: '1px solid var(--border)',
-      background: 'var(--panel2)',
-      color: 'var(--text)',
-      padding: 12,
-      fontSize: 13,
-      fontFamily: 'inherit',
-      lineHeight: 1.5,
-      resize: 'vertical'
-    }
-  })), /*#__PURE__*/React.createElement("div", {
+  }, "Descreva seu produto/servi\xE7o. O agente usa isso para gerar o gancho de abordagem espec\xEDfico para cada empresa \u2014 quanto mais claro, melhor o briefing."))) : (() => {
+    const n = cnpjsParsed.length;
+    const ok = n >= MIN_LOOKALIKE;
+    const conf = n < 6 ? 'baixa' : n < 15 ? 'média' : 'alta';
+    const confCor = conf === 'alta' ? '#4ADE80' : conf === 'média' ? C.gold : '#F59E0B';
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        background: 'var(--panel)',
+        border: '1px solid var(--border)',
+        borderRadius: 14,
+        padding: 20,
+        marginBottom: 18
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 13,
+        fontWeight: 600,
+        marginBottom: 4
+      }
+    }, tipo === 'lookalike' ? 'Suba sua lista de clientes que já converteram' : 'Cole a lista de CNPJs a importar'), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        color: 'var(--faint)',
+        marginBottom: 12,
+        lineHeight: 1.45
+      }
+    }, tipo === 'lookalike' ? 'O sistema lê a firmografia dessas empresas (grátis), monta um perfil médio — CNAE, UF, porte, capital — e busca semelhantes na base ativa da CNPJá. Quanto mais clientes, mais preciso o perfil.' : 'Cada CNPJ vira um lead e passa por todo o pipeline (contato, SWOT, CRM). Não expande para semelhantes.'), /*#__PURE__*/React.createElement("textarea", {
+      value: listaCnpj,
+      onChange: e => setListaCnpj(e.target.value),
+      placeholder: "Cole os CNPJs (um por linha, ou separados por v\xEDrgula). Ex: 12.345.678/0001-90",
+      style: {
+        width: '100%',
+        minHeight: 110,
+        borderRadius: 12,
+        border: '1px solid var(--border)',
+        background: 'var(--panel2)',
+        color: 'var(--text)',
+        padding: 12,
+        fontSize: 13,
+        fontFamily: 'inherit',
+        lineHeight: 1.6,
+        resize: 'vertical'
+      }
+    }), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        marginTop: 9,
+        flexWrap: 'wrap'
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 12,
+        fontWeight: 600,
+        color: ok ? 'var(--text)' : '#F59E0B'
+      }
+    }, n, " CNPJ", n === 1 ? '' : 's', " v\xE1lido", n === 1 ? '' : 's'), n > 0 && tipo === 'lookalike' && /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 11,
+        padding: '2px 9px',
+        borderRadius: 20,
+        color: confCor,
+        border: `1px solid ${confCor}`,
+        background: 'transparent'
+      }
+    }, "confian\xE7a do perfil: ", conf), !ok && /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 11.5,
+        color: '#F59E0B'
+      }
+    }, "m\xEDnimo ", MIN_LOOKALIKE, tipo === 'lookalike' ? ' · recomendado 15+' : '')), tipo === 'lookalike' && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginTop: 18,
+        borderTop: '1px solid var(--border)',
+        paddingTop: 16
+      }
+    }, /*#__PURE__*/React.createElement("label", {
+      style: {
+        display: 'block',
+        fontSize: 12,
+        color: 'var(--dim)',
+        marginBottom: 7
+      }
+    }, "O que voc\xEA vende \u2014 proposta de valor ", /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: 'var(--faint)'
+      }
+    }, "(alimenta o agente SWOT)")), /*#__PURE__*/React.createElement("textarea", {
+      ref: propostaRef,
+      placeholder: "Ex: software de gest\xE3o de agenda para cl\xEDnicas, que reduz faltas e lota hor\xE1rios ociosos",
+      style: {
+        width: '100%',
+        minHeight: 64,
+        borderRadius: 12,
+        border: '1px solid var(--border)',
+        background: 'var(--panel2)',
+        color: 'var(--text)',
+        padding: 12,
+        fontSize: 13,
+        fontFamily: 'inherit',
+        lineHeight: 1.5,
+        resize: 'vertical'
+      }
+    })));
+  })(), /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'var(--panel)',
       border: '1px solid var(--border)',
@@ -5727,3 +5958,4 @@ function App() {
   }));
 }
 ReactDOM.createRoot(document.getElementById('root')).render(/*#__PURE__*/React.createElement(App, null));
+
