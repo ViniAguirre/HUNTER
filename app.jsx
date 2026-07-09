@@ -1,12 +1,14 @@
 const { useState, useRef, useEffect, useMemo } = React;
 
 // ── constants ─────────────────────────────────────────────────────────────────
-const C = { green:'#34D399', amber:'#FBBF24', red:'#F87171', blue:'#3A8EFF', gold:'#FBE49A', cyan:'#7AD9FF', gray:'#7C89A8' };
+// gold é o ACENTO temático (var --accent): pálido no escuro, dourado escuro e
+// legível no claro. Assim os detalhes aparecem bem nos dois modos.
+const C = { green:'#34D399', amber:'#FBBF24', red:'#F87171', blue:'#3A8EFF', gold:'var(--accent)', cyan:'#7AD9FF', gray:'#7C89A8' };
 
 function themeVars(t) {
   return t === 'light'
-    ? '--bg:#F4F6FA;--panel:#FFFFFF;--panel2:#EEF2F8;--hover:rgba(14,25,54,.04);--border:rgba(14,25,54,.10);--track:rgba(14,25,54,.08);--text:#0E1936;--dim:#5A6480;--faint:#8A93A8;--gold:#FBE49A;--blue:#3A8EFF;--cyan:#7AD9FF;--red:#F87171;'
-    : '--bg:#0E1936;--panel:#0A0F1F;--panel2:#101a3a;--hover:rgba(255,255,255,.04);--border:rgba(255,255,255,.08);--track:rgba(255,255,255,.08);--text:#ECEFF7;--dim:#8A95B4;--faint:#5E688C;--gold:#FBE49A;--blue:#3A8EFF;--cyan:#7AD9FF;--red:#F87171;';
+    ? '--bg:#F4F6FA;--panel:#FFFFFF;--panel2:#EEF2F8;--hover:rgba(14,25,54,.04);--border:rgba(14,25,54,.12);--track:rgba(14,25,54,.10);--text:#0E1936;--dim:#4E586F;--faint:#77819A;--gold:#E7C053;--accent:#976F00;--blue:#2A73E6;--cyan:#1C86B8;--red:#E0544E;'
+    : '--bg:#0E1936;--panel:#0A0F1F;--panel2:#101a3a;--hover:rgba(255,255,255,.04);--border:rgba(255,255,255,.08);--track:rgba(255,255,255,.08);--text:#ECEFF7;--dim:#8A95B4;--faint:#5E688C;--gold:#FBE49A;--accent:#FBE49A;--blue:#3A8EFF;--cyan:#7AD9FF;--red:#F87171;';
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -24,9 +26,13 @@ const SvgMulti = ({ children, w=16, h=16, color='currentColor', sw=1.7 }) => (
 
 function scoreColor(s) { return s >= 75 ? C.green : s >= 50 ? C.amber : C.red; }
 
-function badgeStyle(hex) {
+function badgeStyle(cor) {
+  // color-mix aceita hex e CSS vars (var(--accent)), então o badge dourado fica
+  // legível no claro sem quebrar a concatenação de alpha.
   return { display:'inline-flex', alignItems:'center', gap:5, fontSize:11, fontWeight:600,
-    padding:'3px 9px', borderRadius:20, background:hex+'1f', color:hex, border:`1px solid ${hex}33`, whiteSpace:'nowrap' };
+    padding:'3px 9px', borderRadius:20,
+    background:`color-mix(in srgb, ${cor} 15%, transparent)`, color:cor,
+    border:`1px solid color-mix(in srgb, ${cor} 34%, transparent)`, whiteSpace:'nowrap' };
 }
 
 function StatusDot({ color, pulse }) {
@@ -365,7 +371,7 @@ function Dashboard({ onOpenBusca }) {
     { label:'Enviados ao CRM', value:fmtNum(metricas.leadsCRM), icon:'M5 12h14M13 5l7 7-7 7', iColor:C.cyan, trend:'total enviado', tColor:'var(--dim)' },
   ];
 
-  const hlLabel = { green:'produzindo', amber:'ritmo lento', red:'parada', gray:'encerrada' };
+  const hlLabel = { green:'produzindo', amber:'atenção', red:'parada', gray:'encerrada' };
   const corAlerta = t => t === 'erro' ? C.red : t === 'aviso' ? C.amber : C.blue;
 
   return (
@@ -400,7 +406,7 @@ function Dashboard({ onOpenBusca }) {
               <StatusDot color={healthColors[b.health]} pulse={b.health==='green'}/>
               <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ fontSize:13.5, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{b.nome}</div>
-                <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:2 }}>{b.ritmo} leads/h · {hlLabel[b.health]||'—'}</div>
+                <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:2 }}>{hlLabel[b.health]||'—'}</div>
               </div>
               <div style={{ textAlign:'right', flexShrink:0 }}>
                 <div style={{ fontSize:14, fontWeight:600 }}>{fmtNum(b.enc)}</div>
@@ -478,7 +484,7 @@ function ExportModal({ ids, onClose }) {
             <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:9 }}>Formato</label>
             <div style={{ display:'flex', gap:9 }}>
               <div style={{ flex:1, height:40, borderRadius:9, border:`1.5px solid ${C.gold}`,
-                background:'rgba(251,228,154,.08)', display:'flex', alignItems:'center',
+                background:'color-mix(in srgb, var(--accent) 10%, transparent)', display:'flex', alignItems:'center',
                 justifyContent:'center', fontSize:13, fontWeight:600, cursor:'pointer' }}>CSV</div>
             </div>
           </div>
@@ -713,10 +719,10 @@ function Buscas({ onOpen }) {
         </div>
       </div>
       <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden' }}>
-        <div style={{ display:'grid', gridTemplateColumns:'24px 2.2fr 1fr 1fr .7fr .8fr .8fr .8fr 1fr 40px',
+        <div style={{ display:'grid', gridTemplateColumns:'24px 2.2fr 1fr 1fr .8fr .8fr .8fr 1fr 40px',
           alignItems:'center', gap:10, padding:'12px 18px', borderBottom:'1px solid var(--border)',
           fontSize:11, fontWeight:600, letterSpacing:'.04em', color:'var(--faint)', textTransform:'uppercase' }}>
-          <div/><div>Nome</div><div>Status</div><div>Criada por</div><div>Ritmo</div>
+          <div/><div>Nome</div><div>Status</div><div>Criada por</div>
           <div>Encontr.</div><div>Qualif.</div><div>CRM</div><div>Atividade</div><div/>
         </div>
         {buscas === null && (
@@ -727,13 +733,12 @@ function Buscas({ onOpen }) {
         )}
         {buscas && buscas.map(b => (
           <div key={b.id} onClick={() => onOpen(b.id)} className="row-hover"
-            style={{ display:'grid', gridTemplateColumns:'24px 2.2fr 1fr 1fr .7fr .8fr .8fr .8fr 1fr 40px',
+            style={{ display:'grid', gridTemplateColumns:'24px 2.2fr 1fr 1fr .8fr .8fr .8fr 1fr 40px',
               alignItems:'center', gap:10, padding:'14px 18px', borderBottom:'1px solid var(--border)', cursor:'pointer' }}>
             <div><StatusDot color={healthColors[b.health]||C.gray} pulse={b.health==='green'}/></div>
             <div style={{ fontSize:13.5, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{b.nome}</div>
             <div><span style={badgeStyle(buscaStatusColors[b.status]||C.gray)}>{b.status}</span></div>
             <div style={{ fontSize:12.5, color:'var(--dim)' }}>{b.criador_nome || b.criador || '—'}</div>
-            <div style={{ fontSize:12.5 }}>{b.ritmo ? b.ritmo+'/h' : '—'}</div>
             <div style={{ fontSize:13, fontWeight:600 }}>{fmtNum(b.encontrados ?? b.enc)}</div>
             <div style={{ fontSize:13, color:'var(--dim)' }}>{fmtNum(b.qualificados ?? b.qual)}</div>
             <div style={{ fontSize:13, color:C.cyan }}>{fmtNum(b.enviados ?? b.crm)}</div>
@@ -919,7 +924,7 @@ function BuscaDetail({ buscaId, onBack, onOpenLead }) {
           </div>
           <ProgressBar pct={b.universo_est ? Math.min(100, Math.round(parseInt(b.enc)/b.universo_est*100)) : 0} color={C.gold}/>
           <div style={{ fontSize:12, color:'var(--faint)', marginTop:12, lineHeight:1.5 }}>
-            Ritmo atual: {b.ritmo || 0} leads/h. Última atividade: {timeAgo(b.ultima_ativ)}.
+            Última atividade: {timeAgo(b.ultima_ativ)}.
           </div>
         </div>
       </div>
@@ -991,7 +996,6 @@ function foundedFromPreset(k) {
 
 function NovaBusca({ onSalvar }) {
   const [tipo, setTipo] = useState('icp');
-  const [ritmo, setRitmo] = useState(120);
   const [corte, setCorte] = useState(60);
   const [saving, setSaving] = useState(false);
   const [ufs, setUfs] = useState([]);
@@ -1035,7 +1039,7 @@ function NovaBusca({ onSalvar }) {
       .then(d => { _municCache = d; setMunicData(d); }).catch(() => {});
     // Puxa os padrões da tela de Configurações como valores iniciais.
     fetch('/api/config', { credentials:'same-origin' }).then(r => r.json())
-      .then(c => { if (c?.ritmo_padrao != null) setRitmo(c.ritmo_padrao); if (c?.corte_padrao != null) setCorte(c.corte_padrao); })
+      .then(c => { if (c?.corte_padrao != null) setCorte(c.corte_padrao); })
       .catch(() => {});
   }, []);
 
@@ -1157,7 +1161,7 @@ function NovaBusca({ onSalvar }) {
       const r = await fetch('/api/buscas', {
         method:'POST', credentials:'same-origin',
         headers:{ 'Content-Type':'application/json' },
-        body: JSON.stringify({ nome, tipo, ritmo, corte_score: corte, crm_auto: crmAuto, criterios })
+        body: JSON.stringify({ nome, tipo, corte_score: corte, crm_auto: crmAuto, criterios })
       });
       if (!r.ok) { const d = await r.json().catch(()=>({})); throw new Error(d.erro || 'Erro ao criar busca.'); }
       onSalvar();
@@ -1178,7 +1182,7 @@ function NovaBusca({ onSalvar }) {
               style={{ flex:1, textAlign:'left', padding:18, borderRadius:13, cursor:'pointer',
                 background:'var(--panel)', transition:'all .12s',
                 border: active ? `1.5px solid ${C.gold}` : '1.5px solid var(--border)',
-                boxShadow: active ? `0 0 0 3px rgba(251,228,154,.08)` : 'none' }}>
+                boxShadow: active ? `0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent)` : 'none' }}>
               <Svg d={t.icon} color={active ? C.gold : 'var(--dim)'} sw={1.7}/>
               <div style={{ fontSize:14, fontWeight:600, margin:'11px 0 4px', color: active ? 'var(--text)' : 'var(--dim)' }}>{t.titulo}</div>
               <div style={{ fontSize:12, color:'var(--faint)', lineHeight:1.45 }}>{t.desc}</div>
@@ -1256,7 +1260,7 @@ function NovaBusca({ onSalvar }) {
               <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginTop:9 }}>
                 {cnaeSel.map(s => (
                   <span key={s.c} style={{ display:'inline-flex', alignItems:'center', gap:7, padding:'5px 10px',
-                    borderRadius:7, fontSize:11.5, border:`1px solid ${C.gold}`, background:'rgba(251,228,154,.1)', color:C.gold }}>
+                    borderRadius:7, fontSize:11.5, border:`1px solid ${C.gold}`, background:'color-mix(in srgb, var(--accent) 13%, transparent)', color:C.gold }}>
                     {s.d}
                     <span onClick={() => removeCnae(s.c)} title="Remover"
                       style={{ cursor:'pointer', fontWeight:700, fontSize:13, lineHeight:1, opacity:.8 }}>×</span>
@@ -1272,7 +1276,7 @@ function NovaBusca({ onSalvar }) {
                 <span key={u} onClick={() => toggle(ufs, setUfs, u)}
                   style={{ cursor:'pointer', padding:'5px 10px', borderRadius:7, fontSize:11.5,
                     border: ufs.includes(u) ? `1px solid ${C.gold}` : '1px solid var(--border)',
-                    background: ufs.includes(u) ? 'rgba(251,228,154,.1)' : 'transparent',
+                    background: ufs.includes(u) ? 'color-mix(in srgb, var(--accent) 13%, transparent)' : 'transparent',
                     color: ufs.includes(u) ? C.gold : 'var(--dim)' }}>{u}</span>
               ))}
             </div>
@@ -1284,7 +1288,7 @@ function NovaBusca({ onSalvar }) {
                 <span key={p} onClick={() => toggle(portes, setPortes, p)}
                   style={{ cursor:'pointer', padding:'5px 12px', borderRadius:7, fontSize:11.5,
                     border: portes.includes(p) ? `1px solid ${C.gold}` : '1px solid var(--border)',
-                    background: portes.includes(p) ? 'rgba(251,228,154,.1)' : 'transparent',
+                    background: portes.includes(p) ? 'color-mix(in srgb, var(--accent) 13%, transparent)' : 'transparent',
                     color: portes.includes(p) ? C.gold : 'var(--dim)' }}>{p}</span>
               ))}
             </div>
@@ -1322,7 +1326,7 @@ function NovaBusca({ onSalvar }) {
               <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginTop:9 }}>
                 {municSel.map(m => (
                   <span key={m.c} style={{ display:'inline-flex', alignItems:'center', gap:7, padding:'5px 10px',
-                    borderRadius:7, fontSize:11.5, border:`1px solid ${C.gold}`, background:'rgba(251,228,154,.1)', color:C.gold }}>
+                    borderRadius:7, fontSize:11.5, border:`1px solid ${C.gold}`, background:'color-mix(in srgb, var(--accent) 13%, transparent)', color:C.gold }}>
                     {m.n} · {m.uf}
                     <span onClick={() => removeMunic(m.c)} title="Remover"
                       style={{ cursor:'pointer', fontWeight:700, fontSize:13, lineHeight:1, opacity:.8 }}>×</span>
@@ -1415,6 +1419,19 @@ function NovaBusca({ onSalvar }) {
         );
       })()}
 
+      {tipo === 'icp' && cnaeSel.length === 0 && municSel.length === 0 && (
+        <div style={{ display:'flex', gap:11, padding:'13px 15px', marginBottom:18, borderRadius:12,
+          background:'color-mix(in srgb, var(--amber, #FBBF24) 12%, transparent)',
+          border:'1px solid color-mix(in srgb, #FBBF24 45%, transparent)' }}>
+          <Svg d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"
+            color="#FBBF24" w={20} h={20} sw={1.7} extra={{ flexShrink:0, marginTop:1 }}/>
+          <div style={{ fontSize:12.5, lineHeight:1.5 }}>
+            <b>Critério muito amplo.</b> Sem atividade (CNAE) nem município, a busca varre {ufs.length ? `todas as empresas de ${ufs.join('/')}` : 'o Brasil inteiro'} —
+            isso traz nicho errado e <b>consome muito crédito</b>. Escolha ao menos uma atividade (campo acima) ou um município.
+          </div>
+        </div>
+      )}
+
       <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:20, marginBottom:18 }}>
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'18px 22px' }}>
           <div style={{ gridColumn:'1 / -1' }}>
@@ -1423,26 +1440,19 @@ function NovaBusca({ onSalvar }) {
               style={{ width:'100%', height:40, borderRadius:9, border:'1px solid var(--border)',
                 background:'var(--panel2)', color:'var(--text)', padding:'0 12px', fontSize:13, fontFamily:'inherit' }}/>
           </div>
-          <div>
-            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:9 }}>
-              <label style={{ fontSize:12, color:'var(--dim)' }}>Ritmo da torneira</label>
-              <span style={{ fontSize:13, fontWeight:600, color:C.gold }}>{ritmo} leads/h</span>
-            </div>
-            <input type="range" min={20} max={300} step={10} value={ritmo} onChange={e => setRitmo(+e.target.value)}
-              style={{ width:'100%', accentColor:'#FBE49A', cursor:'pointer' }}/>
-            <div style={{ display:'flex', justifyContent:'space-between', fontSize:10.5, color:'var(--faint)', marginTop:5 }}>
-              <span>econômico</span><span>agressivo</span>
-            </div>
-          </div>
-          <div>
+          <div style={{ gridColumn:'1 / -1' }}>
             <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:9 }}>
               <label style={{ fontSize:12, color:'var(--dim)' }}>Corte do Score 1</label>
               <span style={{ fontSize:13, fontWeight:600, color:C.gold }}>{corte} pts</span>
             </div>
             <input type="range" min={0} max={100} step={5} value={corte} onChange={e => setCorte(+e.target.value)}
-              style={{ width:'100%', accentColor:'#FBE49A', cursor:'pointer' }}/>
+              style={{ width:'100%', accentColor:'var(--accent)', cursor:'pointer' }}/>
             <div style={{ display:'flex', justifyContent:'space-between', fontSize:10.5, color:'var(--faint)', marginTop:5 }}>
               <span>permissivo</span><span>rigoroso</span>
+            </div>
+            <div style={{ fontSize:11, color:'var(--faint)', marginTop:8, lineHeight:1.4 }}>
+              O volume é controlado por um teto diário geral (em Configurações), não por busca — o Hunter faz várias
+              camadas de garimpo e qualificação, então o limite diário já basta.
             </div>
           </div>
           <div style={{ gridColumn:'1 / -1', borderTop:'1px solid var(--border)', paddingTop:16 }}>
@@ -1454,7 +1464,7 @@ function NovaBusca({ onSalvar }) {
                   <div key={k} onClick={() => setCrmAuto(k === 'auto')}
                     style={{ flex:1, cursor:'pointer', padding:'11px 13px', borderRadius:10, fontSize:12.5, lineHeight:1.35,
                       border: ativo ? `1.5px solid ${C.gold}` : '1.5px solid var(--border)',
-                      background: ativo ? 'rgba(251,228,154,.08)' : 'transparent',
+                      background: ativo ? 'color-mix(in srgb, var(--accent) 10%, transparent)' : 'transparent',
                       color: ativo ? 'var(--text)' : 'var(--dim)' }}>
                     {label}
                   </div>
@@ -1916,18 +1926,43 @@ function Config() {
   const [rotacionando, setRotacionando] = useState(false);
   const [demo, setDemo] = useState(null);
   const [limpandoDemo, setLimpandoDemo] = useState(false);
+  const [base, setBase] = useState(null);
+  const [limpandoTudo, setLimpandoTudo] = useState(false);
 
   const carregarSementes = () => fetch('/api/sementes/status', { credentials:'same-origin' })
     .then(r => r.json()).then(setSementes).catch(() => {});
   const carregarDemo = () => fetch('/api/admin/demo', { credentials:'same-origin' })
     .then(r => r.json()).then(setDemo).catch(() => {});
+  const carregarBase = () => fetch('/api/admin/base', { credentials:'same-origin' })
+    .then(r => r.json()).then(setBase).catch(() => {});
 
   useEffect(() => {
     fetch('/api/config', { credentials:'same-origin' })
       .then(r => r.json()).then(setCfg).catch(() => setCfg({}));
     carregarSementes();
     carregarDemo();
+    carregarBase();
   }, []);
+
+  const limparTudo = async () => {
+    const total = (base?.buscas || 0) + (base?.leads || 0);
+    if (!window.confirm(
+      `ATENÇÃO: isso apaga TODA a base operacional — ${base?.buscas || 0} busca(s), ${base?.leads || 0} lead(s) e ` +
+      `${base?.empresas || 0} empresa(s) do cache. Mantém usuários, integrações e configurações. NÃO dá pra desfazer.\n\n` +
+      `Digite OK na próxima janela para confirmar.`
+    )) return;
+    const conf = window.prompt('Para confirmar a exclusão total, digite: APAGAR TUDO');
+    if (conf !== 'APAGAR TUDO') { setMsg({ ok:false, txt:'Exclusão cancelada.' }); return; }
+    setLimpandoTudo(true);
+    try {
+      const r = await fetch('/api/admin/limpar-tudo', { method:'POST', credentials:'same-origin' });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.erro || 'Falha ao limpar.');
+      setMsg({ ok:true, txt:'Base operacional zerada. O painel agora está limpo.' });
+      carregarBase(); carregarDemo(); carregarSementes();
+    } catch (e) { setMsg({ ok:false, txt:e.message }); }
+    finally { setLimpandoTudo(false); }
+  };
 
   const limparDemo = async () => {
     if (!window.confirm(
@@ -1963,7 +1998,7 @@ function Config() {
       const r = await fetch('/api/config', {
         method:'PATCH', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
         body: JSON.stringify({
-          ritmo_padrao: cfg.ritmo_padrao, corte_padrao: cfg.corte_padrao,
+          limite_diario: cfg.limite_diario, corte_padrao: cfg.corte_padrao,
           ttl_cache_dias: cfg.ttl_cache_dias, parada_min: cfg.parada_min,
           alerta_email: cfg.alerta_email, crm_auto_global: cfg.crm_auto_global,
           crm_lookalike_auto: cfg.crm_lookalike_auto,
@@ -1998,9 +2033,13 @@ function Config() {
         <h3 style={{ fontSize:14, fontWeight:600, margin:'0 0 4px' }}>Parâmetros padrão</h3>
         <p style={{ fontSize:12.5, color:'var(--faint)', margin:'0 0 18px' }}>Valores iniciais aplicados a novas buscas e ao motor.</p>
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:16 }}>
-          {numField('Ritmo padrão', 'ritmo_padrao', 'leads/h')}
+          {numField('Limite diário de leads', 'limite_diario', 'leads/dia')}
           {numField('Corte de score', 'corte_padrao', 'pts')}
           {numField('TTL de cache', 'ttl_cache_dias', 'dias')}
+        </div>
+        <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:12, lineHeight:1.5 }}>
+          O <b>limite diário</b> é o teto de leads novos que o motor capta por dia somando todas as buscas — protege o
+          orçamento. Ao atingi-lo, a captação pausa e retoma no dia seguinte. 0 = sem teto.
         </div>
       </div>
 
@@ -2136,6 +2175,23 @@ function Config() {
               background:'transparent', color:C.red, fontWeight:600, fontSize:13, fontFamily:'inherit',
               cursor: limpandoDemo?'default':'pointer', opacity: limpandoDemo?.6:1 }}>
             {limpandoDemo ? 'Removendo…' : 'Limpar dados de demonstração'}
+          </button>
+        </div>
+      )}
+
+      {base && (base.buscas > 0 || base.leads > 0) && (
+        <div style={{ background:'var(--panel)', border:'1px solid color-mix(in srgb, '+C.red+' 40%, var(--border))', borderRadius:14, padding:22 }}>
+          <h3 style={{ fontSize:14, fontWeight:600, margin:'0 0 4px', color:C.red }}>Zona de perigo — apagar tudo</h3>
+          <p style={{ fontSize:12.5, color:'var(--faint)', margin:'0 0 16px', lineHeight:1.5 }}>
+            Remove <b style={{ color:'var(--text)' }}>toda</b> a base operacional: {fmtNum(base.buscas)} busca(s),
+            {' '}{fmtNum(base.leads)} lead(s) e {fmtNum(base.empresas)} empresa(s) do cache. Usuários, integrações
+            (chaves) e configurações são mantidos. Use para começar do zero. <b>Irreversível.</b>
+          </p>
+          <button onClick={limparTudo} disabled={limpandoTudo}
+            style={{ height:40, padding:'0 18px', borderRadius:10, border:'none',
+              background:C.red, color:'#fff', fontWeight:600, fontSize:13, fontFamily:'inherit',
+              cursor: limpandoTudo?'default':'pointer', opacity: limpandoTudo?.6:1 }}>
+            {limpandoTudo ? 'Apagando…' : 'Zerar toda a base operacional'}
           </button>
         </div>
       )}
@@ -2652,7 +2708,9 @@ function CrmModal({ ids, onClose, onConfirm }) {
 
 // ── App ───────────────────────────────────────────────────────────────────────
 function App() {
-  const [theme, setTheme] = useState('dark');
+  const [theme, setTheme] = useState(() => {
+    try { return localStorage.getItem('hunter_theme') || 'dark'; } catch (_) { return 'dark'; }
+  });
   const [screen, setScreen] = useState('dashboard');
   const [openLeadId, setOpenLeadId] = useState(null);
   const [crmIds, setCrmIds] = useState(null);
@@ -2668,7 +2726,12 @@ function App() {
   }, []);
 
   const navTo = (s) => { setScreen(s); setOpenLeadId(null); setCrmIds(null); };
-  const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
+  // Persiste o tema escolhido: só muda quando o usuário clica (sobrevive ao reload).
+  const toggleTheme = () => setTheme(t => {
+    const novo = t === 'dark' ? 'light' : 'dark';
+    try { localStorage.setItem('hunter_theme', novo); } catch (_) {}
+    return novo;
+  });
   const logout = async () => {
     try { await fetch('/api/auth/logout', { method:'POST', credentials:'same-origin' }); } catch (_) {}
     window.location = '/';

@@ -350,6 +350,7 @@ async function init() {
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS lista TEXT;
     ALTER TABLE leads  ADD COLUMN IF NOT EXISTS crm_ref TEXT;
     CREATE INDEX IF NOT EXISTS idx_leads_crm_ref ON leads(crm_ref);
+    ALTER TABLE config ADD COLUMN IF NOT EXISTS limite_diario INTEGER NOT NULL DEFAULT 350;
     CREATE TABLE IF NOT EXISTS sementes (
       id         SERIAL PRIMARY KEY,
       cnpj       TEXT NOT NULL,
@@ -999,6 +1000,7 @@ app.patch('/api/config', requireAuth, requireAdmin, async (req, res) => {
   if ('corte_padrao'   in b) add('corte_padrao',   num(b.corte_padrao, 0, 100));
   if ('ttl_cache_dias' in b) add('ttl_cache_dias', num(b.ttl_cache_dias, 1, 3650));
   if ('parada_min'     in b) add('parada_min',     num(b.parada_min, 1, 10080));
+  if ('limite_diario'  in b) add('limite_diario',  num(b.limite_diario, 0, 100000));
   if ('alerta_email'   in b) { sets.push(`alerta_email=$${sets.length+1}`); vals.push(String(b.alerta_email || '').trim() || null); }
   if ('crm_auto_global' in b) { sets.push(`crm_auto_global=$${sets.length+1}`); vals.push(!!b.crm_auto_global); }
   if ('crm_lookalike_auto' in b) { sets.push(`crm_lookalike_auto=$${sets.length+1}`); vals.push(!!b.crm_lookalike_auto); }
@@ -1265,6 +1267,28 @@ app.post('/api/admin/limpar-demo', requireAuth, requireAdmin, async (req, res) =
     console.error('[limpar-demo]', e.message);
     res.status(500).json({ erro: 'erro interno' });
   } finally { client.release(); }
+});
+
+// Contagem da base operacional inteira (pra tela de manutenção).
+app.get('/api/admin/base', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { rows:[c] } = await pool.query(
+      `SELECT (SELECT COUNT(*)::int FROM buscas) buscas,
+              (SELECT COUNT(*)::int FROM leads) leads,
+              (SELECT COUNT(*)::int FROM empresas) empresas,
+              (SELECT COUNT(*)::int FROM sementes) sementes`
+    );
+    res.json(c);
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// Zera TODA a base operacional (buscas, leads, empresas, sementes). Mantém
+// usuários, configurações e integrações (chaves). Ação irreversível.
+app.post('/api/admin/limpar-tudo', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    await pool.query(`TRUNCATE leads, sementes, buscas, empresas RESTART IDENTITY CASCADE`);
+    res.json({ ok: true });
+  } catch (e) { console.error('[limpar-tudo]', e.message); res.status(500).json({ erro: 'erro interno' }); }
 });
 
 // ── arquivos estáticos ────────────────────────────────────────────────────────

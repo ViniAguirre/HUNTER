@@ -6,17 +6,19 @@ const {
 } = React;
 
 // ── constants ─────────────────────────────────────────────────────────────────
+// gold é o ACENTO temático (var --accent): pálido no escuro, dourado escuro e
+// legível no claro. Assim os detalhes aparecem bem nos dois modos.
 const C = {
   green: '#34D399',
   amber: '#FBBF24',
   red: '#F87171',
   blue: '#3A8EFF',
-  gold: '#FBE49A',
+  gold: 'var(--accent)',
   cyan: '#7AD9FF',
   gray: '#7C89A8'
 };
 function themeVars(t) {
-  return t === 'light' ? '--bg:#F4F6FA;--panel:#FFFFFF;--panel2:#EEF2F8;--hover:rgba(14,25,54,.04);--border:rgba(14,25,54,.10);--track:rgba(14,25,54,.08);--text:#0E1936;--dim:#5A6480;--faint:#8A93A8;--gold:#FBE49A;--blue:#3A8EFF;--cyan:#7AD9FF;--red:#F87171;' : '--bg:#0E1936;--panel:#0A0F1F;--panel2:#101a3a;--hover:rgba(255,255,255,.04);--border:rgba(255,255,255,.08);--track:rgba(255,255,255,.08);--text:#ECEFF7;--dim:#8A95B4;--faint:#5E688C;--gold:#FBE49A;--blue:#3A8EFF;--cyan:#7AD9FF;--red:#F87171;';
+  return t === 'light' ? '--bg:#F4F6FA;--panel:#FFFFFF;--panel2:#EEF2F8;--hover:rgba(14,25,54,.04);--border:rgba(14,25,54,.12);--track:rgba(14,25,54,.10);--text:#0E1936;--dim:#4E586F;--faint:#77819A;--gold:#E7C053;--accent:#976F00;--blue:#2A73E6;--cyan:#1C86B8;--red:#E0544E;' : '--bg:#0E1936;--panel:#0A0F1F;--panel2:#101a3a;--hover:rgba(255,255,255,.04);--border:rgba(255,255,255,.08);--track:rgba(255,255,255,.08);--text:#ECEFF7;--dim:#8A95B4;--faint:#5E688C;--gold:#FBE49A;--accent:#FBE49A;--blue:#3A8EFF;--cyan:#7AD9FF;--red:#F87171;';
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -59,7 +61,9 @@ const SvgMulti = ({
 function scoreColor(s) {
   return s >= 75 ? C.green : s >= 50 ? C.amber : C.red;
 }
-function badgeStyle(hex) {
+function badgeStyle(cor) {
+  // color-mix aceita hex e CSS vars (var(--accent)), então o badge dourado fica
+  // legível no claro sem quebrar a concatenação de alpha.
   return {
     display: 'inline-flex',
     alignItems: 'center',
@@ -68,9 +72,9 @@ function badgeStyle(hex) {
     fontWeight: 600,
     padding: '3px 9px',
     borderRadius: 20,
-    background: hex + '1f',
-    color: hex,
-    border: `1px solid ${hex}33`,
+    background: `color-mix(in srgb, ${cor} 15%, transparent)`,
+    color: cor,
+    border: `1px solid color-mix(in srgb, ${cor} 34%, transparent)`,
     whiteSpace: 'nowrap'
   };
 }
@@ -886,7 +890,7 @@ function Dashboard({
   }];
   const hlLabel = {
     green: 'produzindo',
-    amber: 'ritmo lento',
+    amber: 'atenção',
     red: 'parada',
     gray: 'encerrada'
   };
@@ -1016,7 +1020,7 @@ function Dashboard({
       color: 'var(--faint)',
       marginTop: 2
     }
-  }, b.ritmo, " leads/h \xB7 ", hlLabel[b.health] || '—')), /*#__PURE__*/React.createElement("div", {
+  }, hlLabel[b.health] || '—')), /*#__PURE__*/React.createElement("div", {
     style: {
       textAlign: 'right',
       flexShrink: 0
@@ -1229,7 +1233,7 @@ function ExportModal({
       height: 40,
       borderRadius: 9,
       border: `1.5px solid ${C.gold}`,
-      background: 'rgba(251,228,154,.08)',
+      background: 'color-mix(in srgb, var(--accent) 10%, transparent)',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
@@ -1803,7 +1807,7 @@ function Buscas({
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
-      gridTemplateColumns: '24px 2.2fr 1fr 1fr .7fr .8fr .8fr .8fr 1fr 40px',
+      gridTemplateColumns: '24px 2.2fr 1fr 1fr .8fr .8fr .8fr 1fr 40px',
       alignItems: 'center',
       gap: 10,
       padding: '12px 18px',
@@ -1814,7 +1818,7 @@ function Buscas({
       color: 'var(--faint)',
       textTransform: 'uppercase'
     }
-  }, /*#__PURE__*/React.createElement("div", null), /*#__PURE__*/React.createElement("div", null, "Nome"), /*#__PURE__*/React.createElement("div", null, "Status"), /*#__PURE__*/React.createElement("div", null, "Criada por"), /*#__PURE__*/React.createElement("div", null, "Ritmo"), /*#__PURE__*/React.createElement("div", null, "Encontr."), /*#__PURE__*/React.createElement("div", null, "Qualif."), /*#__PURE__*/React.createElement("div", null, "CRM"), /*#__PURE__*/React.createElement("div", null, "Atividade"), /*#__PURE__*/React.createElement("div", null)), buscas === null && /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", null), /*#__PURE__*/React.createElement("div", null, "Nome"), /*#__PURE__*/React.createElement("div", null, "Status"), /*#__PURE__*/React.createElement("div", null, "Criada por"), /*#__PURE__*/React.createElement("div", null, "Encontr."), /*#__PURE__*/React.createElement("div", null, "Qualif."), /*#__PURE__*/React.createElement("div", null, "CRM"), /*#__PURE__*/React.createElement("div", null, "Atividade"), /*#__PURE__*/React.createElement("div", null)), buscas === null && /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '22px 18px',
       fontSize: 13,
@@ -1832,7 +1836,7 @@ function Buscas({
     className: "row-hover",
     style: {
       display: 'grid',
-      gridTemplateColumns: '24px 2.2fr 1fr 1fr .7fr .8fr .8fr .8fr 1fr 40px',
+      gridTemplateColumns: '24px 2.2fr 1fr 1fr .8fr .8fr .8fr 1fr 40px',
       alignItems: 'center',
       gap: 10,
       padding: '14px 18px',
@@ -1858,10 +1862,6 @@ function Buscas({
       color: 'var(--dim)'
     }
   }, b.criador_nome || b.criador || '—'), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12.5
-    }
-  }, b.ritmo ? b.ritmo + '/h' : '—'), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 13,
       fontWeight: 600
@@ -2297,7 +2297,7 @@ function BuscaDetail({
       marginTop: 12,
       lineHeight: 1.5
     }
-  }, "Ritmo atual: ", b.ritmo || 0, " leads/h. \xDAltima atividade: ", timeAgo(b.ultima_ativ), "."))), criterios.params?.perfil && /*#__PURE__*/React.createElement(PerfilMedio, {
+  }, "\xDAltima atividade: ", timeAgo(b.ultima_ativ), "."))), criterios.params?.perfil && /*#__PURE__*/React.createElement(PerfilMedio, {
     perfil: criterios.params.perfil
   }), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -2453,7 +2453,6 @@ function NovaBusca({
   onSalvar
 }) {
   const [tipo, setTipo] = useState('icp');
-  const [ritmo, setRitmo] = useState(120);
   const [corte, setCorte] = useState(60);
   const [saving, setSaving] = useState(false);
   const [ufs, setUfs] = useState([]);
@@ -2508,7 +2507,6 @@ function NovaBusca({
     fetch('/api/config', {
       credentials: 'same-origin'
     }).then(r => r.json()).then(c => {
-      if (c?.ritmo_padrao != null) setRitmo(c.ritmo_padrao);
       if (c?.corte_padrao != null) setCorte(c.corte_padrao);
     }).catch(() => {});
   }, []);
@@ -2667,7 +2665,6 @@ function NovaBusca({
         body: JSON.stringify({
           nome,
           tipo,
-          ritmo,
           corte_score: corte,
           crm_auto: crmAuto,
           criterios
@@ -2708,7 +2705,7 @@ function NovaBusca({
         background: 'var(--panel)',
         transition: 'all .12s',
         border: active ? `1.5px solid ${C.gold}` : '1.5px solid var(--border)',
-        boxShadow: active ? `0 0 0 3px rgba(251,228,154,.08)` : 'none'
+        boxShadow: active ? `0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent)` : 'none'
       }
     }, /*#__PURE__*/React.createElement(Svg, {
       d: t.icon,
@@ -2923,7 +2920,7 @@ function NovaBusca({
       borderRadius: 7,
       fontSize: 11.5,
       border: `1px solid ${C.gold}`,
-      background: 'rgba(251,228,154,.1)',
+      background: 'color-mix(in srgb, var(--accent) 13%, transparent)',
       color: C.gold
     }
   }, s.d, /*#__PURE__*/React.createElement("span", {
@@ -2962,7 +2959,7 @@ function NovaBusca({
       borderRadius: 7,
       fontSize: 11.5,
       border: ufs.includes(u) ? `1px solid ${C.gold}` : '1px solid var(--border)',
-      background: ufs.includes(u) ? 'rgba(251,228,154,.1)' : 'transparent',
+      background: ufs.includes(u) ? 'color-mix(in srgb, var(--accent) 13%, transparent)' : 'transparent',
       color: ufs.includes(u) ? C.gold : 'var(--dim)'
     }
   }, u)))), /*#__PURE__*/React.createElement("div", {
@@ -2991,7 +2988,7 @@ function NovaBusca({
       borderRadius: 7,
       fontSize: 11.5,
       border: portes.includes(p) ? `1px solid ${C.gold}` : '1px solid var(--border)',
-      background: portes.includes(p) ? 'rgba(251,228,154,.1)' : 'transparent',
+      background: portes.includes(p) ? 'color-mix(in srgb, var(--accent) 13%, transparent)' : 'transparent',
       color: portes.includes(p) ? C.gold : 'var(--dim)'
     }
   }, p)))), /*#__PURE__*/React.createElement("div", {
@@ -3090,7 +3087,7 @@ function NovaBusca({
       borderRadius: 7,
       fontSize: 11.5,
       border: `1px solid ${C.gold}`,
-      background: 'rgba(251,228,154,.1)',
+      background: 'color-mix(in srgb, var(--accent) 13%, transparent)',
       color: C.gold
     }
   }, m.n, " \xB7 ", m.uf, /*#__PURE__*/React.createElement("span", {
@@ -3299,7 +3296,32 @@ function NovaBusca({
         resize: 'vertical'
       }
     })));
-  })(), /*#__PURE__*/React.createElement("div", {
+  })(), tipo === 'icp' && cnaeSel.length === 0 && municSel.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 11,
+      padding: '13px 15px',
+      marginBottom: 18,
+      borderRadius: 12,
+      background: 'color-mix(in srgb, var(--amber, #FBBF24) 12%, transparent)',
+      border: '1px solid color-mix(in srgb, #FBBF24 45%, transparent)'
+    }
+  }, /*#__PURE__*/React.createElement(Svg, {
+    d: "M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z",
+    color: "#FBBF24",
+    w: 20,
+    h: 20,
+    sw: 1.7,
+    extra: {
+      flexShrink: 0,
+      marginTop: 1
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      lineHeight: 1.5
+    }
+  }, /*#__PURE__*/React.createElement("b", null, "Crit\xE9rio muito amplo."), " Sem atividade (CNAE) nem munic\xEDpio, a busca varre ", ufs.length ? `todas as empresas de ${ufs.join('/')}` : 'o Brasil inteiro', " \u2014 isso traz nicho errado e ", /*#__PURE__*/React.createElement("b", null, "consome muito cr\xE9dito"), ". Escolha ao menos uma atividade (campo acima) ou um munic\xEDpio.")), /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'var(--panel)',
       border: '1px solid var(--border)',
@@ -3338,45 +3360,11 @@ function NovaBusca({
       fontSize: 13,
       fontFamily: 'inherit'
     }
-  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  })), /*#__PURE__*/React.createElement("div", {
     style: {
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: 9
+      gridColumn: '1 / -1'
     }
-  }, /*#__PURE__*/React.createElement("label", {
-    style: {
-      fontSize: 12,
-      color: 'var(--dim)'
-    }
-  }, "Ritmo da torneira"), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 13,
-      fontWeight: 600,
-      color: C.gold
-    }
-  }, ritmo, " leads/h")), /*#__PURE__*/React.createElement("input", {
-    type: "range",
-    min: 20,
-    max: 300,
-    step: 10,
-    value: ritmo,
-    onChange: e => setRitmo(+e.target.value),
-    style: {
-      width: '100%',
-      accentColor: '#FBE49A',
-      cursor: 'pointer'
-    }
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      justifyContent: 'space-between',
-      fontSize: 10.5,
-      color: 'var(--faint)',
-      marginTop: 5
-    }
-  }, /*#__PURE__*/React.createElement("span", null, "econ\xF4mico"), /*#__PURE__*/React.createElement("span", null, "agressivo"))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -3403,7 +3391,7 @@ function NovaBusca({
     onChange: e => setCorte(+e.target.value),
     style: {
       width: '100%',
-      accentColor: '#FBE49A',
+      accentColor: 'var(--accent)',
       cursor: 'pointer'
     }
   }), /*#__PURE__*/React.createElement("div", {
@@ -3414,7 +3402,14 @@ function NovaBusca({
       color: 'var(--faint)',
       marginTop: 5
     }
-  }, /*#__PURE__*/React.createElement("span", null, "permissivo"), /*#__PURE__*/React.createElement("span", null, "rigoroso"))), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("span", null, "permissivo"), /*#__PURE__*/React.createElement("span", null, "rigoroso")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)',
+      marginTop: 8,
+      lineHeight: 1.4
+    }
+  }, "O volume \xE9 controlado por um teto di\xE1rio geral (em Configura\xE7\xF5es), n\xE3o por busca \u2014 o Hunter faz v\xE1rias camadas de garimpo e qualifica\xE7\xE3o, ent\xE3o o limite di\xE1rio j\xE1 basta.")), /*#__PURE__*/React.createElement("div", {
     style: {
       gridColumn: '1 / -1',
       borderTop: '1px solid var(--border)',
@@ -3445,7 +3440,7 @@ function NovaBusca({
         fontSize: 12.5,
         lineHeight: 1.35,
         border: ativo ? `1.5px solid ${C.gold}` : '1.5px solid var(--border)',
-        background: ativo ? 'rgba(251,228,154,.08)' : 'transparent',
+        background: ativo ? 'color-mix(in srgb, var(--accent) 10%, transparent)' : 'transparent',
         color: ativo ? 'var(--text)' : 'var(--dim)'
       }
     }, label);
@@ -4461,19 +4456,60 @@ function Config() {
   const [rotacionando, setRotacionando] = useState(false);
   const [demo, setDemo] = useState(null);
   const [limpandoDemo, setLimpandoDemo] = useState(false);
+  const [base, setBase] = useState(null);
+  const [limpandoTudo, setLimpandoTudo] = useState(false);
   const carregarSementes = () => fetch('/api/sementes/status', {
     credentials: 'same-origin'
   }).then(r => r.json()).then(setSementes).catch(() => {});
   const carregarDemo = () => fetch('/api/admin/demo', {
     credentials: 'same-origin'
   }).then(r => r.json()).then(setDemo).catch(() => {});
+  const carregarBase = () => fetch('/api/admin/base', {
+    credentials: 'same-origin'
+  }).then(r => r.json()).then(setBase).catch(() => {});
   useEffect(() => {
     fetch('/api/config', {
       credentials: 'same-origin'
     }).then(r => r.json()).then(setCfg).catch(() => setCfg({}));
     carregarSementes();
     carregarDemo();
+    carregarBase();
   }, []);
+  const limparTudo = async () => {
+    const total = (base?.buscas || 0) + (base?.leads || 0);
+    if (!window.confirm(`ATENÇÃO: isso apaga TODA a base operacional — ${base?.buscas || 0} busca(s), ${base?.leads || 0} lead(s) e ` + `${base?.empresas || 0} empresa(s) do cache. Mantém usuários, integrações e configurações. NÃO dá pra desfazer.\n\n` + `Digite OK na próxima janela para confirmar.`)) return;
+    const conf = window.prompt('Para confirmar a exclusão total, digite: APAGAR TUDO');
+    if (conf !== 'APAGAR TUDO') {
+      setMsg({
+        ok: false,
+        txt: 'Exclusão cancelada.'
+      });
+      return;
+    }
+    setLimpandoTudo(true);
+    try {
+      const r = await fetch('/api/admin/limpar-tudo', {
+        method: 'POST',
+        credentials: 'same-origin'
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.erro || 'Falha ao limpar.');
+      setMsg({
+        ok: true,
+        txt: 'Base operacional zerada. O painel agora está limpo.'
+      });
+      carregarBase();
+      carregarDemo();
+      carregarSementes();
+    } catch (e) {
+      setMsg({
+        ok: false,
+        txt: e.message
+      });
+    } finally {
+      setLimpandoTudo(false);
+    }
+  };
   const limparDemo = async () => {
     if (!window.confirm(`Isso vai remover as buscas de demonstração e ${demo?.leads || 0} lead(s) que elas geraram ` + `(inclui os leads-exemplo e o que as buscas demo descobriram com critério amplo). ` + `As empresas ficam no cache. Não dá pra desfazer. Continuar?`)) return;
     setLimpandoDemo(true);
@@ -4529,7 +4565,7 @@ function Config() {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          ritmo_padrao: cfg.ritmo_padrao,
+          limite_diario: cfg.limite_diario,
           corte_padrao: cfg.corte_padrao,
           ttl_cache_dias: cfg.ttl_cache_dias,
           parada_min: cfg.parada_min,
@@ -4630,7 +4666,14 @@ function Config() {
       gridTemplateColumns: '1fr 1fr 1fr',
       gap: 16
     }
-  }, numField('Ritmo padrão', 'ritmo_padrao', 'leads/h'), numField('Corte de score', 'corte_padrao', 'pts'), numField('TTL de cache', 'ttl_cache_dias', 'dias'))), /*#__PURE__*/React.createElement("div", {
+  }, numField('Limite diário de leads', 'limite_diario', 'leads/dia'), numField('Corte de score', 'corte_padrao', 'pts'), numField('TTL de cache', 'ttl_cache_dias', 'dias')), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--faint)',
+      marginTop: 12,
+      lineHeight: 1.5
+    }
+  }, "O ", /*#__PURE__*/React.createElement("b", null, "limite di\xE1rio"), " \xE9 o teto de leads novos que o motor capta por dia somando todas as buscas \u2014 protege o or\xE7amento. Ao atingi-lo, a capta\xE7\xE3o pausa e retoma no dia seguinte. 0 = sem teto.")), /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'var(--panel)',
       border: '1px solid var(--border)',
@@ -4962,7 +5005,48 @@ function Config() {
       cursor: limpandoDemo ? 'default' : 'pointer',
       opacity: limpandoDemo ? .6 : 1
     }
-  }, limpandoDemo ? 'Removendo…' : 'Limpar dados de demonstração')), /*#__PURE__*/React.createElement("div", {
+  }, limpandoDemo ? 'Removendo…' : 'Limpar dados de demonstração')), base && (base.buscas > 0 || base.leads > 0) && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'var(--panel)',
+      border: '1px solid color-mix(in srgb, ' + C.red + ' 40%, var(--border))',
+      borderRadius: 14,
+      padding: 22
+    }
+  }, /*#__PURE__*/React.createElement("h3", {
+    style: {
+      fontSize: 14,
+      fontWeight: 600,
+      margin: '0 0 4px',
+      color: C.red
+    }
+  }, "Zona de perigo \u2014 apagar tudo"), /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 12.5,
+      color: 'var(--faint)',
+      margin: '0 0 16px',
+      lineHeight: 1.5
+    }
+  }, "Remove ", /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: 'var(--text)'
+    }
+  }, "toda"), " a base operacional: ", fmtNum(base.buscas), " busca(s),", ' ', fmtNum(base.leads), " lead(s) e ", fmtNum(base.empresas), " empresa(s) do cache. Usu\xE1rios, integra\xE7\xF5es (chaves) e configura\xE7\xF5es s\xE3o mantidos. Use para come\xE7ar do zero. ", /*#__PURE__*/React.createElement("b", null, "Irrevers\xEDvel.")), /*#__PURE__*/React.createElement("button", {
+    onClick: limparTudo,
+    disabled: limpandoTudo,
+    style: {
+      height: 40,
+      padding: '0 18px',
+      borderRadius: 10,
+      border: 'none',
+      background: C.red,
+      color: '#fff',
+      fontWeight: 600,
+      fontSize: 13,
+      fontFamily: 'inherit',
+      cursor: limpandoTudo ? 'default' : 'pointer',
+      opacity: limpandoTudo ? .6 : 1
+    }
+  }, limpandoTudo ? 'Apagando…' : 'Zerar toda a base operacional')), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -6241,7 +6325,13 @@ function CrmModal({
 
 // ── App ───────────────────────────────────────────────────────────────────────
 function App() {
-  const [theme, setTheme] = useState('dark');
+  const [theme, setTheme] = useState(() => {
+    try {
+      return localStorage.getItem('hunter_theme') || 'dark';
+    } catch (_) {
+      return 'dark';
+    }
+  });
   const [screen, setScreen] = useState('dashboard');
   const [openLeadId, setOpenLeadId] = useState(null);
   const [crmIds, setCrmIds] = useState(null);
@@ -6260,7 +6350,14 @@ function App() {
     setOpenLeadId(null);
     setCrmIds(null);
   };
-  const toggleTheme = () => setTheme(t => t === 'dark' ? 'light' : 'dark');
+  // Persiste o tema escolhido: só muda quando o usuário clica (sobrevive ao reload).
+  const toggleTheme = () => setTheme(t => {
+    const novo = t === 'dark' ? 'light' : 'dark';
+    try {
+      localStorage.setItem('hunter_theme', novo);
+    } catch (_) {}
+    return novo;
+  });
   const logout = async () => {
     try {
       await fetch('/api/auth/logout', {

@@ -39,11 +39,20 @@ module.exports = async function descoberta(job, pool, queues) {
     criterios = resultado.criterios;
   }
 
+  // Limite diário GERAL de consumo: teto de leads novos criados por dia em todas
+  // as buscas somadas. Ao bater, a descoberta para (protege o orçamento).
+  const orcamento = await orcamentoHoje(pool);
+  if (orcamento <= 0) {
+    await pool.query(`UPDATE buscas SET ultimo_heartbeat=now() WHERE id=$1`, [busca_id]);
+    return { skipped: 'limite_diario', motivo: 'teto diário de leads atingido', novos: 0 };
+  }
+
   // ── Modo importação: os leads SÃO os CNPJs da lista (sem expandir) ──────────
   if (tipo === 'cnpj') {
     const cnpjs = perfilamento.parseCnpjs(criterios);
-    const counters = { novos: 0, pulados: 0, enfileirados: 0, total: cnpjs.length };
+    const counters = { novos: 0, pulados: 0, enfileirados: 0, total: cnpjs.length, orcamento, limiteAtingido: false };
     for (const cnpj of cnpjs) {
+      if (counters.limiteAtingido) break;
       const { rows: [emp] } = await pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [cnpj]);
       if (!emp) { counters.pulados++; continue; }   // não perfilou/não existe → pula
       await processarOffice(pool, queues, busca_id, emp, counters);
@@ -67,26 +76,43 @@ module.exports = async function descoberta(job, pool, queues) {
   }
 
   let token = null, pagina = 0, esgotou = false;
-  const counters = { novos: 0, pulados: 0, enfileirados: 0, total: 0 };
+  const counters = { novos: 0, pulados: 0, enfileirados: 0, total: 0, orcamento, limiteAtingido: false };
 
   do {
     const { offices, next } = await cnpja.search({ ...params, token }, ig.key_cifrada);
     counters.total += offices.length;
     for (const office of offices) {
+      if (counters.limiteAtingido) break;
       await processarOffice(pool, queues, busca_id, office, counters);
     }
     token = next;
     pagina++;
+    if (counters.limiteAtingido) break;   // bateu o teto diário → para a varredura
     if (!next) { esgotou = true; break; }
   } while (pagina < TETO_PAGINAS);
 
+  // Se parou só pelo teto diário, deixa a busca 'Ativa' pra continuar amanhã;
+  // se varreu o universo todo, marca 'Esgotada'.
   await pool.query(
-    `UPDATE buscas SET universo_varrido = universo_varrido + $1, status='Esgotada', ultimo_heartbeat=now() WHERE id=$2`,
-    [counters.total, busca_id]
+    `UPDATE buscas SET universo_varrido = universo_varrido + $1,
+       status = CASE WHEN $3 THEN status ELSE 'Esgotada' END,
+       ultimo_heartbeat=now() WHERE id=$2`,
+    [counters.total, busca_id, counters.limiteAtingido && !esgotou]
   );
 
   return { modo: tipo, ...counters, paginas: pagina, esgotou };
 };
+
+// Quantos leads novos ainda cabem hoje no teto geral (config.limite_diario).
+async function orcamentoHoje(pool) {
+  const { rows: [cfg] } = await pool.query(`SELECT limite_diario FROM config WHERE id=1`);
+  const limite = cfg?.limite_diario ?? 350;
+  if (!limite) return Number.MAX_SAFE_INTEGER;   // 0 = sem teto
+  const { rows: [{ n }] } = await pool.query(
+    `SELECT COUNT(*)::int n FROM leads WHERE criado_em >= date_trunc('day', now())`
+  );
+  return Math.max(0, limite - n);
+}
 
 // ── Perfilamento: baixa firmografia (grátis) dos CNPJs da lista e monta o perfil.
 // Sementes vêm da lista colada (criterios.cnpjs) E da lista alimentada pelo CRM.
@@ -148,6 +174,8 @@ async function upsertEmpresa(pool, o) {
 
 // Portão de existência + criação de empresa/lead + enfileira enriquecimento.
 async function processarOffice(pool, queues, busca_id, office, counters) {
+  // Teto diário geral: se o orçamento zerou, não cria mais lead novo.
+  if (counters.orcamento != null && counters.orcamento <= 0) { counters.limiteAtingido = true; return; }
   if (!office.cnpj || office.cnpj.length !== 14) return;
   if (office.situacao && !/ativa/i.test(office.situacao)) { counters.pulados++; return; }
 
@@ -181,6 +209,10 @@ async function processarOffice(pool, queues, busca_id, office, counters) {
       { removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 3, backoff: { type: 'exponential', delay: 5000 } }
     );
     counters.enfileirados++;
+    if (counters.orcamento != null) {
+      counters.orcamento--;
+      if (counters.orcamento <= 0) counters.limiteAtingido = true;
+    }
   }
 }
 
