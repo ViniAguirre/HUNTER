@@ -14,39 +14,106 @@ const FIELD_MASK = [
   'places.websiteUri', 'places.businessStatus', 'places.formattedAddress',
 ].join(',');
 
-// Tira um resumo do que a empresa diz de si mesma: <title>, meta description e,
-// na falta desses, o primeiro texto visível do body. É o que dá ao agente SWOT
-// contexto REAL (o que ela vende, pra quem, tom de voz) em vez de só o CNAE.
-function extrairResumoSite(html) {
-  const clean = s => s.replace(/\s+/g, ' ').replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ').trim();
-  const meta = html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']{20,400})["']/i)
-    || html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']{20,400})["']/i);
-  if (meta) return clean(meta[1]).slice(0, 400);
+// Scrape leve do site — grátis. Além da home, SEGUE uma página "Sobre/Serviços"
+// (e "Contato" se faltar e-mail) pra montar um resumo rico do que a empresa faz.
+// Limites de segurança: mesmo domínio, no máx. 3 páginas, timeouts curtos.
+const UA = 'Mozilla/5.0 (compatible; HunterBot/3)';
+const GET_OPTS = { timeout: 9000, maxContentLength: 3_000_000, maxRedirects: 3, headers: { 'User-Agent': UA } };
+const PALAVRAS_SOBRE = ['sobre', 'quem-somos', 'quem somos', 'institucional', 'a-empresa', 'a empresa',
+  'nossa-historia', 'nossa historia', 'historia', 'o-que-fazemos', 'servico', 'servicos', 'produto',
+  'solucao', 'solucoes', 'about'];
+const PALAVRAS_CONTATO = ['contato', 'fale-conosco', 'fale conosco', 'contact'];
 
-  const title = html.match(/<title>([^<]{5,150})<\/title>/i);
-  const semScript = html.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ');
-  const paragrafos = [...semScript.matchAll(/<p[^>]*>([^<]{40,400})<\/p>/gi)].map(m => clean(m[1]));
-  const corpo = paragrafos.find(p => p.length >= 40);
-
-  const partes = [title ? clean(title[1]) : null, corpo].filter(Boolean);
-  return partes.length ? partes.join(' — ').slice(0, 400) : null;
+const semAcento = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '');
+function limpar(s) {
+  return s.replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ').replace(/&#3[49];|&apos;/g, "'").replace(/&quot;/g, '"')
+    .replace(/&[a-z]+;/gi, ' ').replace(/\s+/g, ' ').trim();
 }
 
-// Scrape leve do site (fetch + regex) — grátis. Best-effort: se falhar, ignora.
-// Devolve tanto o e-mail quanto um resumo do site (mesma requisição, sem custo extra).
+function metaDescricao(html) {
+  const m = html.match(/<meta[^>]+(?:name|property)=["'](?:description|og:description)["'][^>]+content=["']([^"']{20,400})["']/i)
+    || html.match(/<meta[^>]+content=["']([^"']{20,400})["'][^>]+(?:name|property)=["'](?:description|og:description)["']/i);
+  return m ? limpar(m[1]).slice(0, 400) : null;
+}
+function paragrafos(html, max) {
+  const semRuido = html.replace(/<(script|style|nav|footer|header)[\s\S]*?<\/\1>/gi, ' ');
+  const out = [];
+  for (const m of semRuido.matchAll(/<(?:p|h1|h2|li)[^>]*>([\s\S]*?)<\/(?:p|h1|h2|li)>/gi)) {
+    const t = limpar(m[1]);
+    if (t.length >= 40 && !out.includes(t)) out.push(t);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+function titulo(html) { const m = html.match(/<title>([^<]{5,150})<\/title>/i); return m ? limpar(m[1]) : null; }
+
+// Monta um resumo (meta description + parágrafos relevantes, sem duplicar).
+function resumoDe(html, maxParag) {
+  const partes = [metaDescricao(html), ...paragrafos(html, maxParag)].filter(Boolean);
+  const uniq = [];
+  for (const p of partes) if (!uniq.some(u => u.includes(p) || p.includes(u))) uniq.push(p);
+  return uniq.join(' ').trim() || titulo(html) || null;
+}
+
+function extrairEmailDe(html) {
+  const achados = html.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || [];
+  return achados.find(e => !/(example|sentry|wixpress|godaddy|\.png|\.jpg|\.gif|\.webp|@2x)/i.test(e)) || null;
+}
+
+// Links internos (mesmo domínio) cujo texto ou caminho batem com as palavras.
+function acharLinks(html, baseUrl, palavras) {
+  let host; try { host = new URL(baseUrl).host; } catch { return []; }
+  const out = [];
+  for (const m of html.matchAll(/<a[^>]+href=["']([^"'#]+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
+    const href = m[1];
+    if (/^(mailto:|tel:|javascript:)/i.test(href)) continue;
+    let abs; try { abs = new URL(href, baseUrl); } catch { continue; }
+    if (abs.host !== host) continue;
+    if (/\.(pdf|jpe?g|png|gif|webp|zip|mp4|docx?|xlsx?)$/i.test(abs.pathname)) continue;
+    let alvo; try { alvo = semAcento((limpar(m[2]) + ' ' + decodeURIComponent(abs.pathname)).toLowerCase()); } catch { continue; }
+    if (palavras.some(p => alvo.includes(p))) {
+      const u = abs.href.split('#')[0];
+      if (u !== baseUrl && !out.includes(u)) out.push(u);
+    }
+  }
+  return out;
+}
+
+async function baixar(url) {
+  try { const { data } = await axios.get(url, GET_OPTS); return typeof data === 'string' ? data : ''; }
+  catch (_) { return ''; }
+}
+
 async function scrapeSite(site) {
-  try {
-    const { data } = await axios.get(site, {
-      timeout: 10000, maxContentLength: 3_000_000, maxRedirects: 3,
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; HunterBot/3)' },
-    });
-    const html = typeof data === 'string' ? data : '';
-    const achados = html.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || [];
-    // descarta lixo comum (assets, libs de tracking, imagens)
-    const email = achados.find(e => !/(example|sentry|wixpress|godaddy|\.png|\.jpg|\.gif|\.webp|@2x)/i.test(e)) || null;
-    const resumo = html ? extrairResumoSite(html) : null;
-    return { email, resumo };
-  } catch (_) { return { email: null, resumo: null }; }
+  const home = await baixar(site);
+  if (!home) return { email: null, resumo: null };
+
+  let email = extrairEmailDe(home);
+  const partes = [resumoDe(home, 2)].filter(Boolean);
+  let fonte = 'home';
+  const lidas = new Set([site]);
+
+  // 1) Segue UMA página institucional/serviços pra enriquecer o resumo.
+  const sobre = acharLinks(home, site, PALAVRAS_SOBRE).find(u => !lidas.has(u));
+  if (sobre) {
+    const h = await baixar(sobre); lidas.add(sobre);
+    const r = resumoDe(h, 4);
+    if (r && r.length >= 60) { partes.push(r); fonte = 'sobre'; }
+    if (!email) email = extrairEmailDe(h);
+  }
+
+  // 2) Se ainda faltar e-mail, tenta a página de contato.
+  if (!email) {
+    const contato = acharLinks(home, site, PALAVRAS_CONTATO).find(u => !lidas.has(u));
+    if (contato) { email = extrairEmailDe(await baixar(contato)); lidas.add(contato); }
+  }
+
+  // Combina/dedupe num resumo único e limitado.
+  const uniq = [];
+  for (const p of partes) if (p && !uniq.some(u => u.includes(p) || p.includes(u))) uniq.push(p);
+  const resumo = (uniq.join(' ').slice(0, 600).trim()) || null;
+  return { email, resumo, resumo_fonte: fonte, paginas_lidas: lidas.size };
 }
 
 // Busca o contato comercial da empresa no Google. Retorna também business_status
@@ -75,7 +142,8 @@ async function buscarContato(nome, cidade, uf, apiKey) {
 
   const telefone = (p.nationalPhoneNumber || p.internationalPhoneNumber || '').replace(/\D/g, '');
   const website = p.websiteUri || null;
-  const { email, resumo } = website ? await scrapeSite(website) : { email: null, resumo: null };
+  const s = website ? await scrapeSite(website) : { email: null, resumo: null, resumo_fonte: null, paginas_lidas: 0 };
+  const { email, resumo } = s;
 
   return {
     encontrado: true,
@@ -84,6 +152,7 @@ async function buscarContato(nome, cidade, uf, apiKey) {
     website,
     email,
     resumo_site: resumo,   // contexto real da empresa, pro agente SWOT — grátis (mesmo scrape do e-mail)
+    resumo_fonte: s.resumo_fonte,   // 'home' | 'sobre' (de onde saiu o resumo)
     business_status: p.businessStatus || null,
     nome_google: p.displayName?.text || null,
     fonte: 'google',
