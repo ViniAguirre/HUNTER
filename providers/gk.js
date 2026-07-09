@@ -93,6 +93,9 @@ function montarContato(empresa, lead, extras = {}) {
   const tel = (extras.telefone || '').replace(/\D/g, '');
   const extraInfo = [
     { name: 'Origem', value: 'Hunter' },
+    // Identificador de ida-e-volta: quando o contato for marcado como convertido,
+    // o webhook do GK devolve este ref e o Hunter acha o lead na própria base.
+    { name: 'hunter_ref', value: extras.ref || '' },
     { name: 'Empresa', value: e.razao || e.fantasia || '' },
     { name: 'CNAE', value: e.setor || '' },
     { name: 'Score do Lead', value: lead?.score != null ? String(lead.score) : '' },

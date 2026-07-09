@@ -14,12 +14,15 @@ const crypto = require('crypto');
 // Monta o payload a partir da empresa + lead. NÃO inclui o contato bruto da
 // Receita (é do contador) — o contato validado do decisor entra na fase de
 // validação de contato.
-function montarPayload(empresa, lead, busca) {
+function montarPayload(empresa, lead, busca, ref) {
   const e = empresa || {};
   return {
     evento: 'lead.pronto',
     enviado_em: new Date().toISOString(),
     hunter_lead_id: lead?.id,
+    // Devolva este hunter_ref quando o lead converter — o Hunter identifica o
+    // lead na própria base e o adiciona à lista de semelhantes.
+    hunter_ref: ref || lead?.crm_ref || null,
     score: lead?.score ?? null,
     empresa: {
       cnpj: e.cnpj,

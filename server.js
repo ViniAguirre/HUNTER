@@ -347,6 +347,8 @@ async function init() {
     ALTER TABLE config ADD COLUMN IF NOT EXISTS crm_lookalike_auto     BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE config ADD COLUMN IF NOT EXISTS webhook_entrada_secret TEXT;
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS lista TEXT;
+    ALTER TABLE leads  ADD COLUMN IF NOT EXISTS crm_ref TEXT;
+    CREATE INDEX IF NOT EXISTS idx_leads_crm_ref ON leads(crm_ref);
     CREATE TABLE IF NOT EXISTS sementes (
       id         SERIAL PRIMARY KEY,
       cnpj       TEXT NOT NULL,
@@ -1023,10 +1025,18 @@ app.post('/api/webhooks/crm/conversao', webhookLimiter, async (req, res) => {
     if (token !== secret) return res.status(401).json({ erro: 'token inválido' });
 
     const body = req.body || {};
-    // O GK (e a maioria dos CRMs) manda o CNPJ e a tag ANINHADOS no payload —
-    // varremos o objeto inteiro em vez de exigir um formato fixo.
-    const cnpj = extrairCnpj(body);
-    if (!cnpj) return res.status(400).json({ erro: 'cnpj inválido ou ausente no payload' });
+    // Caminho principal: o Hunter carimba um `hunter_ref` único no contato ao
+    // enviar pro CRM. O CRM só devolve esse ref e nós achamos o CNPJ na base —
+    // sem depender de o CRM reenviar todos os dados. Fallback: extrair o CNPJ.
+    const ref = extrairRef(body);
+    let cnpj = null, via = 'cnpj';
+    if (ref) {
+      const { rows:[l] } = await pool.query(`SELECT cnpj FROM leads WHERE crm_ref=$1 ORDER BY id DESC LIMIT 1`, [ref]);
+      if (l?.cnpj) { cnpj = l.cnpj; via = 'ref'; }
+    }
+    if (!cnpj) cnpj = extrairCnpj(body);
+    cnpj = String(cnpj || '').replace(/\D/g, '');   // sementes sempre com 14 dígitos limpos
+    if (cnpj.length !== 14) return res.status(400).json({ erro: 'não identifiquei o lead: nem hunter_ref conhecido nem CNPJ no payload' });
     const tagsRecebidas = coletarTags(body);
 
     const tagsConv = (cfg.crm_conversao_tags || []).map(t => String(t).toLowerCase());
@@ -1045,9 +1055,26 @@ app.post('/api/webhooks/crm/conversao', webhookLimiter, async (req, res) => {
 
     let busca_auto = null;
     if (cfg.crm_lookalike_auto) busca_auto = await garantirBuscaLookalikeAuto(n);
-    res.json({ ok: true, cnpj, total_lista: n, busca_auto });
+    res.json({ ok: true, cnpj, via, total_lista: n, busca_auto });
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
+
+// Acha o hunter_ref no payload (chave chamada hunter_ref OU valor no formato hnt_xxxx).
+function extrairRef(obj, prof = 0) {
+  if (obj == null || prof > 6) return null;
+  if (typeof obj === 'string') return /^hnt_[0-9a-f]{8,}$/i.test(obj.trim()) ? obj.trim() : null;
+  if (Array.isArray(obj)) { for (const v of obj) { const r = extrairRef(v, prof + 1); if (r) return r; } return null; }
+  if (typeof obj === 'object') {
+    for (const [k, v] of Object.entries(obj)) {
+      if (/hunter_?ref/i.test(k)) {
+        if (typeof v === 'string' && v.trim()) return v.trim();
+        const r = extrairRef(v, prof + 1); if (r) return r;   // ex.: {name:'hunter_ref', value:'hnt_..'}
+      }
+    }
+    for (const v of Object.values(obj)) { const r = extrairRef(v, prof + 1); if (r) return r; }
+  }
+  return null;
+}
 
 // Varre o payload (qualquer aninhamento) e devolve o primeiro CNPJ (14 dígitos).
 // Prioriza chaves com cara de documento pra evitar pegar um id numérico à toa.

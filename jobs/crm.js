@@ -6,6 +6,7 @@
  * Usado tanto pelo envio manual (botão no lead) quanto pelo automático (após o
  * SWOT). Roda em fila com retry — falha vai pra DLQ com mensagem clara.
  */
+const crypto = require('crypto');
 const webhook = require('../providers/webhook');
 const gk = require('../providers/gk');
 
@@ -20,10 +21,16 @@ module.exports = async function crm(job, pool) {
   if (!ig) return { skipped: 'sem_crm', lead_id };
 
   const { rows: [lead] } = await pool.query(
-    `SELECT l.id, l.cnpj, l.busca_id, l.score, l.swot, l.contato_validado, b.nome AS busca_nome
+    `SELECT l.id, l.cnpj, l.busca_id, l.score, l.swot, l.contato_validado, l.crm_ref, b.nome AS busca_nome
      FROM leads l LEFT JOIN buscas b ON b.id=l.busca_id WHERE l.id=$1`, [lead_id]
   );
   if (!lead) return { error: 'lead ausente', lead_id };
+
+  // Identificador de ida-e-volta: carimbado no CRM; quando o lead for marcado
+  // como convertido, o CRM devolve só isso e o Hunter acha o CNPJ na base.
+  // Estável por lead (reusa em reenvios).
+  const ref = lead.crm_ref || ('hnt_' + crypto.randomBytes(6).toString('hex'));
+  if (!lead.crm_ref) await pool.query(`UPDATE leads SET crm_ref=$2 WHERE id=$1`, [lead_id, ref]);
 
   const { rows: [empresa] } = await pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [lead.cnpj]);
 
@@ -43,7 +50,7 @@ module.exports = async function crm(job, pool) {
     const telefone = cv.telefone || (Array.isArray(cr.telefones) && cr.telefones[0]) || '';
     const email = cv.email || (Array.isArray(cr.emails) && cr.emails[0]) || '';
 
-    const contato = gk.montarContato(empresa, lead, { telefone, email, companyId: ig.config?.companyId || null });
+    const contato = gk.montarContato(empresa, lead, { telefone, email, ref, companyId: ig.config?.companyId || null });
     contato.extraInfo.push({ name: 'Contato', value: validado ? 'validado (decisor)' : (telefone || email ? 'não validado (Receita)' : 'sem contato') });
     if (lead.swot?.resumo) contato.extraInfo.push({ name: 'Resumo IA', value: String(lead.swot.resumo).slice(0, 240) });
 
@@ -52,7 +59,7 @@ module.exports = async function crm(job, pool) {
   } else {
     // webhook genérico
     const url = ig.key_cifrada;
-    const payload = webhook.montarPayload(empresa, lead, { id: lead.busca_id, nome: lead.busca_nome });
+    const payload = webhook.montarPayload(empresa, lead, { id: lead.busca_id, nome: lead.busca_nome }, ref);
     await webhook.enviar(url, payload, ig.config?.secret || null);
   }
 
