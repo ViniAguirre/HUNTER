@@ -85,11 +85,19 @@ async function baixar(url) {
   catch (_) { return ''; }
 }
 
+// Telefone brasileiro no texto (com DDD entre parênteses pra evitar falso positivo).
+function extrairTelefoneDe(html) {
+  const txt = html.replace(/<[^>]+>/g, ' ');
+  const m = txt.match(/\(\d{2}\)\s?9?\d{4}[-\s]?\d{4}/);
+  return m ? m[0].replace(/\D/g, '') : null;
+}
+
 async function scrapeSite(site) {
   const home = await baixar(site);
-  if (!home) return { email: null, resumo: null };
+  if (!home) return { email: null, resumo: null, telefone: null };
 
   let email = extrairEmailDe(home);
+  let telefone = extrairTelefoneDe(home);
   const partes = [resumoDe(home, 2)].filter(Boolean);
   let fonte = 'home';
   const lidas = new Set([site]);
@@ -101,19 +109,74 @@ async function scrapeSite(site) {
     const r = resumoDe(h, 4);
     if (r && r.length >= 60) { partes.push(r); fonte = 'sobre'; }
     if (!email) email = extrairEmailDe(h);
+    if (!telefone) telefone = extrairTelefoneDe(h);
   }
 
-  // 2) Se ainda faltar e-mail, tenta a página de contato.
-  if (!email) {
+  // 2) Se ainda faltar e-mail/telefone, tenta a página de contato.
+  if (!email || !telefone) {
     const contato = acharLinks(home, site, PALAVRAS_CONTATO).find(u => !lidas.has(u));
-    if (contato) { email = extrairEmailDe(await baixar(contato)); lidas.add(contato); }
+    if (contato) { const h = await baixar(contato); lidas.add(contato); email = email || extrairEmailDe(h); telefone = telefone || extrairTelefoneDe(h); }
   }
 
   // Combina/dedupe num resumo único e limitado.
   const uniq = [];
   for (const p of partes) if (p && !uniq.some(u => u.includes(p) || p.includes(u))) uniq.push(p);
   const resumo = (uniq.join(' ').slice(0, 600).trim()) || null;
-  return { email, resumo, resumo_fonte: fonte, paginas_lidas: lidas.size };
+  return { email, telefone, resumo, resumo_fonte: fonte, paginas_lidas: lidas.size };
+}
+
+// ── Fallback GRÁTIS: acha o site oficial via busca web sem chave (DuckDuckGo) ──
+const UA_NAV = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36';
+// Domínios que NÃO são o site da empresa (redes sociais, diretórios, agregadores).
+// Checagem por HOSTNAME (não substring) pra não pegar "fisiox.com" por causa de "x.com".
+const HOSTS_BLOQ = ['duckduckgo.com', 'facebook.com', 'instagram.com', 'linkedin.com', 'twitter.com',
+  'x.com', 'youtube.com', 'wikipedia.org', 'google.com', 'google.com.br', 'bing.com', 'guiamais.com.br',
+  'apontador.com.br', 'econodata.com.br', 'casadosdados.com.br', 'cnpja.com', 'cnpj.biz', 'jusbrasil.com.br',
+  'reclameaqui.com.br', 'indeed.com', 'glassdoor.com', 'mercadolivre.com.br', 'olx.com.br', 'tripadvisor.com',
+  'tripadvisor.com.br', 'ifood.com.br', 'yelp.com', 'telelistas.net', 'solutudo.com.br'];
+function hostBloqueado(u) {
+  let host; try { host = new URL(u).hostname.replace(/^www\./, ''); } catch { return true; }
+  return HOSTS_BLOQ.some(d => host === d || host.endsWith('.' + d));
+}
+
+async function acharSite(nome, cidade, uf) {
+  const q = encodeURIComponent([nome, cidade, uf].filter(Boolean).join(' '));
+  let html = '';
+  try {
+    const { data } = await axios.get(`https://html.duckduckgo.com/html/?q=${q}`, {
+      timeout: 9000, maxContentLength: 3_000_000, maxRedirects: 3,
+      headers: { 'User-Agent': UA_NAV, 'Accept-Language': 'pt-BR,pt;q=0.9' },
+    });
+    html = typeof data === 'string' ? data : '';
+  } catch (_) { return null; }
+
+  for (const m of html.matchAll(/href="((?:https?:\/\/|\/l\/\?uddg=)[^"]+)"/gi)) {
+    let u = m[1];
+    if (u.startsWith('/l/?uddg=')) { try { u = decodeURIComponent(u.match(/uddg=([^&]+)/)[1]); } catch { continue; } }
+    if (hostBloqueado(u)) continue;
+    try { return new URL(u).origin; } catch { continue; }   // raiz do domínio
+  }
+  return null;
+}
+
+// Contato comercial SEM chave paga: acha o site (busca grátis) e faz o scrape rico.
+async function buscarContatoGratis(nome, cidade, uf) {
+  const agora = new Date().toISOString();
+  const site = await acharSite(nome, cidade, uf);
+  if (!site) return { encontrado: false, fonte: 'busca_gratis', validado: false, validado_em: agora };
+  const s = await scrapeSite(site);
+  return {
+    encontrado: true,
+    telefone: s.telefone || null,
+    whatsapp: s.telefone || null,
+    website: site,
+    email: s.email || null,
+    resumo_site: s.resumo || null,
+    resumo_fonte: s.resumo_fonte || null,
+    fonte: 'busca_gratis',
+    validado: !!(s.email || s.telefone || s.resumo),
+    validado_em: agora,
+  };
 }
 
 // Busca o contato comercial da empresa no Google. Retorna também business_status
@@ -161,4 +224,4 @@ async function buscarContato(nome, cidade, uf, apiKey) {
   };
 }
 
-module.exports = { buscarContato };
+module.exports = { buscarContato, buscarContatoGratis };

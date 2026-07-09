@@ -24,28 +24,56 @@ module.exports = async function validacao(job, pool, queues) {
      ORDER BY ordem LIMIT 1`
   );
 
-  if (!ig) {
-    // Sem provedor de validação: segue pro SWOT sem gasto.
-    await seguirParaSwot(queues, { cnpj, busca_id, lead_id });
-    return { skipped: 'sem_provedor', lead_id };
-  }
-
   try {
     const { rows: [emp] } = await pool.query(
       `SELECT razao, fantasia, cidade, uf, contato_receita FROM empresas WHERE cnpj=$1`, [cnpj]
     );
+    const nome = emp?.fantasia || emp?.razao || '';
 
-    let c;
-    if (ig.provedor === 'google') {
-      const nome = emp?.fantasia || emp?.razao || '';
-      c = await google.buscarContato(nome, emp?.cidade, emp?.uf, ig.key_cifrada);
-      // Cruzamento com a Receita: telefone do Google confirma / substitui o do contador.
-      const cr = emp?.contato_receita || {};
-      const telReceita = (Array.isArray(cr.telefones) && cr.telefones[0] || '').replace(/\D/g, '');
-      c.confere_receita = !!(c.telefone && telReceita && c.telefone.includes(telReceita.slice(-8)));
-    } else {
-      c = await contato.enriquecerContato(cnpj, { apiKey: ig.key_cifrada, backend: ig.config?.backend });
+    let c = null;
+    // 1) Provedor pago ativo (Google Places / Econodata), se houver e a chave funcionar.
+    if (ig) {
+      try {
+        if (ig.provedor === 'google') {
+          c = await google.buscarContato(nome, emp?.cidade, emp?.uf, ig.key_cifrada);
+        } else {
+          c = await contato.enriquecerContato(cnpj, { apiKey: ig.key_cifrada, backend: ig.config?.backend });
+        }
+      } catch (e) {
+        c = null;   // chave inválida / sem permissão / rate limit → cai no grátis
+      }
     }
+
+    // 2) Fallback GRÁTIS (busca web sem chave): usado quando não há provedor, quando
+    //    o pago falhou, ou quando faltou o site/resumo (essencial pro SWOT).
+    if (!c || !c.website || !c.resumo_site) {
+      const g = await google.buscarContatoGratis(nome, emp?.cidade, emp?.uf).catch(() => null);
+      if (g && (g.website || g.email || g.telefone)) {
+        if (!c) {
+          c = g;
+        } else {
+          // Completa os buracos do pago com o grátis (o pago manda no telefone).
+          c.website = c.website || g.website;
+          c.email = c.email || g.email;
+          c.telefone = c.telefone || g.telefone;
+          c.whatsapp = c.whatsapp || g.whatsapp;
+          if (!c.resumo_site) { c.resumo_site = g.resumo_site; c.resumo_fonte = g.resumo_fonte; }
+          c.validado = c.validado || g.validado;
+          c.fonte = c.fonte && c.fonte !== 'busca_gratis' ? `${c.fonte}+gratis` : 'busca_gratis';
+        }
+      }
+    }
+
+    if (!c) {
+      // Nada encontrado (nem grátis): segue pro SWOT só com firmografia.
+      await seguirParaSwot(queues, { cnpj, busca_id, lead_id });
+      return { skipped: 'sem_contato', lead_id };
+    }
+
+    // Cruzamento com a Receita: telefone comercial confirma/substitui o do contador.
+    const cr = emp?.contato_receita || {};
+    const telReceita = (Array.isArray(cr.telefones) && cr.telefones[0] || '').replace(/\D/g, '');
+    c.confere_receita = !!(c.telefone && telReceita && c.telefone.includes(telReceita.slice(-8)));
 
     await pool.query(
       `UPDATE leads SET contato_validado=$2::jsonb, atualizado_em=now() WHERE id=$1`,
@@ -60,7 +88,7 @@ module.exports = async function validacao(job, pool, queues) {
     await seguirParaSwot(queues, { cnpj, busca_id, lead_id });
     return { lead_id, validado: c.validado, fonte: c.fonte };
   } catch (err) {
-    // Erro de validação não trava o pipeline: segue pro SWOT sem contato.
+    // Erro não trava o pipeline: segue pro SWOT sem contato.
     await seguirParaSwot(queues, { cnpj, busca_id, lead_id });
     return { lead_id, erro: err.message };
   }
