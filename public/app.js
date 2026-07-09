@@ -4706,7 +4706,7 @@ function Config() {
       marginTop: 10,
       lineHeight: 1.5
     }
-  }, "Exemplo de chamada: ", /*#__PURE__*/React.createElement("code", null, "POST"), " com corpo ", /*#__PURE__*/React.createElement("code", null, '{ "cnpj": "12345678000190", "tag": "fechado" }'), ". No CRM GK, d\xE1 pra disparar por automa\xE7\xE3o de mudan\xE7a de etapa; em qualquer CRM com webhook de sa\xEDda, aponte para a URL acima.")), /*#__PURE__*/React.createElement("div", {
+  }, "No ", /*#__PURE__*/React.createElement("b", null, "GK SaaS"), ", aponte o webhook de sa\xEDda (evento de mudan\xE7a de tag/etapa) para a URL acima. O Hunter detecta o CNPJ e a tag em qualquer lugar do payload \u2014 n\xE3o precisa de formato fixo. Se o CRM n\xE3o deixar adicionar o header, mande o segredo na pr\xF3pria URL: ", /*#__PURE__*/React.createElement("code", null, "\u2026/conversao?token=SEGREDO"), ".")), /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'var(--panel)',
       border: '1px solid var(--border)',

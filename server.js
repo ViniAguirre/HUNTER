@@ -1023,19 +1023,23 @@ app.post('/api/webhooks/crm/conversao', webhookLimiter, async (req, res) => {
     if (token !== secret) return res.status(401).json({ erro: 'token inválido' });
 
     const body = req.body || {};
-    const cnpj = String(body.cnpj || body.document || body.cpfCnpj || body.cpf_cnpj || '').replace(/\D/g, '');
-    if (cnpj.length !== 14) return res.status(400).json({ erro: 'cnpj inválido ou ausente' });
-    const tag = String(body.tag || body.status || body.evento || body.stage || body.etapa || '').trim().toLowerCase();
+    // O GK (e a maioria dos CRMs) manda o CNPJ e a tag ANINHADOS no payload —
+    // varremos o objeto inteiro em vez de exigir um formato fixo.
+    const cnpj = extrairCnpj(body);
+    if (!cnpj) return res.status(400).json({ erro: 'cnpj inválido ou ausente no payload' });
+    const tagsRecebidas = coletarTags(body);
 
-    const tags = (cfg.crm_conversao_tags || []).map(t => String(t).toLowerCase());
-    // Se veio uma tag e ela NÃO casa com nenhuma tag de conversão, ignora (não é venda).
-    if (tag && tags.length && !tags.some(t => tag.includes(t) || t.includes(tag))) {
-      return res.json({ ok: true, ignorado: 'tag_nao_conversao', tag });
+    const tagsConv = (cfg.crm_conversao_tags || []).map(t => String(t).toLowerCase());
+    const casou = tagsRecebidas.find(t => tagsConv.some(c => t.includes(c) || c.includes(t)));
+    // Se o payload trouxe sinais de tag/status mas NENHUM é de conversão, ignora.
+    if (tagsRecebidas.length && tagsConv.length && !casou) {
+      return res.json({ ok: true, ignorado: 'tag_nao_conversao', tags: tagsRecebidas });
     }
+    const tag = casou || tagsRecebidas[0] || null;
 
     await pool.query(
       `INSERT INTO sementes (cnpj, lista, origem, tag) VALUES ($1,'conversoes_crm','crm',$2)
-       ON CONFLICT (lista, cnpj) DO NOTHING`, [cnpj, tag || null]
+       ON CONFLICT (lista, cnpj) DO NOTHING`, [cnpj, tag]
     );
     const { rows:[{ n }] } = await pool.query(`SELECT COUNT(*)::int n FROM sementes WHERE lista='conversoes_crm'`);
 
@@ -1044,6 +1048,46 @@ app.post('/api/webhooks/crm/conversao', webhookLimiter, async (req, res) => {
     res.json({ ok: true, cnpj, total_lista: n, busca_auto });
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
+
+// Varre o payload (qualquer aninhamento) e devolve o primeiro CNPJ (14 dígitos).
+// Prioriza chaves com cara de documento pra evitar pegar um id numérico à toa.
+function extrairCnpj(obj, prof = 0) {
+  if (obj == null || prof > 6) return null;
+  if (typeof obj === 'string' || typeof obj === 'number') {
+    const d = String(obj).replace(/\D/g, '');
+    return d.length === 14 ? d : null;
+  }
+  if (Array.isArray(obj)) {
+    for (const v of obj) { const c = extrairCnpj(v, prof + 1); if (c) return c; }
+    return null;
+  }
+  if (typeof obj === 'object') {
+    for (const k of Object.keys(obj)) {
+      if (/cnpj|documento|document|cpf_?cnpj/i.test(k)) { const c = extrairCnpj(obj[k], prof + 1); if (c) return c; }
+    }
+    for (const k of Object.keys(obj)) { const c = extrairCnpj(obj[k], prof + 1); if (c) return c; }
+  }
+  return null;
+}
+
+// Coleta strings de tag/status/fila/etapa em qualquer nível (inclui tags:[{name}]).
+function coletarTags(obj, prof = 0, acc = new Set()) {
+  if (obj == null || prof > 6) return [...acc];
+  if (Array.isArray(obj)) { for (const v of obj) coletarTags(v, prof + 1, acc); return [...acc]; }
+  if (typeof obj === 'object') {
+    for (const [k, v] of Object.entries(obj)) {
+      if (/^(tag|tags|status|stage|etapa|situac|fila|queue|kanban|lane|evento|event)/i.test(k)) {
+        if (typeof v === 'string') acc.add(v.trim().toLowerCase());
+        else if (Array.isArray(v)) for (const it of v) {
+          if (typeof it === 'string') acc.add(it.trim().toLowerCase());
+          else if (it && typeof it === 'object' && it.name) acc.add(String(it.name).trim().toLowerCase());
+        } else if (v && typeof v === 'object' && v.name) acc.add(String(v.name).trim().toLowerCase());
+      }
+      if (v && typeof v === 'object') coletarTags(v, prof + 1, acc);
+    }
+  }
+  return [...acc];
+}
 
 // Garante a busca lookalike auto-alimentada; ao chegar semente nova, limpa o
 // perfil e reativa pra o motor re-perfilar com a lista atualizada.

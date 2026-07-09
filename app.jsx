@@ -2011,8 +2011,9 @@ function Config() {
           </div>
         </div>
         <div style={{ fontSize:11, color:'var(--faint)', marginTop:10, lineHeight:1.5 }}>
-          Exemplo de chamada: <code>POST</code> com corpo <code>{'{ "cnpj": "12345678000190", "tag": "fechado" }'}</code>.
-          No CRM GK, dá pra disparar por automação de mudança de etapa; em qualquer CRM com webhook de saída, aponte para a URL acima.
+          No <b>GK SaaS</b>, aponte o webhook de saída (evento de mudança de tag/etapa) para a URL acima. O Hunter
+          detecta o CNPJ e a tag em qualquer lugar do payload — não precisa de formato fixo. Se o CRM não deixar
+          adicionar o header, mande o segredo na própria URL: <code>…/conversao?token=SEGREDO</code>.
         </div>
       </div>
 
