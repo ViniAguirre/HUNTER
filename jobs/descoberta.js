@@ -69,10 +69,12 @@ module.exports = async function descoberta(job, pool, queues) {
   }
 
   const params = buildSearchParams(criterios);
-  const temFiltro = params.states.length || params.activities.length || (params.municipalities || []).length;
+  // Palavra-chave (nome/fantasia) é um filtro específico por si só — dispensa UF/CNAE.
+  const temFiltro = params.states.length || params.activities.length
+    || (params.municipalities || []).length || (params.names || []).length;
   if (!temFiltro) {
     await pool.query(`UPDATE buscas SET ultimo_heartbeat=now() WHERE id=$1`, [busca_id]);
-    return { skipped: 'sem_filtro', motivo: 'busca sem UF, CNAE nem município — defina ao menos um', novos: 0 };
+    return { skipped: 'sem_filtro', motivo: 'busca sem UF, CNAE, município nem palavra-chave — defina ao menos um', novos: 0 };
   }
 
   let token = null, pagina = 0, esgotou = false;
@@ -218,12 +220,13 @@ async function processarOffice(pool, queues, busca_id, office, counters) {
 
 function buildSearchParams(criterios) {
   const p = criterios.params || {};
-  const out = { states: [], activities: [], municipalities: [], limit: 100 };
+  const out = { states: [], activities: [], municipalities: [], names: [], limit: 100 };
 
-  if (p.ufs || p.cnaes || p.municipios_cod || p.founded_gte || p.equity_gte != null) {
+  if (p.ufs || p.cnaes || p.municipios_cod || p.keywords || p.founded_gte || p.equity_gte != null) {
     out.states = p.ufs || [];
     out.activities = p.cnaes || [];
     out.municipalities = p.municipios_cod || [];
+    out.names = p.keywords || [];
     out.foundedGte = p.founded_gte || null;
     out.foundedLte = p.founded_lte || null;
     out.equityGte = p.equity_gte != null ? p.equity_gte : null;

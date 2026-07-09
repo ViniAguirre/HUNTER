@@ -1074,6 +1074,7 @@ function NovaBusca({ onSalvar }) {
   const [portes, setPortes] = useState([]);
   const [cnaeBusca, setCnaeBusca] = useState('');
   const [cnaeSel, setCnaeSel] = useState([]);
+  const [kwText, setKwText] = useState('');   // palavra-chave no nome/fantasia (CNPJá names.in)
   const [cnaeData, setCnaeData] = useState([]);
   const [cnaeFoco, setCnaeFoco] = useState(false);
   const [municBusca, setMunicBusca] = useState('');
@@ -1101,6 +1102,9 @@ function NovaBusca({ onSalvar }) {
     return [...vistos];
   }, [listaCnpj]);
   const MIN_LOOKALIKE = 3;
+
+  // Palavra-chave no nome/fantasia (vírgula = OU). Ex.: "purificador, filtro".
+  const keywords = useMemo(() => kwText.split(/[,;]/).map(t => t.trim()).filter(Boolean), [kwText]);
 
   useEffect(() => {
     if (_cnaeCache) { setCnaeData(_cnaeCache); }
@@ -1197,11 +1201,11 @@ function NovaBusca({ onSalvar }) {
           : `Envie ao menos ${MIN_LOOKALIKE} CNPJs válidos (14 dígitos).`));
       return;
     }
-    if (tipo === 'icp' && cnaeSel.length === 0) {
+    if (tipo === 'icp' && cnaeSel.length === 0 && keywords.length === 0 && municSel.length === 0) {
       const ok = window.confirm(
-        'Nenhuma atividade selecionada.\n\nA busca vai trazer empresas de TODOS os ramos' +
+        'Nenhuma atividade, palavra-chave ou município.\n\nA busca vai trazer empresas de TODOS os ramos' +
         (ufs.length ? ' da(s) UF(s) escolhida(s)' : ' do Brasil') +
-        '. Para filtrar por ramo, digite no campo "Atividade" e clique no resultado (vira chip dourado).\n\nContinuar mesmo assim?'
+        '. Para mirar o alvo, escolha uma atividade (CNAE) OU use a "palavra-chave no nome" (ex.: purificador, filtro).\n\nContinuar mesmo assim?'
       );
       if (!ok) return;
     }
@@ -1217,13 +1221,14 @@ function NovaBusca({ onSalvar }) {
         ...municSel.map(m => `Município: ${m.n}`),
         ...portes.map(p => `Porte: ${p}`),
         ...cnaeSel.map(s => `CNAE: ${s.d}`),
+        ...(keywords.length ? [`Palavra-chave: ${keywords.join(', ')}`] : []),
         ...(abertura !== 'qualquer' ? [`Abertura: ${aberturaLabel}`] : []),
         ...(capital !== 'qualquer' ? [`Capital: ${capitalLabel}`] : []),
       ];
       const propostaValor = (tipo === 'icp' ? criteriosRef.current?.value : propostaRef.current?.value) || '';
       const criterios = tipo === 'icp'
         ? { chips, params: {
-            ufs, portes, cnaes, cnaes_rotulos: cnaeSel,
+            ufs, portes, cnaes, cnaes_rotulos: cnaeSel, keywords,
             municipios_cod: municSel.map(m => m.c), municipios_rotulos: municSel,
             founded_gte: fnd.gte || null, founded_lte: fnd.lte || null,
             equity_gte: cap.gte ?? null, equity_lte: cap.lte ?? null,
@@ -1340,6 +1345,27 @@ function NovaBusca({ onSalvar }) {
                 ))}
               </div>
             )}
+          </div>
+          <div style={{ marginBottom:18 }}>
+            <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>
+              Palavra-chave no nome <span style={{ color:'var(--faint)' }}>(opcional — busca no nome/razão social da empresa)</span>
+            </label>
+            <input value={kwText} onChange={e => setKwText(e.target.value)}
+              placeholder="Ex: purificador, filtro, água — separe por vírgula (traz empresas com essas palavras no nome)"
+              style={{ width:'100%', height:40, borderRadius:9, border:'1px solid var(--border)',
+                background:'var(--panel2)', color:'var(--text)', padding:'0 12px', fontSize:13, fontFamily:'inherit' }}/>
+            {keywords.length > 0 && (
+              <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginTop:9 }}>
+                {keywords.map((k, i) => (
+                  <span key={i} style={{ padding:'5px 10px', borderRadius:7, fontSize:11.5,
+                    border:`1px solid ${C.gold}`, background:'color-mix(in srgb, var(--accent) 13%, transparent)', color:C.gold }}>{k}</span>
+                ))}
+              </div>
+            )}
+            <div style={{ fontSize:11, color:'var(--faint)', marginTop:6, lineHeight:1.45 }}>
+              Use quando o ramo não tem um CNAE próprio (ex.: "lojas de purificadores"). Vírgula = OU — traz quem tem
+              <b> qualquer</b> dessas palavras no nome. Pode combinar com CNAE/UF acima.
+            </div>
           </div>
           <div style={{ marginBottom:18 }}>
             <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>UFs</label>

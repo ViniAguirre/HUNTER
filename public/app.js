@@ -2673,6 +2673,7 @@ function NovaBusca({
   const [portes, setPortes] = useState([]);
   const [cnaeBusca, setCnaeBusca] = useState('');
   const [cnaeSel, setCnaeSel] = useState([]);
+  const [kwText, setKwText] = useState(''); // palavra-chave no nome/fantasia (CNPJá names.in)
   const [cnaeData, setCnaeData] = useState([]);
   const [cnaeFoco, setCnaeFoco] = useState(false);
   const [municBusca, setMunicBusca] = useState('');
@@ -2700,6 +2701,9 @@ function NovaBusca({
     return [...vistos];
   }, [listaCnpj]);
   const MIN_LOOKALIKE = 3;
+
+  // Palavra-chave no nome/fantasia (vírgula = OU). Ex.: "purificador, filtro".
+  const keywords = useMemo(() => kwText.split(/[,;]/).map(t => t.trim()).filter(Boolean), [kwText]);
   useEffect(() => {
     if (_cnaeCache) {
       setCnaeData(_cnaeCache);
@@ -2837,8 +2841,8 @@ function NovaBusca({
       alert(`Poucos CNPJs válidos (${cnpjsParsed.length}). ` + (tipo === 'lookalike' ? `Para o sistema traçar um perfil médio confiável, envie ao menos ${MIN_LOOKALIKE} (recomendado 15+).` : `Envie ao menos ${MIN_LOOKALIKE} CNPJs válidos (14 dígitos).`));
       return;
     }
-    if (tipo === 'icp' && cnaeSel.length === 0) {
-      const ok = window.confirm('Nenhuma atividade selecionada.\n\nA busca vai trazer empresas de TODOS os ramos' + (ufs.length ? ' da(s) UF(s) escolhida(s)' : ' do Brasil') + '. Para filtrar por ramo, digite no campo "Atividade" e clique no resultado (vira chip dourado).\n\nContinuar mesmo assim?');
+    if (tipo === 'icp' && cnaeSel.length === 0 && keywords.length === 0 && municSel.length === 0) {
+      const ok = window.confirm('Nenhuma atividade, palavra-chave ou município.\n\nA busca vai trazer empresas de TODOS os ramos' + (ufs.length ? ' da(s) UF(s) escolhida(s)' : ' do Brasil') + '. Para mirar o alvo, escolha uma atividade (CNAE) OU use a "palavra-chave no nome" (ex.: purificador, filtro).\n\nContinuar mesmo assim?');
       if (!ok) return;
     }
     setSaving(true);
@@ -2848,7 +2852,7 @@ function NovaBusca({
       const cap = CAPITAL_OPCOES.find(o => o.k === capital) || {};
       const aberturaLabel = ABERTURA_OPCOES.find(o => o.k === abertura)?.label;
       const capitalLabel = CAPITAL_OPCOES.find(o => o.k === capital)?.label;
-      const chips = [...ufs.map(u => `UF: ${u}`), ...municSel.map(m => `Município: ${m.n}`), ...portes.map(p => `Porte: ${p}`), ...cnaeSel.map(s => `CNAE: ${s.d}`), ...(abertura !== 'qualquer' ? [`Abertura: ${aberturaLabel}`] : []), ...(capital !== 'qualquer' ? [`Capital: ${capitalLabel}`] : [])];
+      const chips = [...ufs.map(u => `UF: ${u}`), ...municSel.map(m => `Município: ${m.n}`), ...portes.map(p => `Porte: ${p}`), ...cnaeSel.map(s => `CNAE: ${s.d}`), ...(keywords.length ? [`Palavra-chave: ${keywords.join(', ')}`] : []), ...(abertura !== 'qualquer' ? [`Abertura: ${aberturaLabel}`] : []), ...(capital !== 'qualquer' ? [`Capital: ${capitalLabel}`] : [])];
       const propostaValor = (tipo === 'icp' ? criteriosRef.current?.value : propostaRef.current?.value) || '';
       const criterios = tipo === 'icp' ? {
         chips,
@@ -2857,6 +2861,7 @@ function NovaBusca({
           portes,
           cnaes,
           cnaes_rotulos: cnaeSel,
+          keywords,
           municipios_cod: municSel.map(m => m.c),
           municipios_rotulos: municSel,
           founded_gte: fnd.gte || null,
@@ -3148,6 +3153,60 @@ function NovaBusca({
       opacity: .8
     }
   }, "\xD7"))))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 18
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 7
+    }
+  }, "Palavra-chave no nome ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, "(opcional \u2014 busca no nome/raz\xE3o social da empresa)")), /*#__PURE__*/React.createElement("input", {
+    value: kwText,
+    onChange: e => setKwText(e.target.value),
+    placeholder: "Ex: purificador, filtro, \xE1gua \u2014 separe por v\xEDrgula (traz empresas com essas palavras no nome)",
+    style: {
+      width: '100%',
+      height: 40,
+      borderRadius: 9,
+      border: '1px solid var(--border)',
+      background: 'var(--panel2)',
+      color: 'var(--text)',
+      padding: '0 12px',
+      fontSize: 13,
+      fontFamily: 'inherit'
+    }
+  }), keywords.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: 6,
+      marginTop: 9
+    }
+  }, keywords.map((k, i) => /*#__PURE__*/React.createElement("span", {
+    key: i,
+    style: {
+      padding: '5px 10px',
+      borderRadius: 7,
+      fontSize: 11.5,
+      border: `1px solid ${C.gold}`,
+      background: 'color-mix(in srgb, var(--accent) 13%, transparent)',
+      color: C.gold
+    }
+  }, k))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)',
+      marginTop: 6,
+      lineHeight: 1.45
+    }
+  }, "Use quando o ramo n\xE3o tem um CNAE pr\xF3prio (ex.: \"lojas de purificadores\"). V\xEDrgula = OU \u2014 traz quem tem", /*#__PURE__*/React.createElement("b", null, " qualquer"), " dessas palavras no nome. Pode combinar com CNAE/UF acima.")), /*#__PURE__*/React.createElement("div", {
     style: {
       marginBottom: 18
     }

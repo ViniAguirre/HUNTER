@@ -44,6 +44,10 @@ async function search(params, apiKey) {
     (params.states || []).forEach(s => { if (s) qs.append('address.state.in', String(s).toUpperCase()); });
     (params.activities || []).forEach(a => { const c = String(a).replace(/\D/g, ''); if (c) qs.append('mainActivity.id.in', c); });
     (params.municipalities || []).forEach(m => { const c = String(m).replace(/\D/g, ''); if (c) qs.append('address.municipality.in', c); });
+    // Palavra-chave: termos na razão social OU nome fantasia. Vírgula = OU entre
+    // empresas (ex.: "purificador,filtro"). É o que traz o nicho que o CNAE não pega.
+    const termos = (params.names || []).map(t => String(t).trim()).filter(Boolean);
+    if (termos.length) qs.append('names.in', termos.join(','));
     if (params.foundedGte) qs.append('founded.gte', params.foundedGte);
     if (params.foundedLte) qs.append('founded.lte', params.foundedLte);
     if (params.equityGte != null) qs.append('company.equity.gte', String(params.equityGte));
