@@ -59,19 +59,21 @@ for (const [nome, w] of Object.entries(workers)) {
 async function runScheduler() {
   try {
     const { rows: buscas } = await pool.query(
-      `SELECT id, criterios FROM buscas WHERE status='Ativa'`
+      `SELECT id, criterios, ultimo_heartbeat FROM buscas WHERE status='Ativa'`
     );
 
     for (const busca of buscas) {
-      // jobId ESTÁVEL por busca: enquanto a varredura anterior estiver na fila
-      // ou rodando, o BullMQ ignora novos disparos — evita varredura concorrente
-      // (custo duplicado). A descoberta varre o universo e marca 'Esgotada',
-      // então o scheduler não redispara sozinho.
+      // jobId estável DENTRO de um ciclo de varredura: enquanto ela roda, o
+      // heartbeat não muda → novos disparos são deduplicados (sem varredura
+      // concorrente / custo duplicado). Quando a busca é reativada (ex.: a lista
+      // de semelhantes ganhou semente nova via CRM), o heartbeat da última
+      // varredura difere do jobId anterior → roda de novo e re-perfila.
+      const hb = busca.ultimo_heartbeat ? new Date(busca.ultimo_heartbeat).getTime() : 0;
       await queues.descoberta.add('descoberta', {
         busca_id: busca.id,
         criterios: busca.criterios,
       }, {
-        jobId: `descoberta-busca-${busca.id}`,
+        jobId: `descoberta-busca-${busca.id}-${hb}`,
         removeOnComplete: { count: 200, age: 3600 },
         removeOnFail: { count: 100 },
         attempts: 2,

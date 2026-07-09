@@ -10,6 +10,7 @@
  */
 const cnpja = require('../providers/cnpja');
 const perfilamento = require('../providers/perfil');
+const baseRates = require('../providers/base');
 
 const TRAVADOS = ['qualificado', 'em_crm', 'descarte_duro'];
 const TETO_PAGINAS = 20;   // com limit=100, até ~2000 empresas por varredura
@@ -19,7 +20,7 @@ module.exports = async function descoberta(job, pool, queues) {
   const { busca_id } = job.data;
 
   const { rows: [busca] } = await pool.query(
-    `SELECT tipo, criterios FROM buscas WHERE id=$1`, [busca_id]
+    `SELECT tipo, criterios, lista FROM buscas WHERE id=$1`, [busca_id]
   );
   if (!busca) return { skipped: 'busca_inexistente' };
   const tipo = busca.tipo || 'icp';
@@ -33,7 +34,7 @@ module.exports = async function descoberta(job, pool, queues) {
 
   // ── Perfilamento (lookalike / importação): destila o perfil médio da lista ──
   if ((tipo === 'lookalike' || tipo === 'cnpj') && !(criterios.params && criterios.params.perfil)) {
-    const resultado = await perfilar(pool, criterios, busca_id);
+    const resultado = await perfilar(pool, criterios, busca_id, busca.lista);
     if (resultado.erro) return resultado;
     criterios = resultado.criterios;
   }
@@ -88,8 +89,17 @@ module.exports = async function descoberta(job, pool, queues) {
 };
 
 // ── Perfilamento: baixa firmografia (grátis) dos CNPJs da lista e monta o perfil.
-async function perfilar(pool, criterios, busca_id) {
-  const cnpjs = perfilamento.parseCnpjs(criterios);
+// Sementes vêm da lista colada (criterios.cnpjs) E da lista alimentada pelo CRM.
+async function perfilar(pool, criterios, busca_id, lista) {
+  const cnpjs = new Set(perfilamento.parseCnpjs(criterios));
+  if (lista) {
+    const { rows } = await pool.query(`SELECT cnpj FROM sementes WHERE lista=$1`, [lista]);
+    for (const r of rows) if (r.cnpj) cnpjs.add(r.cnpj);
+  }
+  return perfilarComLista(pool, criterios, busca_id, [...cnpjs]);
+}
+
+async function perfilarComLista(pool, criterios, busca_id, cnpjs) {
   if (cnpjs.length < perfilamento.MIN_PERFIL) {
     await pool.query(`UPDATE buscas SET status='Esgotada', ultimo_heartbeat=now() WHERE id=$1`, [busca_id]);
     return { erro: true, skipped: 'lista_curta', minimo: perfilamento.MIN_PERFIL, enviados: cnpjs.length };
@@ -113,7 +123,8 @@ async function perfilar(pool, criterios, busca_id) {
     return { erro: true, skipped: 'amostra_insuficiente', analisados: amostra.length, minimo: perfilamento.MIN_PERFIL };
   }
 
-  const { params } = perfilamento.construirPerfil(amostra);
+  const base = await baseRates.baseRates(pool);   // taxas do universo p/ peso de raridade
+  const { params } = perfilamento.construirPerfil(amostra, base);
   params.proposta_valor = criterios.proposta_valor || criterios.params?.proposta_valor || '';
   const novo = { ...criterios, params };
   await pool.query(`UPDATE buscas SET criterios=$2::jsonb WHERE id=$1`, [busca_id, JSON.stringify(novo)]);

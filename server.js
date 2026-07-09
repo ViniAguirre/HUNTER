@@ -5,6 +5,7 @@
  * (leads, buscas, integrações) + monitoramento real das filas do motor.
  */
 const path = require('path');
+const crypto = require('crypto');
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const bcrypt = require('bcryptjs');
@@ -338,6 +339,23 @@ async function init() {
       crm_auto_global BOOLEAN NOT NULL DEFAULT false
     );
     INSERT INTO config (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+  `);
+
+  // Loop de feedback do CRM → lista de semelhantes (lookalike auto-alimentada).
+  await pool.query(`
+    ALTER TABLE config ADD COLUMN IF NOT EXISTS crm_conversao_tags     TEXT[] NOT NULL DEFAULT '{fechado,ganho,comprou,cliente,qualificado,won,closed}';
+    ALTER TABLE config ADD COLUMN IF NOT EXISTS crm_lookalike_auto     BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE config ADD COLUMN IF NOT EXISTS webhook_entrada_secret TEXT;
+    ALTER TABLE buscas ADD COLUMN IF NOT EXISTS lista TEXT;
+    CREATE TABLE IF NOT EXISTS sementes (
+      id         SERIAL PRIMARY KEY,
+      cnpj       TEXT NOT NULL,
+      lista      TEXT NOT NULL DEFAULT 'conversoes_crm',
+      origem     TEXT,
+      tag        TEXT,
+      criado_em  TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (lista, cnpj)
+    );
   `);
 
   // Garante a linha do provider de descoberta (CNPJá) pra tela de Integrações
@@ -976,11 +994,101 @@ app.patch('/api/config', requireAuth, requireAdmin, async (req, res) => {
   if ('parada_min'     in b) add('parada_min',     num(b.parada_min, 1, 10080));
   if ('alerta_email'   in b) { sets.push(`alerta_email=$${sets.length+1}`); vals.push(String(b.alerta_email || '').trim() || null); }
   if ('crm_auto_global' in b) { sets.push(`crm_auto_global=$${sets.length+1}`); vals.push(!!b.crm_auto_global); }
+  if ('crm_lookalike_auto' in b) { sets.push(`crm_lookalike_auto=$${sets.length+1}`); vals.push(!!b.crm_lookalike_auto); }
+  if ('crm_conversao_tags' in b) {
+    const tags = (Array.isArray(b.crm_conversao_tags) ? b.crm_conversao_tags : String(b.crm_conversao_tags || '').split(','))
+      .map(t => String(t).trim().toLowerCase()).filter(Boolean).slice(0, 40);
+    sets.push(`crm_conversao_tags=$${sets.length+1}`); vals.push(tags);
+  }
   if (!sets.length) return res.status(400).json({ erro: 'nada para atualizar' });
   try {
     const { rows: [c] } = await pool.query(`UPDATE config SET ${sets.join(', ')} WHERE id=1 RETURNING *`, vals);
     res.json(c);
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// ── Webhook de ENTRADA: o CRM avisa quando um lead vira cliente ────────────────
+// Quando o closer marca "fechado/comprou/qualificado" no CRM, ele chama esta URL
+// e o CNPJ entra na lista de semelhantes — o perfil se refina sozinho.
+const webhookLimiter = rateLimit({ windowMs: 60_000, max: 120 });
+
+app.post('/api/webhooks/crm/conversao', webhookLimiter, async (req, res) => {
+  try {
+    const { rows:[cfg] } = await pool.query(
+      `SELECT crm_conversao_tags, crm_lookalike_auto, webhook_entrada_secret FROM config WHERE id=1`
+    );
+    const secret = cfg?.webhook_entrada_secret;
+    if (!secret) return res.status(503).json({ erro: 'webhook de entrada não configurado' });
+    const token = req.get('x-hunter-token') || req.query.token;
+    if (token !== secret) return res.status(401).json({ erro: 'token inválido' });
+
+    const body = req.body || {};
+    const cnpj = String(body.cnpj || body.document || body.cpfCnpj || body.cpf_cnpj || '').replace(/\D/g, '');
+    if (cnpj.length !== 14) return res.status(400).json({ erro: 'cnpj inválido ou ausente' });
+    const tag = String(body.tag || body.status || body.evento || body.stage || body.etapa || '').trim().toLowerCase();
+
+    const tags = (cfg.crm_conversao_tags || []).map(t => String(t).toLowerCase());
+    // Se veio uma tag e ela NÃO casa com nenhuma tag de conversão, ignora (não é venda).
+    if (tag && tags.length && !tags.some(t => tag.includes(t) || t.includes(tag))) {
+      return res.json({ ok: true, ignorado: 'tag_nao_conversao', tag });
+    }
+
+    await pool.query(
+      `INSERT INTO sementes (cnpj, lista, origem, tag) VALUES ($1,'conversoes_crm','crm',$2)
+       ON CONFLICT (lista, cnpj) DO NOTHING`, [cnpj, tag || null]
+    );
+    const { rows:[{ n }] } = await pool.query(`SELECT COUNT(*)::int n FROM sementes WHERE lista='conversoes_crm'`);
+
+    let busca_auto = null;
+    if (cfg.crm_lookalike_auto) busca_auto = await garantirBuscaLookalikeAuto(n);
+    res.json({ ok: true, cnpj, total_lista: n, busca_auto });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// Garante a busca lookalike auto-alimentada; ao chegar semente nova, limpa o
+// perfil e reativa pra o motor re-perfilar com a lista atualizada.
+async function garantirBuscaLookalikeAuto(total) {
+  const status = total >= 3 ? 'Ativa' : 'Pausada';
+  const { rows:[existe] } = await pool.query(
+    `SELECT id, criterios FROM buscas WHERE lista='conversoes_crm' AND tipo='lookalike' ORDER BY id LIMIT 1`
+  );
+  if (existe) {
+    const crit = existe.criterios || {};
+    delete crit.params; // zera o perfil → re-perfila com a nova semente
+    await pool.query(`UPDATE buscas SET criterios=$2::jsonb, status=$3, ultima_ativ=now() WHERE id=$1`,
+      [existe.id, JSON.stringify(crit), status]);
+    return existe.id;
+  }
+  const { rows:[u] } = await pool.query(`SELECT id FROM usuarios ORDER BY id LIMIT 1`);
+  const { rows:[nova] } = await pool.query(
+    `INSERT INTO buscas (nome, tipo, status, lista, ritmo, criterios, corte_score, criador_id, ultima_ativ)
+     VALUES ('Semelhantes — clientes do CRM','lookalike',$1,'conversoes_crm',100,'{"proposta_valor":""}'::jsonb,60,$2,now())
+     RETURNING id`, [status, u?.id || null]
+  );
+  return nova.id;
+}
+
+// Gera/rotaciona o segredo do webhook de entrada (só admin).
+app.post('/api/webhooks/rotacionar-secret', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const secret = crypto.randomBytes(24).toString('hex');
+    await pool.query(`UPDATE config SET webhook_entrada_secret=$1 WHERE id=1`, [secret]);
+    res.json({ secret });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// Situação da lista de semelhantes alimentada pelo CRM (pra tela de Config).
+app.get('/api/sementes/status', requireAuth, async (req, res) => {
+  try {
+    const { rows:[{ n }] } = await pool.query(`SELECT COUNT(*)::int n FROM sementes WHERE lista='conversoes_crm'`);
+    const { rows:[b] } = await pool.query(
+      `SELECT id, status FROM buscas WHERE lista='conversoes_crm' AND tipo='lookalike' ORDER BY id LIMIT 1`
+    );
+    const { rows: ult } = await pool.query(
+      `SELECT cnpj, tag, criado_em FROM sementes WHERE lista='conversoes_crm' ORDER BY criado_em DESC LIMIT 5`
+    );
+    res.json({ total: n, busca: b || null, ultimas: ult });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
 // ── arquivos estáticos ────────────────────────────────────────────────────────

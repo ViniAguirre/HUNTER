@@ -50,9 +50,15 @@ function confiancaDe(n) {
 }
 
 // Monta o perfil + os parâmetros derivados (descoberta + Score 1) a partir da
-// firmografia das empresas da amostra.
-function construirPerfil(empresas) {
+// firmografia das empresas da amostra. `base` (opcional) traz as taxas do universo
+// pra ponderar por RARIDADE (lift): CNAE/UF raro no país vale mais.
+function construirPerfil(empresas, base) {
   const amostra = empresas.length;
+  const peso = (dim, chave) => {
+    if (!base) return 1;
+    const { pesoRaridade } = require('./base');
+    return pesoRaridade(base.share(dim, chave));
+  };
 
   const cnae = distribuicao(empresas.map(e => String(e.cnae || '').replace(/\D/g, '')).filter(Boolean));
   const uf = distribuicao(empresas.map(e => e.uf).filter(Boolean));
@@ -69,8 +75,8 @@ function construirPerfil(empresas) {
   const perfil = {
     amostra,
     confianca: confiancaDe(amostra),
-    cnaes: cnae.lista.map(x => ({ c: x.chave, n: x.n, freq: +x.freq.toFixed(3) })),
-    ufs: uf.lista.map(x => ({ uf: x.chave, n: x.n, freq: +x.freq.toFixed(3) })),
+    cnaes: cnae.lista.map(x => ({ c: x.chave, n: x.n, freq: +x.freq.toFixed(3), peso: peso('cnae', x.chave) })),
+    ufs: uf.lista.map(x => ({ uf: x.chave, n: x.n, freq: +x.freq.toFixed(3), peso: peso('uf', x.chave) })),
     portes: porte.lista.map(x => ({ porte: x.chave, n: x.n, freq: +x.freq.toFixed(3) })),
     capitais: capital.lista.map(x => ({ faixa: x.chave, n: x.n, freq: +x.freq.toFixed(3) })),
     simples_prop: simplesProp != null ? +simplesProp.toFixed(3) : null,
@@ -115,19 +121,20 @@ function pontuarProximidade(emp, perfil, W) {
 
   if (/ativa/i.test(emp.situacao || 'Ativa')) add('Situação ativa', W.SITUACAO_ATIVA);
 
+  const raro = x => (x?.peso > 1.05) ? ' · raro no país' : '';
   const cnaeEmp = String(emp.cnae || '').replace(/\D/g, '');
   if (cnaeEmp && perfil.cnaes?.length) {
     const mf = maxFreq(perfil.cnaes);
     const exato = perfil.cnaes.find(x => x.c === cnaeEmp);
     const grupo = !exato && perfil.cnaes.find(x => x.c.slice(0, 4) === cnaeEmp.slice(0, 4));
-    if (exato) add(`CNAE no perfil (${cnaeEmp})`, W.CNAE_EXATO * (0.65 + 0.35 * (exato.freq / mf)));
-    else if (grupo) add(`CNAE do mesmo grupo (${cnaeEmp})`, W.CNAE_GRUPO * (0.65 + 0.35 * (grupo.freq / mf)));
+    if (exato) add(`CNAE no perfil (${cnaeEmp})${raro(exato)}`, W.CNAE_EXATO * (0.65 + 0.35 * (exato.freq / mf)) * (exato.peso || 1));
+    else if (grupo) add(`CNAE do mesmo grupo (${cnaeEmp})${raro(grupo)}`, W.CNAE_GRUPO * (0.65 + 0.35 * (grupo.freq / mf)) * (grupo.peso || 1));
   }
 
   if (emp.uf && perfil.ufs?.length) {
     const mf = maxFreq(perfil.ufs);
     const hit = perfil.ufs.find(x => x.uf === emp.uf);
-    if (hit) add(`UF ${emp.uf} (no perfil)`, W.UF * (0.7 + 0.3 * (hit.freq / mf)));
+    if (hit) add(`UF ${emp.uf} (no perfil)${raro(hit)}`, W.UF * (0.7 + 0.3 * (hit.freq / mf)) * (hit.peso || 1));
   }
 
   if (emp.porte && perfil.portes?.length) {

@@ -4312,11 +4312,30 @@ function Config() {
   const [cfg, setCfg] = useState(null);
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState(null);
+  const [sementes, setSementes] = useState(null);
+  const [rotacionando, setRotacionando] = useState(false);
+  const carregarSementes = () => fetch('/api/sementes/status', {
+    credentials: 'same-origin'
+  }).then(r => r.json()).then(setSementes).catch(() => {});
   useEffect(() => {
     fetch('/api/config', {
       credentials: 'same-origin'
     }).then(r => r.json()).then(setCfg).catch(() => setCfg({}));
+    carregarSementes();
   }, []);
+  const rotacionarSecret = async () => {
+    setRotacionando(true);
+    try {
+      const r = await fetch('/api/webhooks/rotacionar-secret', {
+        method: 'POST',
+        credentials: 'same-origin'
+      });
+      const d = await r.json();
+      if (r.ok) set('webhook_entrada_secret', d.secret);
+    } catch (_) {} finally {
+      setRotacionando(false);
+    }
+  };
   const set = (k, v) => {
     setCfg(c => ({
       ...c,
@@ -4340,7 +4359,9 @@ function Config() {
           ttl_cache_dias: cfg.ttl_cache_dias,
           parada_min: cfg.parada_min,
           alerta_email: cfg.alerta_email,
-          crm_auto_global: cfg.crm_auto_global
+          crm_auto_global: cfg.crm_auto_global,
+          crm_lookalike_auto: cfg.crm_lookalike_auto,
+          crm_conversao_tags: cfg.crm_conversao_tags
         })
       });
       const d = await r.json();
@@ -4505,6 +4526,187 @@ function Config() {
       lineHeight: 1.4
     }
   }, "Vale para todas as buscas. Cada busca tamb\xE9m pode for\xE7ar o envio autom\xE1tico na sua pr\xF3pria configura\xE7\xE3o.")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'var(--panel)',
+      border: '1px solid var(--border)',
+      borderRadius: 14,
+      padding: 22
+    }
+  }, /*#__PURE__*/React.createElement("h3", {
+    style: {
+      fontSize: 14,
+      fontWeight: 600,
+      margin: '0 0 4px'
+    }
+  }, "Aprendizado com o CRM (lista de semelhantes)"), /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 12.5,
+      color: 'var(--faint)',
+      margin: '0 0 16px',
+      lineHeight: 1.5
+    }
+  }, "Quando o closer marca um lead como fechado/comprou/qualificado no CRM, ele avisa o Hunter e esse CNPJ entra na lista de semelhantes. O motor re-tra\xE7a o perfil m\xE9dio e passa a buscar mais empresas parecidas com quem realmente compra \u2014 o sistema fica mais preciso sozinho."), /*#__PURE__*/React.createElement("div", {
+    onClick: () => set('crm_lookalike_auto', !cfg.crm_lookalike_auto),
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 13,
+      cursor: 'pointer',
+      background: 'var(--panel2)',
+      border: '1px solid ' + (cfg.crm_lookalike_auto ? C.gold : 'var(--border)'),
+      borderRadius: 11,
+      padding: '14px 16px',
+      marginBottom: 16
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: 42,
+      height: 24,
+      borderRadius: 12,
+      flexShrink: 0,
+      position: 'relative',
+      background: cfg.crm_lookalike_auto ? C.gold : 'var(--border)',
+      transition: 'background .15s'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'absolute',
+      top: 2,
+      left: cfg.crm_lookalike_auto ? 20 : 2,
+      width: 20,
+      height: 20,
+      borderRadius: '50%',
+      background: '#fff',
+      transition: 'left .15s'
+    }
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13.5,
+      fontWeight: 500
+    }
+  }, cfg.crm_lookalike_auto ? 'Busca "Semelhantes — clientes do CRM" ativa' : 'Aprendizado automático desativado'), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--faint)',
+      marginTop: 2
+    }
+  }, cfg.crm_lookalike_auto ? 'A cada conversão recebida, o Hunter cria/atualiza uma busca lookalike com esses clientes.' : 'As conversões são guardadas, mas não geram busca automática.'))), /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 7
+    }
+  }, "Tags que contam como convers\xE3o ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, "(separadas por v\xEDrgula)")), /*#__PURE__*/React.createElement("input", {
+    value: Array.isArray(cfg.crm_conversao_tags) ? cfg.crm_conversao_tags.join(', ') : cfg.crm_conversao_tags || '',
+    onChange: e => set('crm_conversao_tags', e.target.value.split(',').map(t => t.trim()).filter(Boolean)),
+    placeholder: "fechado, comprou, cliente, qualificado, won",
+    style: {
+      ...inp,
+      marginBottom: 16
+    }
+  }), /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 7
+    }
+  }, "URL do webhook ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, "(configure no seu CRM para chamar no evento de convers\xE3o)")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      marginBottom: 12
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    readOnly: true,
+    value: (typeof window !== 'undefined' ? window.location.origin : '') + '/api/webhooks/crm/conversao',
+    onFocus: e => e.target.select(),
+    style: {
+      ...inp,
+      fontFamily: 'ui-monospace, monospace',
+      fontSize: 12
+    }
+  })), /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 7
+    }
+  }, "Segredo ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, "(envie no header ", /*#__PURE__*/React.createElement("code", null, "x-hunter-token"), ")")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    readOnly: true,
+    value: cfg.webhook_entrada_secret || '— ainda não gerado —',
+    onFocus: e => e.target.select(),
+    style: {
+      ...inp,
+      fontFamily: 'ui-monospace, monospace',
+      fontSize: 12
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    onClick: rotacionarSecret,
+    disabled: rotacionando,
+    style: {
+      height: 38,
+      padding: '0 14px',
+      borderRadius: 9,
+      border: '1px solid var(--border)',
+      background: 'transparent',
+      color: 'var(--text)',
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      cursor: 'pointer',
+      whiteSpace: 'nowrap'
+    }
+  }, rotacionando ? '…' : cfg.webhook_entrada_secret ? 'Rotacionar' : 'Gerar')), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      marginTop: 16,
+      padding: '12px 14px',
+      background: 'var(--panel2)',
+      borderRadius: 10,
+      border: '1px solid var(--border)'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 22,
+      fontWeight: 600,
+      color: C.gold,
+      fontVariantNumeric: 'tabular-nums'
+    }
+  }, sementes?.total ?? 0), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--faint)',
+      lineHeight: 1.4
+    }
+  }, "clientes j\xE1 na lista de semelhantes", sementes?.busca ? ` · busca ${sementes.busca.status}` : '', ".", sementes?.total > 0 && sementes?.ultimas?.[0] && ` Último: ${String(sementes.ultimas[0].cnpj).replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5')}.`)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)',
+      marginTop: 10,
+      lineHeight: 1.5
+    }
+  }, "Exemplo de chamada: ", /*#__PURE__*/React.createElement("code", null, "POST"), " com corpo ", /*#__PURE__*/React.createElement("code", null, '{ "cnpj": "12345678000190", "tag": "fechado" }'), ". No CRM GK, d\xE1 pra disparar por automa\xE7\xE3o de mudan\xE7a de etapa; em qualquer CRM com webhook de sa\xEDda, aponte para a URL acima.")), /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'var(--panel)',
       border: '1px solid var(--border)',
