@@ -2675,6 +2675,7 @@ function NovaBusca({
   const [cnaeBusca, setCnaeBusca] = useState('');
   const [cnaeSel, setCnaeSel] = useState([]);
   const [kwText, setKwText] = useState(''); // palavra-chave no nome/fantasia (CNPJá names.in)
+  const [modoDesc, setModoDesc] = useState('cnpja'); // cnpja | web (descoberta)
   const [cnaeData, setCnaeData] = useState([]);
   const [cnaeFoco, setCnaeFoco] = useState(false);
   const [municBusca, setMunicBusca] = useState('');
@@ -2729,6 +2730,7 @@ function NovaBusca({
       credentials: 'same-origin'
     }).then(r => r.json()).then(c => {
       if (c?.corte_padrao != null) setCorte(c.corte_padrao);
+      if (c?.descoberta_modo_padrao) setModoDesc(c.descoberta_modo_padrao);
     }).catch(() => {});
   }, []);
   const municResultados = useMemo(() => {
@@ -2855,7 +2857,7 @@ function NovaBusca({
       const cap = CAPITAL_OPCOES.find(o => o.k === capital) || {};
       const aberturaLabel = ABERTURA_OPCOES.find(o => o.k === abertura)?.label;
       const capitalLabel = CAPITAL_OPCOES.find(o => o.k === capital)?.label;
-      const chips = [...ufs.map(u => `UF: ${u}`), ...municSel.map(m => `Município: ${m.n}`), ...portes.map(p => `Porte: ${p}`), ...cnaeSel.map(s => `CNAE: ${s.d}`), ...(keywords.length ? [`Palavra-chave: ${keywords.join(', ')}`] : []), ...(abertura !== 'qualquer' ? [`Abertura: ${aberturaLabel}`] : []), ...(capital !== 'qualquer' ? [`Capital: ${capitalLabel}`] : [])];
+      const chips = [...ufs.map(u => `UF: ${u}`), ...municSel.map(m => `Município: ${m.n}`), ...portes.map(p => `Porte: ${p}`), ...cnaeSel.map(s => `CNAE: ${s.d}`), ...(keywords.length ? [`Palavra-chave: ${keywords.join(', ')}`] : []), ...(modoDesc === 'web' ? ['Descoberta: internet'] : []), ...(abertura !== 'qualquer' ? [`Abertura: ${aberturaLabel}`] : []), ...(capital !== 'qualquer' ? [`Capital: ${capitalLabel}`] : [])];
       const propostaValor = (tipo === 'icp' ? criteriosRef.current?.value : propostaRef.current?.value) || '';
       const criterios = tipo === 'icp' ? {
         chips,
@@ -2865,6 +2867,7 @@ function NovaBusca({
           cnaes,
           cnaes_rotulos: cnaeSel,
           keywords,
+          modo_descoberta: modoDesc,
           municipios_cod: municSel.map(m => m.c),
           municipios_rotulos: municSel,
           founded_gte: fnd.gte || null,
@@ -2956,6 +2959,56 @@ function NovaBusca({
       marginBottom: 18
     }
   }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginBottom: 18
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 9
+    }
+  }, "Como descobrir as empresas"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8
+    }
+  }, [['cnpja', 'Pela base CNPJá', 'Filtra por CNAE/UF/palavra na Receita. Econômico e direto.'], ['web', 'Pela internet', 'Acha pelo que a empresa anuncia no Google e depois confirma na CNPJá. Pega nichos que o CNAE não classifica — mais caro.']].map(([k, t, d]) => {
+    const on = modoDesc === k;
+    return /*#__PURE__*/React.createElement("div", {
+      key: k,
+      onClick: () => setModoDesc(k),
+      style: {
+        flex: 1,
+        cursor: 'pointer',
+        padding: '11px 13px',
+        borderRadius: 10,
+        lineHeight: 1.4,
+        border: on ? `1.5px solid ${C.gold}` : '1.5px solid var(--border)',
+        background: on ? 'color-mix(in srgb, var(--accent) 9%, transparent)' : 'transparent'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12.5,
+        fontWeight: 600,
+        color: on ? 'var(--text)' : 'var(--dim)'
+      }
+    }, t), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11,
+        color: 'var(--faint)',
+        marginTop: 3
+      }
+    }, d));
+  })), modoDesc === 'web' && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)',
+      marginTop: 8,
+      lineHeight: 1.45
+    }
+  }, "No modo internet, a ", /*#__PURE__*/React.createElement("b", null, "palavra-chave"), " (abaixo) \xE9 o termo pesquisado no Google. Munic\xEDpio/UF ajudam a mirar a regi\xE3o.")), /*#__PURE__*/React.createElement("div", {
     style: {
       marginBottom: 18,
       position: 'relative'
@@ -4938,6 +4991,7 @@ function Config() {
         body: JSON.stringify({
           limite_diario: cfg.limite_diario,
           corte_padrao: cfg.corte_padrao,
+          descoberta_modo_padrao: cfg.descoberta_modo_padrao,
           ttl_cache_dias: cfg.ttl_cache_dias,
           parada_min: cfg.parada_min,
           alerta_email: cfg.alerta_email,
@@ -5044,7 +5098,55 @@ function Config() {
       marginTop: 12,
       lineHeight: 1.5
     }
-  }, "O ", /*#__PURE__*/React.createElement("b", null, "limite di\xE1rio"), " \xE9 o teto de leads novos que o motor capta por dia somando todas as buscas \u2014 protege o or\xE7amento. Ao atingi-lo, a capta\xE7\xE3o pausa e retoma no dia seguinte. 0 = sem teto.")), /*#__PURE__*/React.createElement("div", {
+  }, "O ", /*#__PURE__*/React.createElement("b", null, "limite di\xE1rio"), " \xE9 o teto de leads novos que o motor capta por dia somando todas as buscas \u2014 protege o or\xE7amento. Ao atingi-lo, a capta\xE7\xE3o pausa e retoma no dia seguinte. 0 = sem teto."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      borderTop: '1px solid var(--border)',
+      marginTop: 16,
+      paddingTop: 16
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 9
+    }
+  }, "Modo de descoberta padr\xE3o ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, "(cada busca pode trocar)")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8
+    }
+  }, [['cnpja', 'Pela base CNPJá', 'econômico'], ['web', 'Pela internet', 'pega nichos, mais caro']].map(([k, t, d]) => {
+    const on = (cfg.descoberta_modo_padrao || 'cnpja') === k;
+    return /*#__PURE__*/React.createElement("div", {
+      key: k,
+      onClick: () => set('descoberta_modo_padrao', k),
+      style: {
+        flex: 1,
+        cursor: 'pointer',
+        padding: '11px 13px',
+        borderRadius: 10,
+        border: on ? `1.5px solid ${C.gold}` : '1.5px solid var(--border)',
+        background: on ? 'color-mix(in srgb, var(--accent) 9%, transparent)' : 'transparent'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12.5,
+        fontWeight: 600,
+        color: on ? 'var(--text)' : 'var(--dim)'
+      }
+    }, t), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11,
+        color: 'var(--faint)',
+        marginTop: 2
+      }
+    }, d));
+  })))), /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'var(--panel)',
       border: '1px solid var(--border)',

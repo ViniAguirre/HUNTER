@@ -1076,6 +1076,7 @@ function NovaBusca({ onSalvar }) {
   const [cnaeBusca, setCnaeBusca] = useState('');
   const [cnaeSel, setCnaeSel] = useState([]);
   const [kwText, setKwText] = useState('');   // palavra-chave no nome/fantasia (CNPJá names.in)
+  const [modoDesc, setModoDesc] = useState('cnpja');   // cnpja | web (descoberta)
   const [cnaeData, setCnaeData] = useState([]);
   const [cnaeFoco, setCnaeFoco] = useState(false);
   const [municBusca, setMunicBusca] = useState('');
@@ -1120,7 +1121,7 @@ function NovaBusca({ onSalvar }) {
       .then(d => { _municCache = d; setMunicData(d); }).catch(() => {});
     // Puxa os padrões da tela de Configurações como valores iniciais.
     fetch('/api/config', { credentials:'same-origin' }).then(r => r.json())
-      .then(c => { if (c?.corte_padrao != null) setCorte(c.corte_padrao); })
+      .then(c => { if (c?.corte_padrao != null) setCorte(c.corte_padrao); if (c?.descoberta_modo_padrao) setModoDesc(c.descoberta_modo_padrao); })
       .catch(() => {});
   }, []);
 
@@ -1227,13 +1228,14 @@ function NovaBusca({ onSalvar }) {
         ...portes.map(p => `Porte: ${p}`),
         ...cnaeSel.map(s => `CNAE: ${s.d}`),
         ...(keywords.length ? [`Palavra-chave: ${keywords.join(', ')}`] : []),
+        ...(modoDesc === 'web' ? ['Descoberta: internet'] : []),
         ...(abertura !== 'qualquer' ? [`Abertura: ${aberturaLabel}`] : []),
         ...(capital !== 'qualquer' ? [`Capital: ${capitalLabel}`] : []),
       ];
       const propostaValor = (tipo === 'icp' ? criteriosRef.current?.value : propostaRef.current?.value) || '';
       const criterios = tipo === 'icp'
         ? { chips, params: {
-            ufs, portes, cnaes, cnaes_rotulos: cnaeSel, keywords,
+            ufs, portes, cnaes, cnaes_rotulos: cnaeSel, keywords, modo_descoberta: modoDesc,
             municipios_cod: municSel.map(m => m.c), municipios_rotulos: municSel,
             founded_gte: fnd.gte || null, founded_lte: fnd.lte || null,
             equity_gte: cap.gte ?? null, equity_lte: cap.lte ?? null,
@@ -1275,6 +1277,29 @@ function NovaBusca({ onSalvar }) {
 
       {tipo === 'icp' ? (
         <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:20, marginBottom:18 }}>
+          <div style={{ marginBottom:18 }}>
+            <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:9 }}>Como descobrir as empresas</label>
+            <div style={{ display:'flex', gap:8 }}>
+              {[['cnpja','Pela base CNPJá','Filtra por CNAE/UF/palavra na Receita. Econômico e direto.'],
+                ['web','Pela internet','Acha pelo que a empresa anuncia no Google e depois confirma na CNPJá. Pega nichos que o CNAE não classifica — mais caro.']].map(([k,t,d]) => {
+                const on = modoDesc === k;
+                return (
+                  <div key={k} onClick={() => setModoDesc(k)}
+                    style={{ flex:1, cursor:'pointer', padding:'11px 13px', borderRadius:10, lineHeight:1.4,
+                      border: on ? `1.5px solid ${C.gold}` : '1.5px solid var(--border)',
+                      background: on ? 'color-mix(in srgb, var(--accent) 9%, transparent)' : 'transparent' }}>
+                    <div style={{ fontSize:12.5, fontWeight:600, color: on ? 'var(--text)' : 'var(--dim)' }}>{t}</div>
+                    <div style={{ fontSize:11, color:'var(--faint)', marginTop:3 }}>{d}</div>
+                  </div>
+                );
+              })}
+            </div>
+            {modoDesc === 'web' && (
+              <div style={{ fontSize:11, color:'var(--faint)', marginTop:8, lineHeight:1.45 }}>
+                No modo internet, a <b>palavra-chave</b> (abaixo) é o termo pesquisado no Google. Município/UF ajudam a mirar a região.
+              </div>
+            )}
+          </div>
           <div style={{ marginBottom:18, position:'relative' }}>
             <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>
               Atividade — descreva em palavras quem você quer <span style={{ color:'var(--faint)' }}>(vira CNAE; se não achar, use a busca inteligente)</span>
@@ -2144,6 +2169,7 @@ function Config() {
         method:'PATCH', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
         body: JSON.stringify({
           limite_diario: cfg.limite_diario, corte_padrao: cfg.corte_padrao,
+          descoberta_modo_padrao: cfg.descoberta_modo_padrao,
           ttl_cache_dias: cfg.ttl_cache_dias, parada_min: cfg.parada_min,
           alerta_email: cfg.alerta_email, crm_auto_global: cfg.crm_auto_global,
           crm_lookalike_auto: cfg.crm_lookalike_auto,
@@ -2185,6 +2211,23 @@ function Config() {
         <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:12, lineHeight:1.5 }}>
           O <b>limite diário</b> é o teto de leads novos que o motor capta por dia somando todas as buscas — protege o
           orçamento. Ao atingi-lo, a captação pausa e retoma no dia seguinte. 0 = sem teto.
+        </div>
+        <div style={{ borderTop:'1px solid var(--border)', marginTop:16, paddingTop:16 }}>
+          <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:9 }}>Modo de descoberta padrão <span style={{ color:'var(--faint)' }}>(cada busca pode trocar)</span></label>
+          <div style={{ display:'flex', gap:8 }}>
+            {[['cnpja','Pela base CNPJá','econômico'],['web','Pela internet','pega nichos, mais caro']].map(([k,t,d]) => {
+              const on = (cfg.descoberta_modo_padrao || 'cnpja') === k;
+              return (
+                <div key={k} onClick={() => set('descoberta_modo_padrao', k)}
+                  style={{ flex:1, cursor:'pointer', padding:'11px 13px', borderRadius:10,
+                    border: on ? `1.5px solid ${C.gold}` : '1.5px solid var(--border)',
+                    background: on ? 'color-mix(in srgb, var(--accent) 9%, transparent)' : 'transparent' }}>
+                  <div style={{ fontSize:12.5, fontWeight:600, color: on ? 'var(--text)' : 'var(--dim)' }}>{t}</div>
+                  <div style={{ fontSize:11, color:'var(--faint)', marginTop:2 }}>{d}</div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
 

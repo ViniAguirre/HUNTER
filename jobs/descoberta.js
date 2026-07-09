@@ -11,6 +11,7 @@
 const cnpja = require('../providers/cnpja');
 const perfilamento = require('../providers/perfil');
 const baseRates = require('../providers/base');
+const google = require('../providers/google');
 
 const TRAVADOS = ['qualificado', 'em_crm', 'descarte_duro'];
 const TETO_PAGINAS = 20;   // com limit=100, até ~2000 empresas por varredura
@@ -45,6 +46,14 @@ module.exports = async function descoberta(job, pool, queues) {
   if (orcamento <= 0) {
     await pool.query(`UPDATE buscas SET ultimo_heartbeat=now() WHERE id=$1`, [busca_id]);
     return { skipped: 'limite_diario', motivo: 'teto diário de leads atingido', novos: 0 };
+  }
+
+  // ── Modo WEB-FIRST (icp): descobre pela internet e confirma CNPJ/ativa na CNPJá.
+  if (tipo === 'icp') {
+    const modo = criterios.params?.modo_descoberta || await modoPadrao(pool);
+    if (modo === 'web') {
+      return descobrirWebFirst(pool, queues, busca_id, criterios, ig?.key_cifrada || null, orcamento);
+    }
   }
 
   // ── Modo importação: os leads SÃO os CNPJs da lista (sem expandir) ──────────
@@ -114,6 +123,72 @@ async function orcamentoHoje(pool) {
     `SELECT COUNT(*)::int n FROM leads WHERE criado_em >= date_trunc('day', now())`
   );
   return Math.max(0, limite - n);
+}
+
+const semAcentoLower = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+
+async function modoPadrao(pool) {
+  try { const { rows: [c] } = await pool.query(`SELECT descoberta_modo_padrao FROM config WHERE id=1`); return c?.descoberta_modo_padrao || 'cnpja'; }
+  catch { return 'cnpja'; }
+}
+
+// ── Descoberta WEB-FIRST ──────────────────────────────────────────────────────
+// Parte da internet (como o cliente pesquisaria no Google), pega o site, tenta o
+// CNPJ do rodapé (grátis) e confirma ativa/sócios na CNPJá. Só cai na CNPJá paga
+// (names.in) quando o site não expõe o CNPJ. Guarda o site pra a validação reusar.
+async function descobrirWebFirst(pool, queues, busca_id, criterios, cnpjaKey, orcamento) {
+  const p = criterios.params || {};
+  const termo = ((p.keywords || []).join(' ').trim())
+    || ((p.cnaes_rotulos || []).map(x => x.d).join(' ').trim());
+  const uf = (p.ufs || [])[0] || '';
+  const cidade = (p.municipios_rotulos || [])[0]?.n || '';
+  if (!termo) {
+    await pool.query(`UPDATE buscas SET ultimo_heartbeat=now() WHERE id=$1`, [busca_id]);
+    return { skipped: 'sem_termo_web', motivo: 'modo internet exige palavra-chave (ou atividade)', novos: 0 };
+  }
+
+  const candidatos = await google.buscarEmpresasWeb(termo, cidade, uf, 40);
+  const counters = { novos: 0, pulados: 0, enfileirados: 0, total: candidatos.length, orcamento, limiteAtingido: false, via_site: 0, via_cnpja: 0 };
+
+  for (const cand of candidatos) {
+    if (counters.limiteAtingido) break;
+    const s = await google.scrapeSite(cand.site);
+
+    let firmo = null;
+    if (s.cnpj) { try { firmo = await cnpja.enrichCnpj(s.cnpj); counters.via_site++; } catch (_) {} } // grátis
+    if (!firmo && cnpjaKey) { firmo = await resolverPorNome(cand.titulo || cand.site, uf, cidade, cnpjaKey); if (firmo) counters.via_cnpja++; }
+
+    if (!firmo || !firmo.cnpj || firmo.cnpj.length !== 14) { counters.pulados++; continue; }
+    if (firmo.situacao && !/ativa/i.test(firmo.situacao)) { counters.pulados++; continue; } // confirma ATIVA
+
+    const antes = counters.enfileirados;
+    await processarOffice(pool, queues, busca_id, firmo, counters);
+    if (counters.enfileirados > antes) {
+      // Reaproveitamento: guarda o que já achamos na web pra a validação não re-buscar.
+      await pool.query(`UPDATE empresas SET contatos_verificados=$2::jsonb WHERE cnpj=$1`,
+        [firmo.cnpj, JSON.stringify({ website: cand.site, email: s.email, telefone: s.telefone, resumo_site: s.resumo, resumo_fonte: s.resumo_fonte, fonte: 'web' })]);
+    }
+  }
+
+  await pool.query(
+    `UPDATE buscas SET status = CASE WHEN $2 THEN status ELSE 'Esgotada' END, ultimo_heartbeat=now() WHERE id=$1`,
+    [busca_id, counters.limiteAtingido]
+  );
+  return { modo: 'web', ...counters };
+}
+
+// Resolve nome → empresa na CNPJá (fallback pago, quando o site não traz CNPJ).
+// Só aceita se a cidade bater (quando informada), pra evitar casar a empresa errada.
+async function resolverPorNome(nome, uf, cidade, cnpjaKey) {
+  const termo = String(nome).split(/[|\-–—:•]/)[0]
+    .replace(/\b(ltda|s\.?\/?a\.?|eireli|mei|me|epp)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+  if (termo.length < 3) return null;
+  try {
+    const { offices } = await cnpja.search({ names: [termo], states: uf ? [uf] : [], limit: 5 }, cnpjaKey);
+    if (!offices.length) return null;
+    if (cidade) return offices.find(o => semAcentoLower(o.cidade) === semAcentoLower(cidade)) || null;
+    return offices[0];
+  } catch (_) { return null; }
 }
 
 // ── Perfilamento: baixa firmografia (grátis) dos CNPJs da lista e monta o perfil.

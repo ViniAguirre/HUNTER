@@ -351,6 +351,7 @@ async function init() {
     ALTER TABLE leads  ADD COLUMN IF NOT EXISTS crm_ref TEXT;
     CREATE INDEX IF NOT EXISTS idx_leads_crm_ref ON leads(crm_ref);
     ALTER TABLE config ADD COLUMN IF NOT EXISTS limite_diario INTEGER NOT NULL DEFAULT 350;
+    ALTER TABLE config ADD COLUMN IF NOT EXISTS descoberta_modo_padrao TEXT NOT NULL DEFAULT 'cnpja';
     ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS master BOOLEAN NOT NULL DEFAULT false;
     CREATE TABLE IF NOT EXISTS sementes (
       id         SERIAL PRIMARY KEY,
@@ -1071,6 +1072,7 @@ app.patch('/api/config', requireAuth, requireMaster, async (req, res) => {
   if ('ttl_cache_dias' in b) add('ttl_cache_dias', num(b.ttl_cache_dias, 1, 3650));
   if ('parada_min'     in b) add('parada_min',     num(b.parada_min, 1, 10080));
   if ('limite_diario'  in b) add('limite_diario',  num(b.limite_diario, 0, 100000));
+  if ('descoberta_modo_padrao' in b) { sets.push(`descoberta_modo_padrao=$${sets.length+1}`); vals.push(b.descoberta_modo_padrao === 'web' ? 'web' : 'cnpja'); }
   if ('alerta_email'   in b) { sets.push(`alerta_email=$${sets.length+1}`); vals.push(String(b.alerta_email || '').trim() || null); }
   if ('crm_auto_global' in b) { sets.push(`crm_auto_global=$${sets.length+1}`); vals.push(!!b.crm_auto_global); }
   if ('crm_lookalike_auto' in b) { sets.push(`crm_lookalike_auto=$${sets.length+1}`); vals.push(!!b.crm_lookalike_auto); }

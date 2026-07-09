@@ -26,13 +26,26 @@ module.exports = async function validacao(job, pool, queues) {
 
   try {
     const { rows: [emp] } = await pool.query(
-      `SELECT razao, fantasia, cidade, uf, contato_receita FROM empresas WHERE cnpj=$1`, [cnpj]
+      `SELECT razao, fantasia, cidade, uf, contato_receita, contatos_verificados FROM empresas WHERE cnpj=$1`, [cnpj]
     );
     const nome = emp?.fantasia || emp?.razao || '';
 
     let c = null;
+
+    // 0) Descoberta WEB-FIRST já extraiu site/contato/resumo — reaproveita (sem re-buscar).
+    const cvWeb = emp?.contatos_verificados;
+    if (cvWeb && cvWeb.fonte === 'web' && (cvWeb.email || cvWeb.telefone || cvWeb.resumo_site)) {
+      c = {
+        telefone: cvWeb.telefone || null, whatsapp: cvWeb.telefone || null,
+        email: cvWeb.email || null, website: cvWeb.website || null,
+        resumo_site: cvWeb.resumo_site || null, resumo_fonte: cvWeb.resumo_fonte || null,
+        fonte: 'web', validado: !!(cvWeb.email || cvWeb.telefone),
+        validado_em: new Date().toISOString(),
+      };
+    }
+
     // 1) Provedor pago ativo (Google Places / Econodata), se houver e a chave funcionar.
-    if (ig) {
+    if (!c && ig) {
       try {
         if (ig.provedor === 'google') {
           c = await google.buscarContato(nome, emp?.cidade, emp?.uf, ig.key_cifrada);

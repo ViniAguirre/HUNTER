@@ -92,12 +92,23 @@ function extrairTelefoneDe(html) {
   return m ? m[0].replace(/\D/g, '') : null;
 }
 
+// CNPJ no texto do site (rodapé costuma trazer). Grátis — evita consultar a CNPJá
+// só pra descobrir o CNPJ na descoberta web-first.
+function extrairCnpjDe(html) {
+  const txt = html.replace(/<[^>]+>/g, ' ');
+  const m = txt.match(/\b\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}\b/);
+  if (!m) return null;
+  const d = m[0].replace(/\D/g, '');
+  return d.length === 14 ? d : null;
+}
+
 async function scrapeSite(site) {
   const home = await baixar(site);
-  if (!home) return { email: null, resumo: null, telefone: null };
+  if (!home) return { email: null, resumo: null, telefone: null, cnpj: null };
 
   let email = extrairEmailDe(home);
   let telefone = extrairTelefoneDe(home);
+  let cnpj = extrairCnpjDe(home);
   const partes = [resumoDe(home, 2)].filter(Boolean);
   let fonte = 'home';
   const lidas = new Set([site]);
@@ -110,19 +121,23 @@ async function scrapeSite(site) {
     if (r && r.length >= 60) { partes.push(r); fonte = 'sobre'; }
     if (!email) email = extrairEmailDe(h);
     if (!telefone) telefone = extrairTelefoneDe(h);
+    if (!cnpj) cnpj = extrairCnpjDe(h);
   }
 
-  // 2) Se ainda faltar e-mail/telefone, tenta a página de contato.
-  if (!email || !telefone) {
+  // 2) Se ainda faltar e-mail/telefone/CNPJ, tenta a página de contato (rodapé/CNPJ costumam estar lá).
+  if (!email || !telefone || !cnpj) {
     const contato = acharLinks(home, site, PALAVRAS_CONTATO).find(u => !lidas.has(u));
-    if (contato) { const h = await baixar(contato); lidas.add(contato); email = email || extrairEmailDe(h); telefone = telefone || extrairTelefoneDe(h); }
+    if (contato) {
+      const h = await baixar(contato); lidas.add(contato);
+      email = email || extrairEmailDe(h); telefone = telefone || extrairTelefoneDe(h); cnpj = cnpj || extrairCnpjDe(h);
+    }
   }
 
   // Combina/dedupe num resumo único e limitado.
   const uniq = [];
   for (const p of partes) if (p && !uniq.some(u => u.includes(p) || p.includes(u))) uniq.push(p);
   const resumo = (uniq.join(' ').slice(0, 600).trim()) || null;
-  return { email, telefone, resumo, resumo_fonte: fonte, paginas_lidas: lidas.size };
+  return { email, telefone, cnpj, resumo, resumo_fonte: fonte, paginas_lidas: lidas.size };
 }
 
 // ── Fallback GRÁTIS: acha o site oficial via busca web sem chave (DuckDuckGo) ──
@@ -139,24 +154,43 @@ function hostBloqueado(u) {
   return HOSTS_BLOQ.some(d => host === d || host.endsWith('.' + d));
 }
 
-async function acharSite(nome, cidade, uf) {
-  const q = encodeURIComponent([nome, cidade, uf].filter(Boolean).join(' '));
-  let html = '';
+async function buscarDDG(termo) {
+  const q = encodeURIComponent(termo);
   try {
     const { data } = await axios.get(`https://html.duckduckgo.com/html/?q=${q}`, {
       timeout: 9000, maxContentLength: 3_000_000, maxRedirects: 3,
       headers: { 'User-Agent': UA_NAV, 'Accept-Language': 'pt-BR,pt;q=0.9' },
     });
-    html = typeof data === 'string' ? data : '';
-  } catch (_) { return null; }
+    return typeof data === 'string' ? data : '';
+  } catch (_) { return ''; }
+}
 
-  for (const m of html.matchAll(/href="((?:https?:\/\/|\/l\/\?uddg=)[^"]+)"/gi)) {
+// Resultados orgânicos (site + título) da busca, filtrando diretórios/redes e
+// deduplicando por domínio. O título costuma trazer o nome do negócio.
+function resultadosDDG(html) {
+  const out = [];
+  for (const m of html.matchAll(/<a[^>]+href="((?:https?:\/\/|\/l\/\?uddg=)[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)) {
     let u = m[1];
     if (u.startsWith('/l/?uddg=')) { try { u = decodeURIComponent(u.match(/uddg=([^&]+)/)[1]); } catch { continue; } }
     if (hostBloqueado(u)) continue;
-    try { return new URL(u).origin; } catch { continue; }   // raiz do domínio
+    let origin; try { origin = new URL(u).origin; } catch { continue; }
+    if (out.some(x => x.site === origin)) continue;
+    out.push({ site: origin, titulo: limpar(m[2]).slice(0, 120) || null });
   }
-  return null;
+  return out;
+}
+
+// Acha o site oficial (1º resultado) — usado no fallback de validação.
+async function acharSite(nome, cidade, uf) {
+  const r = resultadosDDG(await buscarDDG([nome, cidade, uf].filter(Boolean).join(' ')));
+  return r.length ? r[0].site : null;
+}
+
+// Descoberta WEB-FIRST: lista negócios que aparecem na busca (como o cliente
+// pesquisaria no Google) pra depois confirmar CNPJ/ativa na CNPJá. Grátis.
+async function buscarEmpresasWeb(termo, cidade, uf, max = 30) {
+  const html = await buscarDDG([termo, cidade, uf].filter(Boolean).join(' '));
+  return resultadosDDG(html).slice(0, max);
 }
 
 // Contato comercial SEM chave paga: acha o site (busca grátis) e faz o scrape rico.
@@ -224,4 +258,4 @@ async function buscarContato(nome, cidade, uf, apiKey) {
   };
 }
 
-module.exports = { buscarContato, buscarContatoGratis };
+module.exports = { buscarContato, buscarContatoGratis, buscarEmpresasWeb, scrapeSite };
