@@ -1071,8 +1071,9 @@ function Dashboard({
     atividade = []
   } = data || {};
   const qual = parseInt(metricas.leadsQualificados) || 0;
-  const enc = parseInt(metricas.leadsEncontrados) || 1;
-  const taxaQ = Math.round(qual / enc * 100);
+  const fora = parseInt(metricas.leadsForaPerfil) || 0;
+  const verificados = qual + fora; // passaram pela segmentação (Score 1)
+  const taxaQ = verificados ? Math.round(qual / verificados * 100) : 0;
   const metrics = [{
     label: 'Buscas ativas',
     value: fmtNum(metricas.buscasAtivas),
@@ -1085,14 +1086,14 @@ function Dashboard({
     value: fmtNum(metricas.leadsEncontrados),
     icon: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 3v3M12 18v3M3 12h3M18 12h3',
     iColor: C.gold,
-    trend: 'total acumulado',
+    trend: `${fmtNum(verificados)} verificados`,
     tColor: 'var(--dim)'
   }, {
     label: 'Leads qualificados',
     value: fmtNum(metricas.leadsQualificados),
     icon: 'M20 6L9 17l-5-5',
     iColor: C.green,
-    trend: `${taxaQ}% taxa de qualif.`,
+    trend: `${taxaQ}% aproveit. · ${fmtNum(fora)} fora do perfil`,
     tColor: 'var(--dim)'
   }, {
     label: 'Enviados ao CRM',

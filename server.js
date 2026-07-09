@@ -584,8 +584,11 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
       pool.query(`SELECT
         (SELECT COUNT(*)::int FROM buscas WHERE status='Ativa') AS buscas_ativas,
         (SELECT COUNT(*)::int FROM leads) AS leads_total,
-        (SELECT COUNT(*)::int FROM leads WHERE status='Qualificado') AS qualificados,
-        (SELECT COUNT(*)::int FROM leads WHERE status='Enviado') AS enviados`),
+        -- Qualificados = passaram no Score 1 (do 'scored' pra frente).
+        (SELECT COUNT(*)::int FROM leads WHERE estagio NOT IN ('coletado','enriquecido','descartado')) AS qualificados,
+        -- Verificados mas fora do perfil = reprovados na segmentação (Score 1 / filtro).
+        (SELECT COUNT(*)::int FROM leads WHERE estagio='descartado') AS fora_perfil,
+        (SELECT COUNT(*)::int FROM leads WHERE status='Enviado' OR enviado_crm_em IS NOT NULL) AS enviados`),
       pool.query(`
         SELECT b.id, b.nome, b.ritmo, b.status, b.ultima_ativ,
           COUNT(l.id)::int AS encontrados
@@ -600,6 +603,7 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
         buscasAtivas: m.buscas_ativas ?? 0,
         leadsEncontrados: m.leads_total ?? 0,
         leadsQualificados: m.qualificados ?? 0,
+        leadsForaPerfil: m.fora_perfil ?? 0,
         leadsCRM: m.enviados ?? 0,
       },
       buscasAtivas: buscasRes.rows.map(b => ({ ...b, enc: b.encontrados, health: computeHealth(b) })),

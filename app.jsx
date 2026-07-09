@@ -433,13 +433,14 @@ function Dashboard({ onOpenBusca }) {
 
   const { metricas = {}, buscasAtivas = [], atividade = [] } = data || {};
   const qual = parseInt(metricas.leadsQualificados) || 0;
-  const enc = parseInt(metricas.leadsEncontrados) || 1;
-  const taxaQ = Math.round(qual / enc * 100);
+  const fora = parseInt(metricas.leadsForaPerfil) || 0;
+  const verificados = qual + fora;   // passaram pela segmentação (Score 1)
+  const taxaQ = verificados ? Math.round(qual / verificados * 100) : 0;
 
   const metrics = [
     { label:'Buscas ativas', value:fmtNum(metricas.buscasAtivas), icon:'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-4.3-4.3', iColor:C.blue, trend:'em produção', tColor:'var(--dim)' },
-    { label:'Leads encontrados', value:fmtNum(metricas.leadsEncontrados), icon:'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 3v3M12 18v3M3 12h3M18 12h3', iColor:C.gold, trend:'total acumulado', tColor:'var(--dim)' },
-    { label:'Leads qualificados', value:fmtNum(metricas.leadsQualificados), icon:'M20 6L9 17l-5-5', iColor:C.green, trend:`${taxaQ}% taxa de qualif.`, tColor:'var(--dim)' },
+    { label:'Leads encontrados', value:fmtNum(metricas.leadsEncontrados), icon:'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 3v3M12 18v3M3 12h3M18 12h3', iColor:C.gold, trend:`${fmtNum(verificados)} verificados`, tColor:'var(--dim)' },
+    { label:'Leads qualificados', value:fmtNum(metricas.leadsQualificados), icon:'M20 6L9 17l-5-5', iColor:C.green, trend:`${taxaQ}% aproveit. · ${fmtNum(fora)} fora do perfil`, tColor:'var(--dim)' },
     { label:'Enviados ao CRM', value:fmtNum(metricas.leadsCRM), icon:'M5 12h14M13 5l7 7-7 7', iColor:C.cyan, trend:'total enviado', tColor:'var(--dim)' },
   ];
 
