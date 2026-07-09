@@ -390,13 +390,20 @@ async function init() {
   // provedores de API. MASTER_EMAIL é a FONTE DA VERDADE — pode ser uma lista
   // separada por vírgula. Esses e-mails viram master; todos os outros são
   // rebaixados (garante que só a Hunter tenha esse acesso).
+  // MASTER_EMAIL é só o BOOTSTRAP do primeiro master (aceita lista por vírgula):
+  // age apenas se ainda NÃO houver nenhum master. Depois disso, quem manda é a
+  // tela de Usuários (promover/rebaixar), sem depender do Portainer.
   const masterEmails = (process.env.MASTER_EMAIL || '')
     .split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
   if (masterEmails.length) {
-    await pool.query(`UPDATE usuarios SET master = (lower(email) = ANY($1))`, [masterEmails]);
+    await pool.query(
+      `UPDATE usuarios SET master=true
+       WHERE lower(email) = ANY($1) AND NOT EXISTS (SELECT 1 FROM usuarios WHERE master=true)`,
+      [masterEmails]
+    );
   }
-  // Rede de segurança: se ninguém for master (ex.: o e-mail master ainda não foi
-  // cadastrado como usuário), promove o admin mais antigo pra não travar o acesso.
+  // Rede de segurança: se ainda ninguém for master, promove o admin mais antigo
+  // pra não travar o acesso (nunca ficar sem quem configure as integrações).
   await pool.query(
     `UPDATE usuarios SET master=true
      WHERE id = (SELECT id FROM usuarios WHERE papel='Admin' ORDER BY id LIMIT 1)
@@ -487,6 +494,19 @@ app.get('/api/auth/me', requireAuth, (req, res) =>
   res.json({ id: req.user.id, nome: req.user.nome, email: req.user.email, papel: req.user.papel, master: !!req.user.master })
 );
 
+// Qualquer usuário troca a PRÓPRIA senha (confere a atual).
+app.post('/api/auth/trocar-senha', requireAuth, async (req, res) => {
+  const atual = String(req.body.senha_atual || '');
+  const nova = String(req.body.senha_nova || '');
+  if (nova.length < 6) return res.status(400).json({ erro: 'a nova senha precisa ter ao menos 6 caracteres' });
+  try {
+    const { rows:[u] } = await pool.query('SELECT senha_hash FROM usuarios WHERE id=$1', [req.user.id]);
+    if (!u || !await bcrypt.compare(atual, u.senha_hash)) return res.status(401).json({ erro: 'senha atual incorreta' });
+    await pool.query('UPDATE usuarios SET senha_hash=$1 WHERE id=$2', [await bcrypt.hash(nova, 12), req.user.id]);
+    res.json({ ok: true });
+  } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
 // ── API: usuários ─────────────────────────────────────────────────────────────
 
 app.get('/api/usuarios', requireAuth, requireAdmin, async (req, res) => {
@@ -527,10 +547,19 @@ app.patch('/api/usuarios/:id', requireAuth, requireAdmin, async (req, res) => {
   if (typeof req.body.ativo === 'boolean') { sets.push(`ativo=$${sets.length+1}`); vals.push(req.body.ativo); }
   if (['Admin','Operador','Visualizador'].includes(req.body.papel)) { sets.push(`papel=$${sets.length+1}`); vals.push(req.body.papel); }
   if (req.body.senha) { sets.push(`senha_hash=$${sets.length+1}`); vals.push(await bcrypt.hash(String(req.body.senha), 12)); }
+  // Só um master pode marcar/desmarcar master; nunca deixar o sistema sem master.
+  if (typeof req.body.master === 'boolean') {
+    if (!req.user.master) return res.status(403).json({ erro: 'apenas o master define outro master' });
+    if (req.body.master === false) {
+      const { rows:[{ n }] } = await pool.query(`SELECT COUNT(*)::int n FROM usuarios WHERE master=true AND id<>$1`, [id]);
+      if (n === 0) return res.status(400).json({ erro: 'precisa existir ao menos um master' });
+    }
+    sets.push(`master=$${sets.length+1}`); vals.push(req.body.master);
+  }
   if (!sets.length) return res.status(400).json({ erro: 'nada para atualizar' });
   vals.push(id);
   const { rows } = await pool.query(
-    `UPDATE usuarios SET ${sets.join(', ')} WHERE id=$${vals.length} RETURNING id, nome, email, papel, ativo`, vals
+    `UPDATE usuarios SET ${sets.join(', ')} WHERE id=$${vals.length} RETURNING id, nome, email, papel, master, ativo`, vals
   );
   if (!rows[0]) return res.status(404).json({ erro: 'não encontrado' });
   res.json(rows[0]);

@@ -451,12 +451,175 @@ function podeVer(it, user) {
   if (it.acesso === 'admin') return !!user?.master || user?.papel === 'Admin';
   return true;
 }
+function TrocarSenhaModal({
+  onClose
+}) {
+  const [atual, setAtual] = useState('');
+  const [nova, setNova] = useState('');
+  const [nova2, setNova2] = useState('');
+  const [msg, setMsg] = useState(null);
+  const [salvando, setSalvando] = useState(false);
+  const salvar = async () => {
+    if (nova.length < 6) {
+      setMsg({
+        ok: false,
+        txt: 'A nova senha precisa ter ao menos 6 caracteres.'
+      });
+      return;
+    }
+    if (nova !== nova2) {
+      setMsg({
+        ok: false,
+        txt: 'A confirmação não bate com a nova senha.'
+      });
+      return;
+    }
+    setSalvando(true);
+    setMsg(null);
+    try {
+      const r = await fetch('/api/auth/trocar-senha', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          senha_atual: atual,
+          senha_nova: nova
+        })
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.erro || 'Erro ao trocar a senha.');
+      setMsg({
+        ok: true,
+        txt: 'Senha alterada com sucesso.'
+      });
+      setAtual('');
+      setNova('');
+      setNova2('');
+      setTimeout(onClose, 1200);
+    } catch (e) {
+      setMsg({
+        ok: false,
+        txt: e.message
+      });
+    } finally {
+      setSalvando(false);
+    }
+  };
+  const inp = {
+    width: '100%',
+    height: 38,
+    borderRadius: 9,
+    border: '1px solid var(--border)',
+    background: 'var(--panel2)',
+    color: 'var(--text)',
+    padding: '0 12px',
+    fontSize: 13,
+    fontFamily: 'inherit',
+    marginBottom: 10
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'fixed',
+      inset: 0,
+      zIndex: 90,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    onClick: onClose,
+    style: {
+      position: 'absolute',
+      inset: 0,
+      background: 'rgba(5,9,20,.6)'
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'relative',
+      width: 400,
+      maxWidth: '92vw',
+      background: 'var(--panel)',
+      border: '1px solid var(--border)',
+      borderRadius: 16,
+      padding: 24
+    }
+  }, /*#__PURE__*/React.createElement("h3", {
+    style: {
+      fontSize: 15,
+      fontWeight: 600,
+      margin: '0 0 16px'
+    }
+  }, "Trocar minha senha"), /*#__PURE__*/React.createElement("input", {
+    type: "password",
+    placeholder: "Senha atual",
+    value: atual,
+    onChange: e => setAtual(e.target.value),
+    style: inp
+  }), /*#__PURE__*/React.createElement("input", {
+    type: "password",
+    placeholder: "Nova senha (m\xEDn. 6)",
+    value: nova,
+    onChange: e => setNova(e.target.value),
+    style: inp
+  }), /*#__PURE__*/React.createElement("input", {
+    type: "password",
+    placeholder: "Confirmar nova senha",
+    value: nova2,
+    onChange: e => setNova2(e.target.value),
+    style: inp
+  }), msg && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: msg.ok ? C.green : C.red,
+      margin: '4px 0 12px'
+    }
+  }, msg.txt), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 10,
+      justifyContent: 'flex-end',
+      marginTop: 6
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: onClose,
+    style: {
+      height: 38,
+      padding: '0 16px',
+      borderRadius: 9,
+      border: '1px solid var(--border)',
+      background: 'transparent',
+      color: 'var(--text)',
+      fontSize: 13,
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, "Cancelar"), /*#__PURE__*/React.createElement("button", {
+    onClick: salvar,
+    disabled: salvando,
+    style: {
+      height: 38,
+      padding: '0 18px',
+      borderRadius: 9,
+      border: 'none',
+      background: 'var(--gold)',
+      color: '#0E1936',
+      fontWeight: 600,
+      fontSize: 13,
+      fontFamily: 'inherit',
+      cursor: 'pointer',
+      opacity: salvando ? .6 : 1
+    }
+  }, salvando ? 'Salvando…' : 'Salvar'))));
+}
 function Sidebar({
   screen,
   onNav,
   onLogout,
   user
 }) {
+  const [modalSenha, setModalSenha] = useState(false);
   const nome = user?.nome || '…';
   const papel = user?.master ? 'Master' : user?.papel || '';
   const ini = nome.split(' ').slice(0, 2).map(w => w[0]).join('');
@@ -549,14 +712,15 @@ function Sidebar({
       padding: '18px 12px 8px'
     }
   }, "ADMINISTRA\xC7\xC3O"), renderNav(adminItems)), /*#__PURE__*/React.createElement("div", {
-    onClick: onLogout,
     style: {
-      padding: '14px 16px',
-      borderTop: '1px solid var(--border)',
+      padding: '12px 14px',
+      borderTop: '1px solid var(--border)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
       display: 'flex',
       alignItems: 'center',
-      gap: 10,
-      cursor: 'pointer'
+      gap: 10
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -590,7 +754,43 @@ function Sidebar({
       fontSize: 11,
       color: 'var(--faint)'
     }
-  }, papel, " \xB7 sair"))));
+  }, papel))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      marginTop: 10
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: () => setModalSenha(true),
+    className: "nav-link",
+    style: {
+      flex: 1,
+      height: 32,
+      borderRadius: 8,
+      border: '1px solid var(--border)',
+      background: 'transparent',
+      color: 'var(--dim)',
+      fontSize: 12,
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, "Trocar senha"), /*#__PURE__*/React.createElement("button", {
+    onClick: onLogout,
+    className: "nav-link",
+    style: {
+      flex: 1,
+      height: 32,
+      borderRadius: 8,
+      border: '1px solid var(--border)',
+      background: 'transparent',
+      color: 'var(--dim)',
+      fontSize: 12,
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, "Sair"))), modalSenha && /*#__PURE__*/React.createElement(TrocarSenhaModal, {
+    onClose: () => setModalSenha(false)
+  }));
 }
 
 // ── Topbar ────────────────────────────────────────────────────────────────────
@@ -4089,11 +4289,14 @@ function fmtAcesso(ts) {
     return '—';
   }
 }
-function Usuarios() {
+function Usuarios({
+  user
+}) {
   const [users, setUsers] = useState(null);
   const [erro, setErro] = useState(null);
   const [novaCred, setNovaCred] = useState(null);
   const [copiado, setCopiado] = useState(false);
+  const isMaster = !!user?.master;
   const papelColors = {
     Admin: C.gold,
     Operador: C.blue,
@@ -4179,7 +4382,51 @@ function Usuarios() {
     }
     carregar();
   };
-  const cols = '2fr 1.3fr .9fr 1fr 90px 44px';
+  const toggleMaster = async u => {
+    const virar = !u.master;
+    if (!window.confirm(virar ? `Tornar ${u.nome} MASTER? Ele passará a ver Integrações, Configurações e Monitoramento (dados sigilosos da Hunter).` : `Remover o MASTER de ${u.nome}? Ele deixa de ver as telas sigilosas.`)) return;
+    const r = await fetch('/api/usuarios/' + u.id, {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        master: virar
+      })
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      window.alert(d.erro || 'Erro ao alterar master.');
+      return;
+    }
+    carregar();
+  };
+  const redefinirSenha = async u => {
+    const nova = window.prompt(`Nova senha para ${u.nome} (mín. 6 caracteres).\nEle poderá trocá-la depois no menu do perfil.`);
+    if (nova == null) return;
+    if (nova.trim().length < 6) {
+      window.alert('A senha precisa ter ao menos 6 caracteres.');
+      return;
+    }
+    const r = await fetch('/api/usuarios/' + u.id, {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        senha: nova.trim()
+      })
+    });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      window.alert(d.erro || 'Erro ao redefinir senha.');
+      return;
+    }
+    window.alert(`Senha de ${u.nome} redefinida.\n\nE-mail: ${u.email}\nNova senha: ${nova.trim()}\n\nRepasse com segurança — ele pode trocá-la depois.`);
+  };
+  const cols = '1.7fr 1.3fr 1.2fr 1fr 84px 84px';
   return /*#__PURE__*/React.createElement("div", {
     style: {
       maxWidth: 1010
@@ -4305,14 +4552,27 @@ function Usuarios() {
       style: {
         display: 'flex',
         gap: 6,
-        alignItems: 'center'
+        alignItems: 'center',
+        flexWrap: 'wrap'
       }
     }, /*#__PURE__*/React.createElement("span", {
       style: badgeStyle(papelColors[u.papel] || C.gray)
-    }, u.papel), u.master && /*#__PURE__*/React.createElement("span", {
-      style: badgeStyle(C.gold),
-      title: "Login MASTER da Hunter \u2014 v\xEA Integra\xE7\xF5es/Config/Monitoramento"
-    }, "Master")), /*#__PURE__*/React.createElement("div", {
+    }, u.papel), u.master ? /*#__PURE__*/React.createElement("span", {
+      onClick: isMaster ? () => toggleMaster(u) : undefined,
+      title: isMaster ? 'Login MASTER — clique para remover' : 'Login MASTER da Hunter',
+      style: {
+        ...badgeStyle(C.gold),
+        cursor: isMaster ? 'pointer' : 'default'
+      }
+    }, "Master") : isMaster ? /*#__PURE__*/React.createElement("span", {
+      onClick: () => toggleMaster(u),
+      title: "Tornar master",
+      style: {
+        ...badgeStyle(C.gray),
+        cursor: 'pointer',
+        opacity: .6
+      }
+    }, "+ master") : null), /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 12.5,
         color: 'var(--faint)'
@@ -4324,7 +4584,33 @@ function Usuarios() {
         ...badgeStyle(u.ativo ? C.green : C.gray),
         cursor: 'pointer'
       }
-    }, u.ativo ? 'Ativo' : 'Inativo')), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("button", {
+    }, u.ativo ? 'Ativo' : 'Inativo')), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: 6
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      onClick: () => redefinirSenha(u),
+      title: "Redefinir senha",
+      style: {
+        width: 30,
+        height: 30,
+        borderRadius: 8,
+        border: '1px solid var(--border)',
+        background: 'transparent',
+        color: 'var(--dim)',
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center'
+      }
+    }, /*#__PURE__*/React.createElement(SvgMulti, {
+      w: 15,
+      h: 15,
+      sw: 1.7
+    }, /*#__PURE__*/React.createElement("path", {
+      d: "M7 11V7a5 5 0 0 1 10 0v4M5 11h14v10H5z"
+    }))), /*#__PURE__*/React.createElement("button", {
       onClick: () => excluir(u),
       title: "Excluir usu\xE1rio",
       style: {
@@ -6449,7 +6735,9 @@ function App() {
       case 'integracoes':
         return /*#__PURE__*/React.createElement(Integracoes, null);
       case 'usuarios':
-        return /*#__PURE__*/React.createElement(Usuarios, null);
+        return /*#__PURE__*/React.createElement(Usuarios, {
+          user: user
+        });
       case 'config':
         return /*#__PURE__*/React.createElement(Config, null);
       case 'monitor':

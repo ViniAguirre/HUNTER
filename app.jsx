@@ -201,7 +201,56 @@ function podeVer(it, user) {
   return true;
 }
 
+function TrocarSenhaModal({ onClose }) {
+  const [atual, setAtual] = useState('');
+  const [nova, setNova] = useState('');
+  const [nova2, setNova2] = useState('');
+  const [msg, setMsg] = useState(null);
+  const [salvando, setSalvando] = useState(false);
+  const salvar = async () => {
+    if (nova.length < 6) { setMsg({ ok:false, txt:'A nova senha precisa ter ao menos 6 caracteres.' }); return; }
+    if (nova !== nova2) { setMsg({ ok:false, txt:'A confirmação não bate com a nova senha.' }); return; }
+    setSalvando(true); setMsg(null);
+    try {
+      const r = await fetch('/api/auth/trocar-senha', {
+        method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ senha_atual: atual, senha_nova: nova })
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.erro || 'Erro ao trocar a senha.');
+      setMsg({ ok:true, txt:'Senha alterada com sucesso.' });
+      setAtual(''); setNova(''); setNova2('');
+      setTimeout(onClose, 1200);
+    } catch (e) { setMsg({ ok:false, txt:e.message }); }
+    finally { setSalvando(false); }
+  };
+  const inp = { width:'100%', height:38, borderRadius:9, border:'1px solid var(--border)',
+    background:'var(--panel2)', color:'var(--text)', padding:'0 12px', fontSize:13, fontFamily:'inherit', marginBottom:10 };
+  return (
+    <div style={{ position:'fixed', inset:0, zIndex:90, display:'flex', alignItems:'center', justifyContent:'center' }}>
+      <div onClick={onClose} style={{ position:'absolute', inset:0, background:'rgba(5,9,20,.6)' }}/>
+      <div style={{ position:'relative', width:400, maxWidth:'92vw', background:'var(--panel)',
+        border:'1px solid var(--border)', borderRadius:16, padding:24 }}>
+        <h3 style={{ fontSize:15, fontWeight:600, margin:'0 0 16px' }}>Trocar minha senha</h3>
+        <input type="password" placeholder="Senha atual" value={atual} onChange={e=>setAtual(e.target.value)} style={inp}/>
+        <input type="password" placeholder="Nova senha (mín. 6)" value={nova} onChange={e=>setNova(e.target.value)} style={inp}/>
+        <input type="password" placeholder="Confirmar nova senha" value={nova2} onChange={e=>setNova2(e.target.value)} style={inp}/>
+        {msg && <div style={{ fontSize:12.5, color: msg.ok ? C.green : C.red, margin:'4px 0 12px' }}>{msg.txt}</div>}
+        <div style={{ display:'flex', gap:10, justifyContent:'flex-end', marginTop:6 }}>
+          <button onClick={onClose} style={{ height:38, padding:'0 16px', borderRadius:9, border:'1px solid var(--border)',
+            background:'transparent', color:'var(--text)', fontSize:13, fontFamily:'inherit', cursor:'pointer' }}>Cancelar</button>
+          <button onClick={salvar} disabled={salvando} style={{ height:38, padding:'0 18px', borderRadius:9, border:'none',
+            background:'var(--gold)', color:'#0E1936', fontWeight:600, fontSize:13, fontFamily:'inherit', cursor:'pointer', opacity:salvando?.6:1 }}>
+            {salvando ? 'Salvando…' : 'Salvar'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Sidebar({ screen, onNav, onLogout, user }) {
+  const [modalSenha, setModalSenha] = useState(false);
   const nome = user?.nome || '…';
   const papel = user?.master ? 'Master' : (user?.papel || '');
   const ini = nome.split(' ').slice(0,2).map(w=>w[0]).join('');
@@ -242,15 +291,25 @@ function Sidebar({ screen, onNav, onLogout, user }) {
         )}
         {renderNav(adminItems)}
       </nav>
-      <div onClick={onLogout} style={{ padding:'14px 16px', borderTop:'1px solid var(--border)',
-        display:'flex', alignItems:'center', gap:10, cursor:'pointer' }}>
-        <div style={{ width:32, height:32, borderRadius:8, background:C.blue, color:'#fff',
-          display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:600, flexShrink:0 }}>{ini}</div>
-        <div style={{ lineHeight:1.3, overflow:'hidden' }}>
-          <div style={{ fontSize:13, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{nome}</div>
-          <div style={{ fontSize:11, color:'var(--faint)' }}>{papel} · sair</div>
+      <div style={{ padding:'12px 14px', borderTop:'1px solid var(--border)' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+          <div style={{ width:32, height:32, borderRadius:8, background:C.blue, color:'#fff',
+            display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:600, flexShrink:0 }}>{ini}</div>
+          <div style={{ lineHeight:1.3, overflow:'hidden' }}>
+            <div style={{ fontSize:13, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{nome}</div>
+            <div style={{ fontSize:11, color:'var(--faint)' }}>{papel}</div>
+          </div>
+        </div>
+        <div style={{ display:'flex', gap:8, marginTop:10 }}>
+          <button onClick={() => setModalSenha(true)} className="nav-link"
+            style={{ flex:1, height:32, borderRadius:8, border:'1px solid var(--border)', background:'transparent',
+              color:'var(--dim)', fontSize:12, fontFamily:'inherit', cursor:'pointer' }}>Trocar senha</button>
+          <button onClick={onLogout} className="nav-link"
+            style={{ flex:1, height:32, borderRadius:8, border:'1px solid var(--border)', background:'transparent',
+              color:'var(--dim)', fontSize:12, fontFamily:'inherit', cursor:'pointer' }}>Sair</button>
         </div>
       </div>
+      {modalSenha && <TrocarSenhaModal onClose={() => setModalSenha(false)}/>}
     </aside>
   );
 }
@@ -1785,11 +1844,12 @@ function fmtAcesso(ts) {
   catch (_) { return '—'; }
 }
 
-function Usuarios() {
+function Usuarios({ user }) {
   const [users, setUsers] = useState(null);
   const [erro, setErro] = useState(null);
   const [novaCred, setNovaCred] = useState(null);
   const [copiado, setCopiado] = useState(false);
+  const isMaster = !!user?.master;
   const papelColors = { Admin:C.gold, Operador:C.blue, Visualizador:C.gray };
 
   const carregar = () => {
@@ -1838,7 +1898,32 @@ function Usuarios() {
     carregar();
   };
 
-  const cols = '2fr 1.3fr .9fr 1fr 90px 44px';
+  const toggleMaster = async (u) => {
+    const virar = !u.master;
+    if (!window.confirm(virar
+      ? `Tornar ${u.nome} MASTER? Ele passará a ver Integrações, Configurações e Monitoramento (dados sigilosos da Hunter).`
+      : `Remover o MASTER de ${u.nome}? Ele deixa de ver as telas sigilosas.`)) return;
+    const r = await fetch('/api/usuarios/' + u.id, {
+      method:'PATCH', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ master: virar })
+    });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); window.alert(d.erro || 'Erro ao alterar master.'); return; }
+    carregar();
+  };
+
+  const redefinirSenha = async (u) => {
+    const nova = window.prompt(`Nova senha para ${u.nome} (mín. 6 caracteres).\nEle poderá trocá-la depois no menu do perfil.`);
+    if (nova == null) return;
+    if (nova.trim().length < 6) { window.alert('A senha precisa ter ao menos 6 caracteres.'); return; }
+    const r = await fetch('/api/usuarios/' + u.id, {
+      method:'PATCH', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ senha: nova.trim() })
+    });
+    if (!r.ok) { const d = await r.json().catch(() => ({})); window.alert(d.erro || 'Erro ao redefinir senha.'); return; }
+    window.alert(`Senha de ${u.nome} redefinida.\n\nE-mail: ${u.email}\nNova senha: ${nova.trim()}\n\nRepasse com segurança — ele pode trocá-la depois.`);
+  };
+
+  const cols = '1.7fr 1.3fr 1.2fr 1fr 84px 84px';
 
   return (
     <div style={{ maxWidth:1010 }}>
@@ -1873,9 +1958,16 @@ function Usuarios() {
                 <span style={{ fontSize:13.5, fontWeight:500 }}>{u.nome}</span>
               </div>
               <div style={{ fontSize:12.5, color:'var(--dim)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{u.email}</div>
-              <div style={{ display:'flex', gap:6, alignItems:'center' }}>
+              <div style={{ display:'flex', gap:6, alignItems:'center', flexWrap:'wrap' }}>
                 <span style={badgeStyle(papelColors[u.papel]||C.gray)}>{u.papel}</span>
-                {u.master && <span style={badgeStyle(C.gold)} title="Login MASTER da Hunter — vê Integrações/Config/Monitoramento">Master</span>}
+                {u.master ? (
+                  <span onClick={isMaster ? () => toggleMaster(u) : undefined}
+                    title={isMaster ? 'Login MASTER — clique para remover' : 'Login MASTER da Hunter'}
+                    style={{ ...badgeStyle(C.gold), cursor: isMaster ? 'pointer' : 'default' }}>Master</span>
+                ) : isMaster ? (
+                  <span onClick={() => toggleMaster(u)} title="Tornar master"
+                    style={{ ...badgeStyle(C.gray), cursor:'pointer', opacity:.6 }}>+ master</span>
+                ) : null}
               </div>
               <div style={{ fontSize:12.5, color:'var(--faint)' }}>{fmtAcesso(u.ultimo_acesso)}</div>
               <div>
@@ -1884,7 +1976,12 @@ function Usuarios() {
                   {u.ativo ? 'Ativo' : 'Inativo'}
                 </span>
               </div>
-              <div>
+              <div style={{ display:'flex', gap:6 }}>
+                <button onClick={() => redefinirSenha(u)} title="Redefinir senha"
+                  style={{ width:30, height:30, borderRadius:8, border:'1px solid var(--border)', background:'transparent',
+                    color:'var(--dim)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
+                  <SvgMulti w={15} h={15} sw={1.7}><path d="M7 11V7a5 5 0 0 1 10 0v4M5 11h14v10H5z"/></SvgMulti>
+                </button>
                 <button onClick={() => excluir(u)} title="Excluir usuário"
                   style={{ width:30, height:30, borderRadius:8, border:'1px solid var(--border)', background:'transparent',
                     color:'var(--dim)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
@@ -2781,7 +2878,7 @@ function App() {
       case 'buscaDetail': return <BuscaDetail buscaId={buscaDetailId} onBack={() => setScreen('buscas')} onOpenLead={setOpenLeadId}/>;
       case 'nova': return <NovaBusca onSalvar={() => navTo('buscas')}/>;
       case 'integracoes': return <Integracoes/>;
-      case 'usuarios': return <Usuarios/>;
+      case 'usuarios': return <Usuarios user={user}/>;
       case 'config': return <Config/>;
       case 'monitor': return <Monitor/>;
       default: return null;
