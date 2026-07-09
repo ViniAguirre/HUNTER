@@ -1103,8 +1103,12 @@ function NovaBusca({ onSalvar }) {
   }, [listaCnpj]);
   const MIN_LOOKALIKE = 3;
 
-  // Palavra-chave no nome/fantasia (vírgula = OU). Ex.: "purificador, filtro".
-  const keywords = useMemo(() => kwText.split(/[,;]/).map(t => t.trim()).filter(Boolean), [kwText]);
+  // Palavra-chave no nome/fantasia. Vírgula = OU; dentro de um termo, espaço = E.
+  // Removemos conectivos (de, da, e...) pra "Purificador de água" virar E("purificador","água").
+  const KW_STOP = new Set(['de','da','do','das','dos','e','com','para','a','o','os','as','em','no','na','ou']);
+  const keywords = useMemo(() => kwText.split(/[,;]/).map(t =>
+    t.trim().split(/\s+/).filter(w => w && !KW_STOP.has(w.toLowerCase())).join(' ')
+  ).filter(Boolean), [kwText]);
 
   useEffect(() => {
     if (_cnaeCache) { setCnaeData(_cnaeCache); }
@@ -1363,8 +1367,9 @@ function NovaBusca({ onSalvar }) {
               </div>
             )}
             <div style={{ fontSize:11, color:'var(--faint)', marginTop:6, lineHeight:1.45 }}>
-              Use quando o ramo não tem um CNAE próprio (ex.: "lojas de purificadores"). Vírgula = OU — traz quem tem
-              <b> qualquer</b> dessas palavras no nome. Pode combinar com CNAE/UF acima.
+              Use quando o ramo não tem CNAE próprio (ex.: purificadores). <b>Vírgula = OU</b> (purificador, filtro → tem
+              um OU outro); <b>espaço = E</b> (purificador água → tem os dois no nome). Dica: pra nicho, uma palavra
+              específica como "purificador" já basta. Pode combinar com CNAE/UF.
             </div>
           </div>
           <div style={{ marginBottom:18 }}>

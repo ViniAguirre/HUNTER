@@ -2702,8 +2702,10 @@ function NovaBusca({
   }, [listaCnpj]);
   const MIN_LOOKALIKE = 3;
 
-  // Palavra-chave no nome/fantasia (vírgula = OU). Ex.: "purificador, filtro".
-  const keywords = useMemo(() => kwText.split(/[,;]/).map(t => t.trim()).filter(Boolean), [kwText]);
+  // Palavra-chave no nome/fantasia. Vírgula = OU; dentro de um termo, espaço = E.
+  // Removemos conectivos (de, da, e...) pra "Purificador de água" virar E("purificador","água").
+  const KW_STOP = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'com', 'para', 'a', 'o', 'os', 'as', 'em', 'no', 'na', 'ou']);
+  const keywords = useMemo(() => kwText.split(/[,;]/).map(t => t.trim().split(/\s+/).filter(w => w && !KW_STOP.has(w.toLowerCase())).join(' ')).filter(Boolean), [kwText]);
   useEffect(() => {
     if (_cnaeCache) {
       setCnaeData(_cnaeCache);
@@ -3206,7 +3208,7 @@ function NovaBusca({
       marginTop: 6,
       lineHeight: 1.45
     }
-  }, "Use quando o ramo n\xE3o tem um CNAE pr\xF3prio (ex.: \"lojas de purificadores\"). V\xEDrgula = OU \u2014 traz quem tem", /*#__PURE__*/React.createElement("b", null, " qualquer"), " dessas palavras no nome. Pode combinar com CNAE/UF acima.")), /*#__PURE__*/React.createElement("div", {
+  }, "Use quando o ramo n\xE3o tem CNAE pr\xF3prio (ex.: purificadores). ", /*#__PURE__*/React.createElement("b", null, "V\xEDrgula = OU"), " (purificador, filtro \u2192 tem um OU outro); ", /*#__PURE__*/React.createElement("b", null, "espa\xE7o = E"), " (purificador \xE1gua \u2192 tem os dois no nome). Dica: pra nicho, uma palavra espec\xEDfica como \"purificador\" j\xE1 basta. Pode combinar com CNAE/UF.")), /*#__PURE__*/React.createElement("div", {
     style: {
       marginBottom: 18
     }
