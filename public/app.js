@@ -2472,6 +2472,9 @@ function NovaBusca({
   const [capital, setCapital] = useState('qualquer');
   const [crmAuto, setCrmAuto] = useState(false);
   const [listaCnpj, setListaCnpj] = useState('');
+  const [iaCarregando, setIaCarregando] = useState(false);
+  const [iaSug, setIaSug] = useState(null); // resultados da IA (ou null)
+  const [iaErro, setIaErro] = useState(null);
   const nomeRef = useRef();
   const criteriosRef = useRef(); // proposta de valor (ICP)
   const propostaRef = useRef(); // proposta de valor (lista/lookalike)
@@ -2529,24 +2532,74 @@ function NovaBusca({
     setMunicBusca('');
   };
   const removeMunic = c => setMunicSel(prev => prev.filter(x => x.c !== c));
+
+  // Busca local por PALAVRAS-CHAVE (token), não substring literal: "loja
+  // purificador agua" acha CNAEs que contenham essas palavras, rankeado por
+  // quantas casaram. Assim linguagem natural já funciona sem IA na maioria dos casos.
+  const STOP = new Set(['de', 'da', 'do', 'das', 'dos', 'e', 'em', 'para', 'por', 'com', 'sem', 'que', 'os', 'as', 'um', 'uma', 'the', 'of']);
   const cnaeResultados = useMemo(() => {
     const q = semAcento(cnaeBusca.trim());
     if (q.length < 2) return [];
     const qDig = q.replace(/\D/g, '');
-    const out = [];
-    for (const s of cnaeData) {
-      if (semAcento(s.d).includes(q) || qDig.length >= 3 && s.c.includes(qDig)) {
-        out.push(s);
-        if (out.length >= 25) break;
-      }
+    if (qDig.length >= 3 && qDig.length === q.replace(/\s/g, '').length) {
+      // busca por código
+      return cnaeData.filter(s => s.c.includes(qDig)).slice(0, 25);
     }
-    return out;
+    const tokens = q.split(/\s+/).filter(t => t.length >= 3 && !STOP.has(t));
+    if (!tokens.length) return [];
+    const scored = [];
+    for (const s of cnaeData) {
+      const d = semAcento(s.d);
+      let hits = 0;
+      for (const t of tokens) if (d.includes(t)) hits++;
+      if (hits > 0) scored.push({
+        s,
+        hits
+      });
+    }
+    scored.sort((a, b) => b.hits - a.hits || a.s.d.length - b.s.d.length);
+    return scored.slice(0, 25).map(x => x.s);
   }, [cnaeBusca, cnaeData]);
   const addCnae = s => {
     setCnaeSel(prev => prev.find(x => x.c === s.c) ? prev : [...prev, s]);
     setCnaeBusca('');
+    setIaSug(null);
+    setIaErro(null);
   };
   const removeCnae = c => setCnaeSel(prev => prev.filter(x => x.c !== c));
+
+  // Busca inteligente: manda a frase pro backend, que usa a IA pra mapear em CNAEs reais.
+  const buscarComIA = async () => {
+    const texto = cnaeBusca.trim();
+    if (texto.length < 3) return;
+    setIaCarregando(true);
+    setIaErro(null);
+    setIaSug(null);
+    try {
+      const r = await fetch('/api/cnae/sugerir', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          texto
+        })
+      });
+      const d = await r.json();
+      if (d.erro === 'ia_inativa') {
+        setIaErro('Ative a integração de IA (OpenAI) em Integrações para a busca inteligente.');
+      } else if (!r.ok || d.erro) {
+        setIaErro('Não consegui consultar a IA agora. Tente palavras-chave mais simples.');
+      } else if (!d.sugestoes?.length) {
+        setIaErro('A IA não encontrou CNAE para essa descrição. Tente reformular.');
+      } else setIaSug(d.sugestoes);
+    } catch (_) {
+      setIaErro('Falha de conexão ao buscar com IA.');
+    } finally {
+      setIaCarregando(false);
+    }
+  };
   const tipos = [{
     key: 'icp',
     titulo: 'Por perfil (ICP)',
@@ -2697,12 +2750,26 @@ function NovaBusca({
       color: 'var(--dim)',
       marginBottom: 7
     }
-  }, "Atividade \u2014 busque por palavra (vira CNAE automaticamente)"), /*#__PURE__*/React.createElement("input", {
+  }, "Atividade \u2014 descreva em palavras quem voc\xEA quer ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, "(vira CNAE; se n\xE3o achar, use a busca inteligente)")), /*#__PURE__*/React.createElement("input", {
     value: cnaeBusca,
-    onChange: e => setCnaeBusca(e.target.value),
+    onChange: e => {
+      setCnaeBusca(e.target.value);
+      setIaSug(null);
+      setIaErro(null);
+    },
     onFocus: () => setCnaeFoco(true),
     onBlur: () => setTimeout(() => setCnaeFoco(false), 150),
-    placeholder: "Ex: fisioterapia, restaurante, desenvolvimento de software\u2026",
+    onKeyDown: e => {
+      if (e.key === 'Enter' && cnaeResultados.length === 0) {
+        e.preventDefault();
+        buscarComIA();
+      }
+    },
+    placeholder: "Ex: lojas de purificadores de \xE1gua, cl\xEDnicas de fisioterapia, transportadoras\u2026",
     style: {
       width: '100%',
       height: 40,
@@ -2714,7 +2781,7 @@ function NovaBusca({
       fontSize: 13,
       fontFamily: 'inherit'
     }
-  }), cnaeFoco && cnaeBusca.trim().length >= 2 && /*#__PURE__*/React.createElement("div", {
+  }), cnaeFoco && cnaeBusca.trim().length >= 2 && cnaeResultados.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       position: 'absolute',
       zIndex: 30,
@@ -2729,19 +2796,7 @@ function NovaBusca({
       borderRadius: 9,
       boxShadow: '0 10px 28px rgba(0,0,0,.45)'
     }
-  }, cnaeData.length === 0 ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '10px 12px',
-      fontSize: 12.5,
-      color: 'var(--faint)'
-    }
-  }, "Carregando atividades\u2026") : cnaeResultados.length === 0 ? /*#__PURE__*/React.createElement("div", {
-    style: {
-      padding: '10px 12px',
-      fontSize: 12.5,
-      color: 'var(--faint)'
-    }
-  }, "Nenhuma atividade encontrada.") : cnaeResultados.map(s => /*#__PURE__*/React.createElement("div", {
+  }, cnaeResultados.map(s => /*#__PURE__*/React.createElement("div", {
     key: s.c,
     onMouseDown: () => addCnae(s),
     className: "row-hover",
@@ -2761,7 +2816,99 @@ function NovaBusca({
       flexShrink: 0,
       fontVariantNumeric: 'tabular-nums'
     }
-  }, fmtCnae(s.c))))), cnaeSel.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, fmtCnae(s.c))))), cnaeBusca.trim().length >= 3 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 9,
+      padding: '11px 13px',
+      borderRadius: 10,
+      border: '1px dashed var(--border)',
+      background: 'var(--panel2)'
+    }
+  }, !iaSug && !iaErro && !iaCarregando && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 10,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 12.5,
+      color: 'var(--dim)'
+    }
+  }, cnaeResultados.length === 0 ? 'Nenhuma atividade encontrada por palavra. A IA mapeia a descrição para o CNAE certo.' : 'Não é bem isso? Deixe a IA encontrar o CNAE certo a partir da sua descrição.'), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: buscarComIA,
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 7,
+      height: 34,
+      padding: '0 14px',
+      borderRadius: 9,
+      border: 'none',
+      background: C.gold,
+      color: '#0E1936',
+      fontWeight: 600,
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      cursor: 'pointer',
+      whiteSpace: 'nowrap'
+    }
+  }, /*#__PURE__*/React.createElement(Svg, {
+    d: "M12 3l1.9 5.8L20 10l-5.1 3.7L16.5 20 12 16.3 7.5 20l1.6-6.3L4 10l6.1-1.2z",
+    color: "#0E1936",
+    w: 15,
+    h: 15,
+    sw: 1.6
+  }), "Buscar com IA")), iaCarregando && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: 'var(--faint)'
+    }
+  }, "Consultando a IA\u2026"), iaErro && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: '#F59E0B',
+      lineHeight: 1.5
+    }
+  }, iaErro), iaSug && iaSug.length > 0 && /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--faint)',
+      marginBottom: 8
+    }
+  }, "Sugest\xF5es da IA \u2014 clique para adicionar:"), iaSug.map(s => /*#__PURE__*/React.createElement("div", {
+    key: s.c,
+    onClick: () => addCnae(s),
+    className: "row-hover",
+    style: {
+      padding: '8px 10px',
+      fontSize: 12.5,
+      cursor: 'pointer',
+      borderRadius: 8,
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 10,
+      color: C.gold,
+      border: `1px solid ${C.gold}`,
+      borderRadius: 5,
+      padding: '1px 5px',
+      marginRight: 7
+    }
+  }, "IA"), s.d), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)',
+      flexShrink: 0,
+      fontVariantNumeric: 'tabular-nums'
+    }
+  }, fmtCnae(s.c)))))), cnaeSel.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       flexWrap: 'wrap',

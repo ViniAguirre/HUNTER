@@ -90,4 +90,54 @@ async function gerarSwot(empresa, { apiKey, modelo, contexto } = {}) {
   }
 }
 
-module.exports = { gerarSwot, MODELO_PADRAO };
+// Mapeia uma descrição em linguagem natural do público-alvo para os códigos CNAE
+// mais adequados. O modelo escolhe SOMENTE da lista fornecida (nada de inventar);
+// validamos os retornos contra o catálogo real de qualquer forma.
+const SYS_CNAE = `Você é um especialista na CNAE (Classificação Nacional de Atividades Econômicas) do Brasil.
+Recebe uma descrição em linguagem natural do tipo de empresa que o usuário quer prospectar e a lista
+oficial de subclasses CNAE (código e descrição). Devolve os códigos MAIS ADEQUados, do mais relevante
+para o menos. Use SOMENTE códigos que existem na lista. Responda SOMENTE com JSON válido.`;
+
+async function sugerirCnae(texto, catalogo, { apiKey, modelo, max = 8 } = {}) {
+  if (!apiKey) throw new Error('OpenAI: chave obrigatória (Integrações → Inteligência).');
+  if (!texto || !texto.trim()) return [];
+  const valido = new Map((catalogo || []).map(x => [String(x.c), x.d]));
+  const lista = (catalogo || []).map(x => `${x.c}\t${x.d}`).join('\n');
+
+  const body = {
+    model: modelo || MODELO_PADRAO,
+    messages: [
+      { role: 'system', content: SYS_CNAE },
+      { role: 'user', content:
+        `Empresa/público que quero prospectar:\n"${texto.trim()}"\n\n` +
+        `Escolha até ${max} códigos CNAE da lista abaixo (formato "codigo<tab>descricao"):\n${lista}\n\n` +
+        `Responda no formato JSON: { "codigos": ["7500100", "..."] } — só os códigos, do mais relevante ao menos.` },
+    ],
+    response_format: { type: 'json_object' },
+    temperature: 0.1,
+    max_tokens: 200,
+  };
+  try {
+    const { data } = await axios.post(API_URL, body, {
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      timeout: 30000,
+    });
+    const parsed = JSON.parse(data?.choices?.[0]?.message?.content || '{}');
+    const codigos = Array.isArray(parsed.codigos) ? parsed.codigos : [];
+    const out = [];
+    for (const raw of codigos) {
+      const c = String(raw).replace(/\D/g, '');
+      if (valido.has(c) && !out.find(x => x.c === c)) out.push({ c, d: valido.get(c) });
+      if (out.length >= max) break;
+    }
+    return out;
+  } catch (err) {
+    if (err.response) {
+      const msg = err.response.data?.error?.message || JSON.stringify(err.response.data).slice(0, 200);
+      throw new Error(`OpenAI HTTP ${err.response.status}: ${msg}`);
+    }
+    throw new Error(`OpenAI: ${err.message}`);
+  }
+}
+
+module.exports = { gerarSwot, sugerirCnae, MODELO_PADRAO };

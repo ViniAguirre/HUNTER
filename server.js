@@ -5,6 +5,7 @@
  * (leads, buscas, integrações) + monitoramento real das filas do motor.
  */
 const path = require('path');
+const fs = require('fs');
 const crypto = require('crypto');
 const express = require('express');
 const cookieParser = require('cookie-parser');
@@ -1160,6 +1161,43 @@ app.get('/api/sementes/status', requireAuth, async (req, res) => {
     );
     res.json({ total: n, busca: b || null, ultimas: ult });
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// ── Busca de atividade em linguagem natural (texto → CNAE via IA) ──────────────
+let _catalogoCnae = null;
+function catalogoCnae() {
+  if (!_catalogoCnae) {
+    try { _catalogoCnae = JSON.parse(fs.readFileSync(path.join(PUBLIC, 'cnae.json'), 'utf8')); }
+    catch { _catalogoCnae = []; }
+  }
+  return _catalogoCnae;
+}
+const _cacheSugestao = new Map();               // memoiza por texto (evita repagar a IA)
+const iaLimiter = rateLimit({ windowMs: 60_000, max: 30 });
+
+app.post('/api/cnae/sugerir', requireAuth, requireEditor, iaLimiter, async (req, res) => {
+  try {
+    const texto = String(req.body?.texto || '').trim();
+    if (texto.length < 3) return res.json({ sugestoes: [] });
+
+    const chave = texto.toLowerCase();
+    if (_cacheSugestao.has(chave)) return res.json({ sugestoes: _cacheSugestao.get(chave), cache: true });
+
+    const { rows: [ig] } = await pool.query(
+      `SELECT key_cifrada, config FROM integracoes
+       WHERE categoria='ia' AND provedor='openai' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> ''
+       ORDER BY ordem LIMIT 1`
+    );
+    if (!ig) return res.json({ sugestoes: [], erro: 'ia_inativa' });
+
+    const openai = require('./providers/openai');
+    const sugestoes = await openai.sugerirCnae(texto, catalogoCnae(), { apiKey: ig.key_cifrada, modelo: ig.config?.modelo });
+    if (sugestoes.length) _cacheSugestao.set(chave, sugestoes);
+    res.json({ sugestoes });
+  } catch (e) {
+    console.error('[cnae/sugerir]', e.message);
+    res.status(502).json({ sugestoes: [], erro: e.message });
+  }
 });
 
 // ── arquivos estáticos ────────────────────────────────────────────────────────
