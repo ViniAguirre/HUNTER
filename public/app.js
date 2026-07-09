@@ -6171,7 +6171,51 @@ function LeadDetailPanel({
       fontWeight: 600,
       color: C.green
     }
-  }, "\u2713 validado")))), contatos.length > 0 && /*#__PURE__*/React.createElement("section", {
+  }, "\u2713 validado")), l.contato_validado.website && /*#__PURE__*/React.createElement("a", {
+    href: l.contato_validado.website,
+    target: "_blank",
+    rel: "noopener noreferrer",
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 11,
+      background: 'var(--panel2)',
+      border: '1px solid var(--border)',
+      borderRadius: 10,
+      padding: '11px 13px',
+      textDecoration: 'none'
+    }
+  }, /*#__PURE__*/React.createElement(Svg, {
+    d: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18M3 12h18",
+    color: "var(--dim)",
+    w: 16,
+    h: 16,
+    sw: 1.8
+  }), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 13,
+      flex: 1,
+      color: 'var(--text)',
+      wordBreak: 'break-all'
+    }
+  }, l.contato_validado.website)), l.contato_validado.resumo_site && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--dim)',
+      lineHeight: 1.5,
+      background: 'var(--panel2)',
+      borderRadius: 10,
+      padding: '10px 13px',
+      fontStyle: 'italic'
+    }
+  }, "\"", l.contato_validado.resumo_site, "\"", /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: 'var(--faint)',
+      marginTop: 5,
+      fontStyle: 'normal'
+    }
+  }, "Extra\xEDdo do site \u2014 usado como contexto pelo agente SWOT")))), contatos.length > 0 && /*#__PURE__*/React.createElement("section", {
     style: {
       borderTop: '1px solid var(--border)',
       paddingTop: 18

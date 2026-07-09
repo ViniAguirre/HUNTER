@@ -21,11 +21,18 @@ module.exports = async function swot(job, pool, queues) {
   );
 
   if (ig?.key_cifrada) {
-    const { rows: [empresa] } = await pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [cnpj]);
+    const [{ rows: [empresa] }, { rows: [lead] }] = await Promise.all([
+      pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [cnpj]),
+      pool.query(`SELECT contato_validado FROM leads WHERE id=$1`, [lead_id]),
+    ]);
     if (empresa) {
       const crit = busca?.criterios || {};
       const contexto = crit.params?.proposta_valor || crit.proposta_valor || crit.texto || '';
-      const briefing = await openai.gerarSwot(empresa, { apiKey: ig.key_cifrada, modelo: ig.config?.modelo, contexto });
+      // Contato validado (Google/Econodata) traz o resumo REAL do site da empresa
+      // — dá ao agente algo específico pra falar, além do CNAE genérico.
+      const cv = lead?.contato_validado || {};
+      const perfilEmpresa = { resumoSite: cv.resumo_site || null, siteValidado: !!cv.validado, fonteContato: cv.fonte || null };
+      const briefing = await openai.gerarSwot(empresa, { apiKey: ig.key_cifrada, modelo: ig.config?.modelo, contexto, perfilEmpresa });
       await pool.query(
         `UPDATE leads SET swot=$2::jsonb, estagio='pronto', atualizado_em=now() WHERE id=$1`,
         [lead_id, JSON.stringify(briefing)]

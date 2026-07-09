@@ -18,7 +18,7 @@ cadastrais de uma empresa (firmografia da Receita Federal) e produz um briefing 
 acionável para um closer (vendedor) abordar essa empresa. Seja concreto, evite generalidades.
 Responda SEMPRE em português do Brasil e SOMENTE com um JSON válido no formato pedido.`;
 
-function montarPrompt(empresa, contexto) {
+function montarPrompt(empresa, contexto, perfilEmpresa) {
   const e = empresa || {};
   const linhas = [
     `Razão social: ${e.razao || '—'}`,
@@ -34,7 +34,12 @@ function montarPrompt(empresa, contexto) {
     `Decisor (sócio/administrador): ${e.decisor || '—'} (${e.cargo || '—'})`,
   ];
   const ctx = (contexto || '').trim();
+  // Resumo do PRÓPRIO SITE da empresa (validado como contato comercial, não do
+  // contador) — dá ao modelo algo concreto sobre o que ela realmente faz/vende,
+  // em vez de inferir só pelo código CNAE.
+  const resumoSite = (perfilEmpresa?.resumoSite || '').trim();
   return `Empresa a analisar:\n${linhas.join('\n')}\n` +
+    (resumoSite ? `\nO que o site oficial da empresa diz sobre ela mesma:\n"${resumoSite}"\n` : '') +
     (ctx ? `\nContexto do que estamos vendendo / ICP:\n${ctx}\n` : '') +
     `\nProduza o briefing no formato JSON:
 {
@@ -50,13 +55,13 @@ function montarPrompt(empresa, contexto) {
 }
 
 // Gera o briefing SWOT. Retorna objeto já parseado (ou lança em erro de API).
-async function gerarSwot(empresa, { apiKey, modelo, contexto } = {}) {
+async function gerarSwot(empresa, { apiKey, modelo, contexto, perfilEmpresa } = {}) {
   if (!apiKey) throw new Error('OpenAI: chave obrigatória (configure em Integrações → Inteligência).');
   const body = {
     model: modelo || MODELO_PADRAO,
     messages: [
       { role: 'system', content: SYSTEM },
-      { role: 'user', content: montarPrompt(empresa, contexto) },
+      { role: 'user', content: montarPrompt(empresa, contexto, perfilEmpresa) },
     ],
     response_format: { type: 'json_object' },
     temperature: 0.4,
