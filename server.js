@@ -364,6 +364,31 @@ async function init() {
     );
   `);
 
+  // Empresas verificadas mas fora do perfil (Score 1 reprovou) — não viram lead,
+  // só contam aqui. "Leads" passa a conter SOMENTE empresas qualificadas.
+  await pool.query(`
+    ALTER TABLE buscas ADD COLUMN IF NOT EXISTS fora_perfil INTEGER NOT NULL DEFAULT 0;
+  `);
+
+  // Confirmação paga na descoberta pela internet: cada empresa cujo site não
+  // trouxe o CNPJ pode custar 1 crédito (bem mais caro que o modo Por CNPJ, que
+  // é ~1 crédito por 100 empresas). Teto diário próprio + interruptor.
+  await pool.query(`
+    ALTER TABLE config ADD COLUMN IF NOT EXISTS web_paid_lookup_ativo   BOOLEAN NOT NULL DEFAULT true;
+    ALTER TABLE config ADD COLUMN IF NOT EXISTS web_paid_lookup_limite  INTEGER NOT NULL DEFAULT 30;
+  `);
+
+  // Contador diário genérico (chave + dia), usado pelo teto de confirmação paga
+  // do modo internet — sem precisar de uma tabela dedicada por recurso.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS contadores (
+      chave  TEXT NOT NULL,
+      dia    DATE NOT NULL DEFAULT CURRENT_DATE,
+      valor  INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (chave, dia)
+    );
+  `);
+
   // Garante a linha do provider de descoberta (CNPJá) pra tela de Integrações
   // ter o que mostrar mesmo antes da chave ser cadastrada.
   await pool.query(`
@@ -584,25 +609,27 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
     const [metricasRes, buscasRes, atividadeRes] = await Promise.all([
       pool.query(`SELECT
         (SELECT COUNT(*)::int FROM buscas WHERE status='Ativa') AS buscas_ativas,
-        (SELECT COUNT(*)::int FROM leads) AS leads_total,
-        -- Qualificados = passaram no Score 1 (do 'scored' pra frente).
-        (SELECT COUNT(*)::int FROM leads WHERE estagio NOT IN ('coletado','enriquecido','descartado')) AS qualificados,
-        -- Verificados mas fora do perfil = reprovados na segmentação (Score 1 / filtro).
-        (SELECT COUNT(*)::int FROM leads WHERE estagio='descartado') AS fora_perfil,
+        -- Empresas encontradas = todo o universo já descoberto (dedupado por CNPJ),
+        -- independente de ter virado lead ou não.
+        (SELECT COUNT(*)::int FROM empresas) AS empresas_total,
+        -- Leads só existem se qualificaram no Score 1 — leads = qualificados.
+        (SELECT COUNT(*)::int FROM leads) AS qualificados,
+        -- Verificadas mas fora do perfil = reprovadas na segmentação (nunca viraram lead).
+        (SELECT COALESCE(SUM(fora_perfil),0)::int FROM buscas) AS fora_perfil,
         (SELECT COUNT(*)::int FROM leads WHERE status='Enviado' OR enviado_crm_em IS NOT NULL) AS enviados`),
       pool.query(`
         SELECT b.id, b.nome, b.ritmo, b.status, b.ultima_ativ,
-          COUNT(l.id)::int AS encontrados
-        FROM buscas b LEFT JOIN leads l ON l.busca_id = b.id
+          b.universo_varrido AS encontrados
+        FROM buscas b
         WHERE b.status = 'Ativa'
-        GROUP BY b.id ORDER BY b.ultima_ativ DESC NULLS LAST LIMIT 5`),
+        ORDER BY b.ultima_ativ DESC NULLS LAST LIMIT 5`),
       pool.query(`SELECT fantasia, cidade, uf, score, criado_em FROM leads ORDER BY criado_em DESC LIMIT 5`),
     ]);
     const m = metricasRes.rows[0] || {};
     res.json({
       metricas: {
         buscasAtivas: m.buscas_ativas ?? 0,
-        leadsEncontrados: m.leads_total ?? 0,
+        empresasEncontradas: m.empresas_total ?? 0,
         leadsQualificados: m.qualificados ?? 0,
         leadsForaPerfil: m.fora_perfil ?? 0,
         leadsCRM: m.enviados ?? 0,
@@ -625,8 +652,9 @@ app.get('/api/buscas', requireAuth, async (req, res) => {
     const { rows } = await pool.query(`
       SELECT b.id, b.nome, b.tipo, b.status, b.ritmo, b.criterios, b.ultima_ativ, b.criado_em,
         u.nome AS criador_nome,
-        COUNT(l.id)::int AS encontrados,
-        COUNT(l.id) FILTER (WHERE l.status='Qualificado')::int AS qualificados,
+        b.universo_varrido AS encontrados,
+        COUNT(l.id)::int AS qualificados,
+        b.fora_perfil,
         COUNT(l.id) FILTER (WHERE l.status='Enviado')::int AS enviados
       FROM buscas b
       LEFT JOIN usuarios u ON u.id = b.criador_id
@@ -662,8 +690,8 @@ app.get('/api/buscas/:id', requireAuth, async (req, res) => {
     const [bRow, leadsRow, prodRow] = await Promise.all([
       pool.query(`
         SELECT b.*, u.nome AS criador_nome,
-          COUNT(l.id)::int AS encontrados,
-          COUNT(l.id) FILTER (WHERE l.status='Qualificado')::int AS qualificados,
+          b.universo_varrido AS encontrados,
+          COUNT(l.id)::int AS qualificados,
           COUNT(l.id) FILTER (WHERE l.status='Incompleto')::int AS incompletos,
           COUNT(l.id) FILTER (WHERE l.status='Descartado')::int AS descartados,
           COUNT(l.id) FILTER (WHERE l.status='Enviado')::int AS enviados
@@ -684,7 +712,7 @@ app.get('/api/buscas/:id', requireAuth, async (req, res) => {
       ...b,
       health: computeHealth(b),
       // aliases que o front do detalhe consome
-      enc: b.encontrados, qual: b.qualificados, crm: b.enviados,
+      enc: b.encontrados, qual: b.qualificados, crm: b.enviados, fora: b.fora_perfil,
       universo_est: b.universo_varrido || 0,
       producao: prodRow.rows.map(r => r.n),
       leads: leadsRow.rows,
@@ -1082,6 +1110,8 @@ app.patch('/api/config', requireAuth, requireMaster, async (req, res) => {
   if ('parada_min'     in b) add('parada_min',     num(b.parada_min, 1, 10080));
   if ('limite_diario'  in b) add('limite_diario',  num(b.limite_diario, 0, 100000));
   if ('descoberta_modo_padrao' in b) { sets.push(`descoberta_modo_padrao=$${sets.length+1}`); vals.push(b.descoberta_modo_padrao === 'web' ? 'web' : 'cnpja'); }
+  if ('web_paid_lookup_ativo' in b) { sets.push(`web_paid_lookup_ativo=$${sets.length+1}`); vals.push(!!b.web_paid_lookup_ativo); }
+  if ('web_paid_lookup_limite' in b) add('web_paid_lookup_limite', num(b.web_paid_lookup_limite, 0, 10000));
   if ('alerta_email'   in b) { sets.push(`alerta_email=$${sets.length+1}`); vals.push(String(b.alerta_email || '').trim() || null); }
   if ('crm_auto_global' in b) { sets.push(`crm_auto_global=$${sets.length+1}`); vals.push(!!b.crm_auto_global); }
   if ('crm_lookalike_auto' in b) { sets.push(`crm_lookalike_auto=$${sets.length+1}`); vals.push(!!b.crm_lookalike_auto); }

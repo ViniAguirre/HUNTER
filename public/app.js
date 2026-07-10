@@ -1147,11 +1147,11 @@ function Dashboard({
     trend: 'em produção',
     tColor: 'var(--dim)'
   }, {
-    label: 'Leads encontrados',
-    value: fmtNum(metricas.leadsEncontrados),
+    label: 'Empresas encontradas',
+    value: fmtNum(metricas.empresasEncontradas),
     icon: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 3v3M12 18v3M3 12h3M18 12h3',
     iColor: C.gold,
-    trend: `${fmtNum(verificados)} verificados`,
+    trend: `${fmtNum(verificados)} verificadas`,
     tColor: 'var(--dim)'
   }, {
     label: 'Leads qualificados',
@@ -2469,11 +2469,11 @@ function BuscaDetail({
   }, toggling ? '…' : b.status === 'Ativa' ? 'Pausar' : 'Retomar')), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
-      gridTemplateColumns: 'repeat(3,1fr)',
+      gridTemplateColumns: 'repeat(4,1fr)',
       gap: 12,
       marginBottom: 18
     }
-  }, [['Encontrados', fmtNum(b.enc), 'var(--text)'], ['Qualificados', fmtNum(b.qual), C.green], ['Enviados ao CRM', fmtNum(b.crm), C.cyan]].map(([label, val, col]) => /*#__PURE__*/React.createElement("div", {
+  }, [['Encontrados', fmtNum(b.enc), 'var(--text)'], ['Qualificados', fmtNum(b.qual), C.green], ['Fora do perfil', fmtNum(b.fora), C.amber], ['Enviados ao CRM', fmtNum(b.crm), C.cyan]].map(([label, val, col]) => /*#__PURE__*/React.createElement("div", {
     key: label,
     style: {
       background: 'var(--panel)',
@@ -3589,7 +3589,7 @@ function NovaBusca({
       marginTop: 6,
       lineHeight: 1.4
     }
-  }, "Descreva seu produto/servi\xE7o. O agente usa isso para gerar o gancho de abordagem espec\xEDfico para cada empresa \u2014 quanto mais claro, melhor o briefing."))) : (() => {
+  }, "Descreva seu produto/servi\xE7o. O agente usa isso pra analisar cada empresa sob a \xF3tica do que voc\xEA vende \u2014 quanto mais claro, mais preciso o briefing."))) : (() => {
     const n = cnpjsParsed.length;
     const ok = n >= MIN_LOOKALIKE;
     const conf = n < 6 ? 'baixa' : n < 15 ? 'média' : 'alta';
@@ -5061,6 +5061,8 @@ function Config() {
           limite_diario: cfg.limite_diario,
           corte_padrao: cfg.corte_padrao,
           descoberta_modo_padrao: cfg.descoberta_modo_padrao,
+          web_paid_lookup_ativo: cfg.web_paid_lookup_ativo,
+          web_paid_lookup_limite: cfg.web_paid_lookup_limite,
           ttl_cache_dias: cfg.ttl_cache_dias,
           parada_min: cfg.parada_min,
           alerta_email: cfg.alerta_email,
@@ -5189,7 +5191,7 @@ function Config() {
       display: 'flex',
       gap: 8
     }
-  }, [['cnpja', 'Pela base CNPJá', 'econômico'], ['web', 'Pela internet', 'pega nichos, mais caro']].map(([k, t, d]) => {
+  }, [['cnpja', 'Por CNPJ', 'econômico'], ['web', 'Pela internet', 'pega nichos, mais caro']].map(([k, t, d]) => {
     const on = (cfg.descoberta_modo_padrao || 'cnpja') === k;
     return /*#__PURE__*/React.createElement("div", {
       key: k,
@@ -5215,7 +5217,70 @@ function Config() {
         marginTop: 2
       }
     }, d));
-  })))), /*#__PURE__*/React.createElement("div", {
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      borderTop: '1px solid var(--border)',
+      marginTop: 16,
+      paddingTop: 16
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 9
+    }
+  }, "Confirma\xE7\xE3o paga na descoberta pela internet"), /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--faint)',
+      margin: '0 0 12px',
+      lineHeight: 1.5
+    }
+  }, "Quando o site da empresa n\xE3o traz o CNPJ, confirmar o cadastro custa 1 consulta paga por empresa \u2014 bem mais caro que o modo Por CNPJ (~1 cr\xE9dito a cada 100 empresas). Controle esse gasto aqui."), /*#__PURE__*/React.createElement("div", {
+    onClick: () => set('web_paid_lookup_ativo', !cfg.web_paid_lookup_ativo),
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 13,
+      cursor: 'pointer',
+      marginBottom: 14,
+      background: 'var(--panel2)',
+      border: '1px solid ' + (cfg.web_paid_lookup_ativo ? C.gold : 'var(--border)'),
+      borderRadius: 11,
+      padding: '12px 14px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: 42,
+      height: 24,
+      borderRadius: 12,
+      flexShrink: 0,
+      position: 'relative',
+      background: cfg.web_paid_lookup_ativo ? C.gold : 'var(--border)',
+      transition: 'background .15s'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'absolute',
+      top: 2,
+      left: cfg.web_paid_lookup_ativo ? 20 : 2,
+      width: 20,
+      height: 20,
+      borderRadius: '50%',
+      background: '#fff',
+      transition: 'left .15s'
+    }
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      fontWeight: 500
+    }
+  }, cfg.web_paid_lookup_ativo ? 'Confirmação paga ativada' : 'Confirmação paga desativada — só usa o CNPJ do site (grátis)')), cfg.web_paid_lookup_ativo && /*#__PURE__*/React.createElement("div", {
+    style: {
+      maxWidth: 220
+    }
+  }, numField('Limite diário de confirmações pagas', 'web_paid_lookup_limite', 'empresas/dia')))), /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'var(--panel)',
       border: '1px solid var(--border)',
@@ -6607,7 +6672,7 @@ function LeadDetailPanel({
       listStyle: 'none',
       marginLeft: -15
     }
-  }, "\u2014"))))), l.swot.gancho && /*#__PURE__*/React.createElement("div", {
+  }, "\u2014"))))), (l.swot.sinal_comercial || l.swot.gancho) && /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'rgba(58,142,255,.07)',
       border: '1px solid rgba(58,142,255,.22)',
@@ -6624,19 +6689,19 @@ function LeadDetailPanel({
       textTransform: 'uppercase',
       letterSpacing: '.06em'
     }
-  }, "Gancho de abordagem"), /*#__PURE__*/React.createElement("p", {
+  }, "Sinal comercial"), /*#__PURE__*/React.createElement("p", {
     style: {
       fontSize: 13,
       lineHeight: 1.55,
       margin: 0,
       color: 'var(--text)'
     }
-  }, l.swot.gancho)), /*#__PURE__*/React.createElement("div", {
+  }, l.swot.sinal_comercial || l.swot.gancho)), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 12
     }
   }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => navigator.clipboard?.writeText([l.swot.resumo, l.swot.dores_provaveis?.length ? 'Dores prováveis:\n- ' + l.swot.dores_provaveis.join('\n- ') : '', l.swot.gancho ? 'Gancho: ' + l.swot.gancho : ''].filter(Boolean).join('\n\n')).catch(() => {}),
+    onClick: () => navigator.clipboard?.writeText([l.swot.resumo, l.swot.dores_provaveis?.length ? 'Dores prováveis:\n- ' + l.swot.dores_provaveis.join('\n- ') : '', l.swot.sinal_comercial || l.swot.gancho ? 'Sinal comercial: ' + (l.swot.sinal_comercial || l.swot.gancho) : ''].filter(Boolean).join('\n\n')).catch(() => {}),
     style: {
       display: 'flex',
       alignItems: 'center',

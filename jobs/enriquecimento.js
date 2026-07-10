@@ -4,11 +4,14 @@
  * Busca cadastro + QSA (decisor) na Receita via CNPJá, grátis. Se a empresa
  * já foi enriquecida dentro do TTL de 30 dias, reusa o dado (cache local na
  * própria tabela empresas) e não repaga a consulta crua.
+ *
+ * Roda ANTES de a empresa virar lead — só empresas que passarem no Score 1
+ * ganham uma linha em `leads`. Por isso esta etapa só mexe em `empresas`.
  */
 const cnpja = require('../providers/cnpja');
 
 module.exports = async function enriquecimento(job, pool, queues) {
-  const { cnpj, busca_id, lead_id } = job.data;
+  const { cnpj, busca_id } = job.data;
 
   const [{ rows: [empresa] }, { rows: [cfg] }] = await Promise.all([
     pool.query(`SELECT cnpj, atualizado_em FROM empresas WHERE cnpj=$1`, [cnpj]),
@@ -21,10 +24,7 @@ module.exports = async function enriquecimento(job, pool, queues) {
     : Infinity;
 
   if (empresa && idadeDias < ttlDias) {
-    await pool.query(
-      `UPDATE leads SET estagio='enriquecido', atualizado_em=now() WHERE id=$1`, [lead_id]
-    );
-    await queues.filtroContador.add('filtro-contador', { cnpj, busca_id, lead_id },
+    await queues.filtroContador.add('filtro-contador', { cnpj, busca_id },
       { removeOnComplete: { count: 200 }, removeOnFail: { count: 100 } });
     return { cached: true, cnpj };
   }
@@ -49,18 +49,7 @@ module.exports = async function enriquecimento(job, pool, queues) {
      JSON.stringify(data.qsa), JSON.stringify(data.contato_receita)]
   );
 
-  await pool.query(`
-    UPDATE leads SET
-      razao=$2, fantasia=COALESCE(NULLIF($3,''), fantasia),
-      setor=$4, cnae=$5, porte=$6, cidade=$7, uf=$8,
-      decisor=$9, cargo=$10,
-      estagio='enriquecido', atualizado_em=now()
-    WHERE id=$1`,
-    [lead_id, data.razao, data.fantasia, data.setor, data.cnae, data.porte,
-     data.cidade, data.uf, data.decisor, data.cargo]
-  );
-
-  await queues.filtroContador.add('filtro-contador', { cnpj, busca_id, lead_id },
+  await queues.filtroContador.add('filtro-contador', { cnpj, busca_id },
     { removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 3, backoff: { type: 'exponential', delay: 5000 } });
 
   return { enriched: true, cnpj };

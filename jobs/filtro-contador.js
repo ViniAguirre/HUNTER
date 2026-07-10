@@ -13,14 +13,14 @@ const LIMIAR_CONTADOR = 30;
 const DOMINIOS_CONTABIL = ['contabil', 'contabilidade', 'escritoriocontabil', 'assessoriacontabil'];
 
 module.exports = async function filtroContador(job, pool, queues) {
-  const { cnpj, busca_id, lead_id } = job.data;
+  const { cnpj, busca_id } = job.data;
 
   const { rows: [empresa] } = await pool.query(
     `SELECT contato_receita FROM empresas WHERE cnpj=$1`, [cnpj]
   );
 
   if (!empresa) {
-    await queues.score1.add('score1', { cnpj, busca_id, lead_id },
+    await queues.score1.add('score1', { cnpj, busca_id },
       { removeOnComplete: { count: 200 }, removeOnFail: { count: 100 } });
     return { skipped: true, cnpj };
   }
@@ -62,7 +62,7 @@ module.exports = async function filtroContador(job, pool, queues) {
     await pool.query(`UPDATE empresas SET flag_contador=true WHERE cnpj=$1`, [cnpj]);
   }
 
-  await queues.score1.add('score1', { cnpj, busca_id, lead_id },
+  await queues.score1.add('score1', { cnpj, busca_id },
     { removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 3, backoff: { type: 'exponential', delay: 5000 } });
 
   return { cnpj, isContador };

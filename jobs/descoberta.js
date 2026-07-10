@@ -40,10 +40,11 @@ module.exports = async function descoberta(job, pool, queues) {
     criterios = resultado.criterios;
   }
 
-  // Limite diário GERAL de consumo: teto de leads novos criados por dia em todas
-  // as buscas somadas. Ao bater, a descoberta para (protege o orçamento).
-  const orcamento = await orcamentoHoje(pool);
-  if (orcamento <= 0) {
+  // Teto diário GERAL de leads (empresas qualificadas) já bate zero antes de
+  // começar? Nem vale a pena varrer hoje. O teto de verdade (preciso, à prova de
+  // corrida) é aplicado no Score 1, no momento exato em que o lead nasceria —
+  // aqui é só uma saída rápida pra não gastar crédito à toa num dia já esgotado.
+  if ((await orcamentoHoje(pool)) <= 0) {
     await pool.query(`UPDATE buscas SET ultimo_heartbeat=now() WHERE id=$1`, [busca_id]);
     return { skipped: 'limite_diario', motivo: 'teto diário de leads atingido', novos: 0 };
   }
@@ -52,16 +53,15 @@ module.exports = async function descoberta(job, pool, queues) {
   if (tipo === 'icp') {
     const modo = criterios.params?.modo_descoberta || await modoPadrao(pool);
     if (modo === 'web') {
-      return descobrirWebFirst(pool, queues, busca_id, criterios, ig?.key_cifrada || null, orcamento);
+      return descobrirWebFirst(pool, queues, busca_id, criterios, ig?.key_cifrada || null);
     }
   }
 
   // ── Modo importação: os leads SÃO os CNPJs da lista (sem expandir) ──────────
   if (tipo === 'cnpj') {
     const cnpjs = perfilamento.parseCnpjs(criterios);
-    const counters = { novos: 0, pulados: 0, enfileirados: 0, total: cnpjs.length, orcamento, limiteAtingido: false };
+    const counters = { novos: 0, pulados: 0, enfileirados: 0, total: cnpjs.length };
     for (const cnpj of cnpjs) {
-      if (counters.limiteAtingido) break;
       const { rows: [emp] } = await pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [cnpj]);
       if (!emp) { counters.pulados++; continue; }   // não perfilou/não existe → pula
       await processarOffice(pool, queues, busca_id, emp, counters);
@@ -87,34 +87,30 @@ module.exports = async function descoberta(job, pool, queues) {
   }
 
   let token = null, pagina = 0, esgotou = false;
-  const counters = { novos: 0, pulados: 0, enfileirados: 0, total: 0, orcamento, limiteAtingido: false };
+  const counters = { novos: 0, pulados: 0, enfileirados: 0, total: 0 };
 
   do {
     const { offices, next } = await cnpja.search({ ...params, token }, ig.key_cifrada);
     counters.total += offices.length;
     for (const office of offices) {
-      if (counters.limiteAtingido) break;
       await processarOffice(pool, queues, busca_id, office, counters);
     }
     token = next;
     pagina++;
-    if (counters.limiteAtingido) break;   // bateu o teto diário → para a varredura
     if (!next) { esgotou = true; break; }
   } while (pagina < TETO_PAGINAS);
 
-  // Se parou só pelo teto diário, deixa a busca 'Ativa' pra continuar amanhã;
-  // se varreu o universo todo, marca 'Esgotada'.
   await pool.query(
-    `UPDATE buscas SET universo_varrido = universo_varrido + $1,
-       status = CASE WHEN $3 THEN status ELSE 'Esgotada' END,
-       ultimo_heartbeat=now() WHERE id=$2`,
-    [counters.total, busca_id, counters.limiteAtingido && !esgotou]
+    `UPDATE buscas SET universo_varrido = universo_varrido + $1, status='Esgotada', ultimo_heartbeat=now() WHERE id=$2`,
+    [counters.total, busca_id]
   );
 
   return { modo: tipo, ...counters, paginas: pagina, esgotou };
 };
 
-// Quantos leads novos ainda cabem hoje no teto geral (config.limite_diario).
+// Quantos leads (empresas qualificadas) ainda cabem hoje no teto geral
+// (config.limite_diario). Usado como saída rápida aqui; o Score 1 refaz esta
+// mesma consulta na hora exata de criar o lead (checagem precisa).
 async function orcamentoHoje(pool) {
   const { rows: [cfg] } = await pool.query(`SELECT limite_diario FROM config WHERE id=1`);
   const limite = cfg?.limite_diario ?? 350;
@@ -136,7 +132,7 @@ async function modoPadrao(pool) {
 // Parte da internet (como o cliente pesquisaria no Google), pega o site, tenta o
 // CNPJ do rodapé (grátis) e confirma ativa/sócios na CNPJá. Só cai na CNPJá paga
 // (names.in) quando o site não expõe o CNPJ. Guarda o site pra a validação reusar.
-async function descobrirWebFirst(pool, queues, busca_id, criterios, cnpjaKey, orcamento) {
+async function descobrirWebFirst(pool, queues, busca_id, criterios, cnpjaKey) {
   const p = criterios.params || {};
   const termo = ((p.keywords || []).join(' ').trim())
     || ((p.cnaes_rotulos || []).map(x => x.d).join(' ').trim());
@@ -147,16 +143,32 @@ async function descobrirWebFirst(pool, queues, busca_id, criterios, cnpjaKey, or
     return { skipped: 'sem_termo_web', motivo: 'modo internet exige palavra-chave (ou atividade)', novos: 0 };
   }
 
+  // Confirmação paga (names.in) só quando o site não traz o CNPJ — bem mais cara
+  // que o modo Por CNPJ (que é ~1 crédito por 100 empresas). Teto diário próprio
+  // + interruptor, pra não gastar sem controle enquanto o custo real não é medido.
+  const { rows: [cfgWeb] } = await pool.query(
+    `SELECT web_paid_lookup_ativo, web_paid_lookup_limite FROM config WHERE id=1`
+  );
+  const pagoAtivo = cfgWeb?.web_paid_lookup_ativo ?? true;
+  const pagoLimite = cfgWeb?.web_paid_lookup_limite ?? 30;
+  let pagoUsadoHoje = pagoAtivo ? await contadorHoje(pool, 'web_paid_lookup') : 0;
+
   const candidatos = await google.buscarEmpresasWeb(termo, cidade, uf, 40);
-  const counters = { novos: 0, pulados: 0, enfileirados: 0, total: candidatos.length, orcamento, limiteAtingido: false, via_site: 0, via_cnpja: 0 };
+  const counters = { novos: 0, pulados: 0, enfileirados: 0, total: candidatos.length, via_site: 0, via_cnpja: 0, via_cnpja_bloqueado: 0 };
 
   for (const cand of candidatos) {
-    if (counters.limiteAtingido) break;
     const s = await google.scrapeSite(cand.site);
 
     let firmo = null;
     if (s.cnpj) { try { firmo = await cnpja.enrichCnpj(s.cnpj); counters.via_site++; } catch (_) {} } // grátis
-    if (!firmo && cnpjaKey) { firmo = await resolverPorNome(cand.titulo || cand.site, uf, cidade, cnpjaKey); if (firmo) counters.via_cnpja++; }
+    if (!firmo && cnpjaKey) {
+      if (pagoAtivo && pagoUsadoHoje < pagoLimite) {
+        firmo = await resolverPorNome(cand.titulo || cand.site, uf, cidade, cnpjaKey);
+        if (firmo) { counters.via_cnpja++; pagoUsadoHoje++; await incrementarContador(pool, 'web_paid_lookup'); }
+      } else {
+        counters.via_cnpja_bloqueado++;   // site sem CNPJ + confirmação paga desligada/esgotada hoje
+      }
+    }
 
     if (!firmo || !firmo.cnpj || firmo.cnpj.length !== 14) { counters.pulados++; continue; }
     if (firmo.situacao && !/ativa/i.test(firmo.situacao)) { counters.pulados++; continue; } // confirma ATIVA
@@ -171,10 +183,24 @@ async function descobrirWebFirst(pool, queues, busca_id, criterios, cnpjaKey, or
   }
 
   await pool.query(
-    `UPDATE buscas SET status = CASE WHEN $2 THEN status ELSE 'Esgotada' END, ultimo_heartbeat=now() WHERE id=$1`,
-    [busca_id, counters.limiteAtingido]
+    `UPDATE buscas SET status='Esgotada', ultimo_heartbeat=now() WHERE id=$1`, [busca_id]
   );
   return { modo: 'web', ...counters };
+}
+
+// Contador diário genérico (tabela `contadores`), usado pelo teto de confirmação
+// paga do modo internet.
+async function contadorHoje(pool, chave) {
+  const { rows: [c] } = await pool.query(
+    `SELECT valor FROM contadores WHERE chave=$1 AND dia=CURRENT_DATE`, [chave]
+  );
+  return c?.valor || 0;
+}
+async function incrementarContador(pool, chave) {
+  await pool.query(
+    `INSERT INTO contadores (chave, dia, valor) VALUES ($1, CURRENT_DATE, 1)
+     ON CONFLICT (chave, dia) DO UPDATE SET valor = contadores.valor + 1`, [chave]
+  );
 }
 
 // Resolve nome → empresa na CNPJá (fallback pago, quando o site não traz CNPJ).
@@ -249,10 +275,12 @@ async function upsertEmpresa(pool, o) {
   );
 }
 
-// Portão de existência + criação de empresa/lead + enfileira enriquecimento.
+// Portão de existência: empresa já TRAVADA (qualificada/no CRM/descarte duro em
+// QUALQUER busca anterior) é pulada de vez — nunca mais vira lead, em nenhuma
+// busca. Empresa só "coletada" (nunca qualificou antes) PODE ser reavaliada por
+// uma busca diferente, com critério diferente — só o score é recalculado.
+// O lead só é CRIADO se/quando qualificar no Score 1 (não aqui na descoberta).
 async function processarOffice(pool, queues, busca_id, office, counters) {
-  // Teto diário geral: se o orçamento zerou, não cria mais lead novo.
-  if (counters.orcamento != null && counters.orcamento <= 0) { counters.limiteAtingido = true; return; }
   if (!office.cnpj || office.cnpj.length !== 14) return;
   if (office.situacao && !/ativa/i.test(office.situacao)) { counters.pulados++; return; }
 
@@ -261,36 +289,16 @@ async function processarOffice(pool, queues, busca_id, office, counters) {
   );
   if (existente && TRAVADOS.includes(existente.estado_global)) { counters.pulados++; return; }
 
-  const { rows: [leadExistente] } = await pool.query(
-    `SELECT id FROM leads WHERE busca_id=$1 AND cnpj=$2`, [busca_id, office.cnpj]
-  );
-  if (leadExistente) { counters.pulados++; return; }
-
   if (!existente) {
     await upsertEmpresa(pool, office);
     counters.novos++;
   }
 
-  const { rows: [lead] } = await pool.query(`
-    INSERT INTO leads (busca_id, empresa_cnpj, cnpj, fantasia, razao, setor, cnae, porte, cidade, uf, estagio, origem)
-    VALUES ($1,$2,$2,$3,$4,$5,$6,$7,$8,$9,'coletado','cnpja')
-    ON CONFLICT (busca_id, cnpj) DO NOTHING
-    RETURNING id`,
-    [busca_id, office.cnpj, office.fantasia || office.razao, office.razao,
-     office.setor, office.cnae, office.porte, office.cidade, office.uf]
+  await queues.enriquecimento.add('enriquecimento',
+    { cnpj: office.cnpj, busca_id },
+    { removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 3, backoff: { type: 'exponential', delay: 5000 } }
   );
-
-  if (lead) {
-    await queues.enriquecimento.add('enriquecimento',
-      { cnpj: office.cnpj, busca_id, lead_id: lead.id },
-      { removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 3, backoff: { type: 'exponential', delay: 5000 } }
-    );
-    counters.enfileirados++;
-    if (counters.orcamento != null) {
-      counters.orcamento--;
-      if (counters.orcamento <= 0) counters.limiteAtingido = true;
-    }
-  }
+  counters.enfileirados++;
 }
 
 function buildSearchParams(criterios) {

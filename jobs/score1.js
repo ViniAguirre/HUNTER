@@ -5,6 +5,10 @@
  * contato. Roda com dado 100% grátis (firmografia da Receita via CNPJá):
  * CNAE, porte, capital (faixa), UF, situação, opção pelo Simples. O
  * contato bruto da Receita NUNCA entra aqui como sinal positivo.
+ *
+ * O LEAD SÓ NASCE AQUI, se/quando a empresa qualifica. Quem não qualifica não
+ * vira lead — só incrementa `buscas.fora_perfil` (empresa verificada mas fora
+ * do perfil desta busca). Isso mantém `leads` limpo: só empresas qualificadas.
  */
 
 const perfilamento = require('../providers/perfil');
@@ -19,8 +23,10 @@ const W = {
   SITUACAO_ATIVA: 5,
 };
 
+const MAX_TENTATIVAS_ORCAMENTO = 96; // ~48h em ciclos de 30min — evita ficar preso pra sempre
+
 module.exports = async function score1(job, pool, queues) {
-  const { cnpj, busca_id, lead_id } = job.data;
+  const { cnpj, busca_id } = job.data;
 
   const [empresaRes, buscaRes] = await Promise.all([
     pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [cnpj]),
@@ -30,10 +36,7 @@ module.exports = async function score1(job, pool, queues) {
   const busca = buscaRes.rows[0];
 
   if (!empresa || !busca) {
-    await pool.query(
-      `UPDATE leads SET estagio='descartado', motivo_descarte='empresa_ou_busca_nao_encontrada', atualizado_em=now() WHERE id=$1`,
-      [lead_id]
-    );
+    // Nada foi criado ainda pra essa empresa/busca — não há lead pra descartar.
     return { error: 'empresa ou busca ausente', cnpj };
   }
 
@@ -41,40 +44,73 @@ module.exports = async function score1(job, pool, queues) {
   const { score, breakdown } = computeScore1(empresa, params);
   const corte = busca.corte_score ?? 60;
   const passou = score >= corte;
-  const breakdownJson = JSON.stringify(breakdown);
 
-  if (passou) {
-    await pool.query(`
-      UPDATE leads SET
-        score=$2, breakdown=$3::jsonb,
-        estagio='scored', status='Novo',
-        situacao=$4, abertura=$5, capital=$6, endereco=$7,
-        atualizado_em=now()
-      WHERE id=$1`,
-      [lead_id, score, breakdownJson, empresa.situacao, empresa.abertura, empresa.capital, empresa.endereco]
-    );
-    // Passou no corte → validação de contato do decisor (que depois chama o
-    // SWOT). Sem provedor de validação ativo, a etapa só repassa pro SWOT.
-    if (queues?.validacao) {
-      await queues.validacao.add('validacao', { cnpj, busca_id, lead_id },
-        { removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 2, backoff: { type: 'exponential', delay: 10000 } });
-    } else if (queues?.swot) {
-      await queues.swot.add('swot', { cnpj, busca_id, lead_id },
-        { removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 2, backoff: { type: 'exponential', delay: 10000 } });
-    }
-  } else {
-    await pool.query(`
-      UPDATE leads SET
-        score=$2, breakdown=$3::jsonb,
-        estagio='descartado', motivo_descarte='score1_abaixo_do_corte',
-        atualizado_em=now()
-      WHERE id=$1`,
-      [lead_id, score, breakdownJson]
-    );
+  if (!passou) {
+    // Verificada mas fora do perfil: NÃO vira lead — só conta na busca.
+    await pool.query(`UPDATE buscas SET fora_perfil = fora_perfil + 1 WHERE id=$1`, [busca_id]);
+    return { cnpj, score, corte, passou: false };
   }
 
-  return { cnpj, score, corte, passou };
+  // Qualificou. Checagem PRECISA do teto diário — feita exatamente aqui, no
+  // momento em que o lead nasceria (evita corrida: cada worker relê o valor
+  // fresco antes de criar). Se estourou, reagenda pra tentar de novo mais tarde
+  // em vez de descartar uma empresa boa por causa de timing.
+  const orcamento = await orcamentoHoje(pool);
+  if (orcamento <= 0) {
+    const tentativas = (job.data.tentativa_orcamento || 0) + 1;
+    if (tentativas <= MAX_TENTATIVAS_ORCAMENTO && queues?.score1) {
+      await queues.score1.add('score1', { cnpj, busca_id, tentativa_orcamento: tentativas },
+        { delay: 30 * 60 * 1000, removeOnComplete: { count: 50 }, removeOnFail: { count: 50 } });
+    }
+    return { cnpj, score, corte, passou: true, aguardando_orcamento: true, tentativas };
+  }
+
+  const breakdownJson = JSON.stringify(breakdown);
+  const { rows: [lead] } = await pool.query(`
+    INSERT INTO leads (busca_id, empresa_cnpj, cnpj, fantasia, razao, setor, cnae, porte, cidade, uf,
+      decisor, cargo, score, breakdown, situacao, abertura, capital, endereco, estagio, status, origem)
+    VALUES ($1,$2,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15,$16,$17,'scored','Novo','cnpja')
+    ON CONFLICT (busca_id, cnpj) DO NOTHING
+    RETURNING id`,
+    [busca_id, cnpj, empresa.fantasia || empresa.razao, empresa.razao, empresa.setor, empresa.cnae,
+     empresa.porte, empresa.cidade, empresa.uf, empresa.decisor, empresa.cargo, score, breakdownJson,
+     empresa.situacao, empresa.abertura, empresa.capital, empresa.endereco]
+  );
+
+  if (!lead) {
+    // Corrida rara: essa busca já tinha criado o lead pra este CNPJ. Nada a fazer.
+    return { cnpj, score, corte, passou: true, skipped: 'lead_ja_existe' };
+  }
+
+  // Trava o CNPJ pra sempre: nenhuma outra busca (nem esta, de novo) volta a
+  // criar lead pra ele. Só sobe o estado (nunca rebaixa de em_crm pra qualificado).
+  await pool.query(
+    `UPDATE empresas SET estado_global='qualificado' WHERE cnpj=$1 AND estado_global='coletado'`, [cnpj]
+  );
+
+  // Passou no corte → validação de contato do decisor (que depois chama o
+  // SWOT). Sem provedor de validação ativo, a etapa só repassa pro SWOT.
+  if (queues?.validacao) {
+    await queues.validacao.add('validacao', { cnpj, busca_id, lead_id: lead.id },
+      { removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 2, backoff: { type: 'exponential', delay: 10000 } });
+  } else if (queues?.swot) {
+    await queues.swot.add('swot', { cnpj, busca_id, lead_id: lead.id },
+      { removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 2, backoff: { type: 'exponential', delay: 10000 } });
+  }
+
+  return { cnpj, score, corte, passou: true, lead_id: lead.id };
 };
+
+// Mesma checagem usada pela descoberta (saída rápida); aqui é a fonte da verdade.
+async function orcamentoHoje(pool) {
+  const { rows: [cfg] } = await pool.query(`SELECT limite_diario FROM config WHERE id=1`);
+  const limite = cfg?.limite_diario ?? 350;
+  if (!limite) return Number.MAX_SAFE_INTEGER;
+  const { rows: [{ n }] } = await pool.query(
+    `SELECT COUNT(*)::int n FROM leads WHERE criado_em >= date_trunc('day', now())`
+  );
+  return Math.max(0, limite - n);
+}
 
 function parseCriterios(criterios) {
   if (criterios?.params) return criterios.params;

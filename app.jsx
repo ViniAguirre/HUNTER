@@ -464,7 +464,7 @@ function Dashboard({ onOpenBusca }) {
 
   const metrics = [
     { label:'Buscas ativas', value:fmtNum(metricas.buscasAtivas), icon:'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-4.3-4.3', iColor:C.blue, trend:'em produção', tColor:'var(--dim)' },
-    { label:'Leads encontrados', value:fmtNum(metricas.leadsEncontrados), icon:'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 3v3M12 18v3M3 12h3M18 12h3', iColor:C.gold, trend:`${fmtNum(verificados)} verificados`, tColor:'var(--dim)' },
+    { label:'Empresas encontradas', value:fmtNum(metricas.empresasEncontradas), icon:'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 3v3M12 18v3M3 12h3M18 12h3', iColor:C.gold, trend:`${fmtNum(verificados)} verificadas`, tColor:'var(--dim)' },
     { label:'Leads qualificados', value:fmtNum(metricas.leadsQualificados), icon:'M20 6L9 17l-5-5', iColor:C.green, trend:`${taxaQ}% aproveit. · ${fmtNum(fora)} fora do perfil`, tColor:'var(--dim)' },
     { label:'Enviados ao CRM', value:fmtNum(metricas.leadsCRM), icon:'M5 12h14M13 5l7 7-7 7', iColor:C.cyan, trend:'total enviado', tColor:'var(--dim)' },
   ];
@@ -990,9 +990,10 @@ function BuscaDetail({ buscaId, onBack, onOpenLead }) {
         )}
       </div>
 
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:12, marginBottom:18 }}>
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:12, marginBottom:18 }}>
         {[['Encontrados', fmtNum(b.enc), 'var(--text)'],
           ['Qualificados', fmtNum(b.qual), C.green],
+          ['Fora do perfil', fmtNum(b.fora), C.amber],
           ['Enviados ao CRM', fmtNum(b.crm), C.cyan]].map(([label,val,col]) => (
           <div key={label} style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:12, padding:'14px 16px' }}>
             <div style={{ fontSize:11.5, color:'var(--faint)', marginBottom:6 }}>{label}</div>
@@ -1538,8 +1539,8 @@ function NovaBusca({ onSalvar }) {
                 background:'var(--panel2)', color:'var(--text)', padding:12, fontSize:13,
                 fontFamily:'inherit', lineHeight:1.5, resize:'vertical' }}/>
             <div style={{ fontSize:11, color:'var(--faint)', marginTop:6, lineHeight:1.4 }}>
-              Descreva seu produto/serviço. O agente usa isso para gerar o gancho de abordagem
-              específico para cada empresa — quanto mais claro, melhor o briefing.
+              Descreva seu produto/serviço. O agente usa isso pra analisar cada empresa sob a ótica
+              do que você vende — quanto mais claro, mais preciso o briefing.
             </div>
           </div>
         </div>
@@ -2217,6 +2218,7 @@ function Config() {
         body: JSON.stringify({
           limite_diario: cfg.limite_diario, corte_padrao: cfg.corte_padrao,
           descoberta_modo_padrao: cfg.descoberta_modo_padrao,
+          web_paid_lookup_ativo: cfg.web_paid_lookup_ativo, web_paid_lookup_limite: cfg.web_paid_lookup_limite,
           ttl_cache_dias: cfg.ttl_cache_dias, parada_min: cfg.parada_min,
           alerta_email: cfg.alerta_email, crm_auto_global: cfg.crm_auto_global,
           crm_lookalike_auto: cfg.crm_lookalike_auto,
@@ -2262,7 +2264,7 @@ function Config() {
         <div style={{ borderTop:'1px solid var(--border)', marginTop:16, paddingTop:16 }}>
           <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:9 }}>Modo de descoberta padrão <span style={{ color:'var(--faint)' }}>(cada busca pode trocar)</span></label>
           <div style={{ display:'flex', gap:8 }}>
-            {[['cnpja','Pela base CNPJá','econômico'],['web','Pela internet','pega nichos, mais caro']].map(([k,t,d]) => {
+            {[['cnpja','Por CNPJ','econômico'],['web','Pela internet','pega nichos, mais caro']].map(([k,t,d]) => {
               const on = (cfg.descoberta_modo_padrao || 'cnpja') === k;
               return (
                 <div key={k} onClick={() => set('descoberta_modo_padrao', k)}
@@ -2275,6 +2277,33 @@ function Config() {
               );
             })}
           </div>
+        </div>
+        <div style={{ borderTop:'1px solid var(--border)', marginTop:16, paddingTop:16 }}>
+          <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:9 }}>
+            Confirmação paga na descoberta pela internet
+          </label>
+          <p style={{ fontSize:11.5, color:'var(--faint)', margin:'0 0 12px', lineHeight:1.5 }}>
+            Quando o site da empresa não traz o CNPJ, confirmar o cadastro custa 1 consulta paga por empresa — bem mais
+            caro que o modo Por CNPJ (~1 crédito a cada 100 empresas). Controle esse gasto aqui.
+          </p>
+          <div onClick={() => set('web_paid_lookup_ativo', !cfg.web_paid_lookup_ativo)}
+            style={{ display:'flex', alignItems:'center', gap:13, cursor:'pointer', marginBottom:14,
+              background:'var(--panel2)', border:'1px solid '+(cfg.web_paid_lookup_ativo?C.gold:'var(--border)'),
+              borderRadius:11, padding:'12px 14px' }}>
+            <div style={{ width:42, height:24, borderRadius:12, flexShrink:0, position:'relative',
+              background: cfg.web_paid_lookup_ativo ? C.gold : 'var(--border)', transition:'background .15s' }}>
+              <div style={{ position:'absolute', top:2, left: cfg.web_paid_lookup_ativo ? 20 : 2, width:20, height:20,
+                borderRadius:'50%', background:'#fff', transition:'left .15s' }}/>
+            </div>
+            <div style={{ fontSize:13, fontWeight:500 }}>
+              {cfg.web_paid_lookup_ativo ? 'Confirmação paga ativada' : 'Confirmação paga desativada — só usa o CNPJ do site (grátis)'}
+            </div>
+          </div>
+          {cfg.web_paid_lookup_ativo && (
+            <div style={{ maxWidth:220 }}>
+              {numField('Limite diário de confirmações pagas', 'web_paid_lookup_limite', 'empresas/dia')}
+            </div>
+          )}
         </div>
       </div>
 
@@ -2839,17 +2868,17 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                   </div>
                 ))}
               </div>
-              {l.swot.gancho && (
+              {(l.swot.sinal_comercial || l.swot.gancho) && (
                 <div style={{ background:'rgba(58,142,255,.07)', border:'1px solid rgba(58,142,255,.22)', borderRadius:11, padding:14, marginBottom:10 }}>
-                  <div style={{ fontSize:10.5, fontWeight:600, color:C.blue, marginBottom:5, textTransform:'uppercase', letterSpacing:'.06em' }}>Gancho de abordagem</div>
-                  <p style={{ fontSize:13, lineHeight:1.55, margin:0, color:'var(--text)' }}>{l.swot.gancho}</p>
+                  <div style={{ fontSize:10.5, fontWeight:600, color:C.blue, marginBottom:5, textTransform:'uppercase', letterSpacing:'.06em' }}>Sinal comercial</div>
+                  <p style={{ fontSize:13, lineHeight:1.55, margin:0, color:'var(--text)' }}>{l.swot.sinal_comercial || l.swot.gancho}</p>
                 </div>
               )}
               <div style={{ marginTop:12 }}>
                 <button onClick={() => navigator.clipboard?.writeText(
                     [l.swot.resumo,
                      l.swot.dores_provaveis?.length ? 'Dores prováveis:\n- ' + l.swot.dores_provaveis.join('\n- ') : '',
-                     l.swot.gancho ? 'Gancho: ' + l.swot.gancho : ''].filter(Boolean).join('\n\n')).catch(()=>{})}
+                     (l.swot.sinal_comercial || l.swot.gancho) ? 'Sinal comercial: ' + (l.swot.sinal_comercial || l.swot.gancho) : ''].filter(Boolean).join('\n\n')).catch(()=>{})}
                   style={{ display:'flex', alignItems:'center', gap:6, height:31, padding:'0 12px',
                     borderRadius:7, border:'1px solid rgba(58,142,255,.3)', background:'transparent',
                     color:C.blue, fontSize:12, fontFamily:'inherit', cursor:'pointer' }}>Copiar briefing</button>

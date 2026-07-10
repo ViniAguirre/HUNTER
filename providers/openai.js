@@ -1,9 +1,15 @@
 'use strict';
 /*
  * Hunter — provider OpenAI (agente SWOT, Fase 3.2).
- * Recebe a firmografia da empresa (que já temos de graça) e gera um briefing
- * SWOT + gancho de abordagem pro closer. Usa um modelo barato (gpt-4o-mini por
- * padrão, configurável) e força saída em JSON pra consumir estruturado.
+ * Recebe a firmografia da empresa (que já temos de graça) + o motivo técnico
+ * do match (breakdown do Score 1) e gera um briefing analítico pro closer.
+ * Usa um modelo barato (gpt-4o-mini por padrão, configurável) e força saída
+ * em JSON pra consumir estruturado.
+ *
+ * O Hunter é a camada TÉCNICA de inteligência — capta e organiza dado sobre o
+ * lead. A formulação da mensagem de abordagem em si é papel do CRM/closer, não
+ * daqui: por isso o briefing entrega SINAIS e ANÁLISE, não frases prontas pra
+ * dizer ao cliente.
  *
  * NUNCA manda pro modelo o contato bruto da Receita (é do contador) como se
  * fosse contato de venda — só a firmografia e o nome do decisor.
@@ -14,13 +20,17 @@ const API_URL = 'https://api.openai.com/v1/chat/completions';
 const MODELO_PADRAO = 'gpt-4o-mini';
 
 const SYSTEM = `Você é um analista de inteligência comercial B2B brasileiro. A partir dos dados de
-uma empresa-alvo (firmografia da Receita + o que o site dela diz sobre si) e do que NÓS vendemos,
-produz um briefing curto e acionável para o closer abordar essa empresa. Regras:
-(1) O SWOT é sob a ÓTICA DA NOSSA VENDA: "oportunidades" e "ameaças" tratam de onde a nossa solução
+uma empresa-alvo (firmografia da Receita, por que ela deu match no perfil buscado, e o que o site
+dela diz sobre si) e do que NÓS vendemos, produz um briefing ANALÍTICO para o closer conhecer essa
+empresa antes de abordá-la. Regras:
+(1) Você entrega DADOS E ANÁLISE, não uma mensagem pronta. Nada de frases de abertura ou roteiro de
+    conversa — isso é formulado depois, no CRM. Seu papel é técnico: organizar o que se sabe.
+(2) O SWOT é sob a ÓTICA DA NOSSA VENDA: "oportunidades" e "ameaças" tratam de onde a nossa solução
     encaixa (ou o que atrapalha o fechamento), não macroeconomia genérica.
-(2) NÃO invente fatos que os dados não sustentam. Se a base for rala, trabalhe com o provável e não
+(3) NÃO invente fatos que os dados não sustentam. Se a base for rala, trabalhe com o provável e não
     afirme como certo. Prefira "provavelmente/tende a" a inventar números ou clientes.
-(3) Seja concreto e ESPECÍFICO desta empresa (use o texto do site quando houver); evite frases de efeito.
+(4) Seja concreto e ESPECÍFICO desta empresa (use o texto do site e o motivo do match quando houver);
+    evite frases de efeito.
 Responda SEMPRE em português do Brasil e SOMENTE com um JSON válido no formato pedido.`;
 
 function montarPrompt(empresa, contexto, perfilEmpresa) {
@@ -43,20 +53,27 @@ function montarPrompt(empresa, contexto, perfilEmpresa) {
   // contador) — dá ao modelo algo concreto sobre o que ela realmente faz/vende,
   // em vez de inferir só pelo código CNAE.
   const resumoSite = (perfilEmpresa?.resumoSite || '').trim();
+  // Motivo TÉCNICO do match (breakdown do Score 1) — fundamenta a análise em
+  // por que ESSA empresa, especificamente, entrou nesta busca.
+  const breakdown = Array.isArray(perfilEmpresa?.breakdown) ? perfilEmpresa.breakdown : [];
+  const motivoMatch = breakdown.length
+    ? breakdown.map(b => `${b.item}${b.pts != null ? ` (+${b.pts}pts)` : ''}`).join('; ')
+    : '';
   return `Empresa a analisar:\n${linhas.join('\n')}\n` +
+    (motivoMatch ? `\nPor que essa empresa deu match no perfil buscado (Score ${perfilEmpresa?.score ?? '—'}/100):\n${motivoMatch}\n` : '') +
     (resumoSite ? `\nO que o site oficial da empresa diz sobre ela mesma:\n"${resumoSite}"\n` : '') +
     (ctx ? `\nContexto do que estamos vendendo / ICP:\n${ctx}\n` : '') +
     `\nProduza o briefing no formato JSON (todas as listas com 2 a 4 itens curtos):
 {
-  "resumo": "2 frases: o que a empresa faz (use o que o site diz, se houver), porte e maturidade",
+  "resumo": "2-3 frases: o que a empresa faz (use o que o site diz, se houver), porte, maturidade e por que ela deu match",
   "dores_provaveis": ["dores/desafios que uma empresa deste tipo provavelmente enfrenta e que o que vendemos ajuda a resolver"],
   "swot": {
     "forcas": ["forças da empresa relevantes pra decisão de compra"],
     "fraquezas": ["fraquezas/lacunas que a nossa solução endereça"],
     "oportunidades": ["onde a nossa solução gera ganho concreto pra ela"],
-    "ameacas": ["objeções ou obstáculos ao fechamento (ex.: já ter fornecedor, orçamento, momento)"]
+    "ameacas": ["objeções ou obstáculos prováveis ao fechamento (ex.: já ter fornecedor, orçamento, momento)"]
   },
-  "gancho": "1-2 frases: abertura concreta pro closer, conectando uma dor provável ao que vendemos"
+  "sinal_comercial": "1-2 frases: o dado/contexto mais relevante pra CONHECER antes de abordar (timing, maturidade, característica que muda a abordagem) — um INSIGHT, não uma frase para dizer ao cliente"
 }`;
 }
 
@@ -90,8 +107,9 @@ async function gerarSwot(empresa, { apiKey, modelo, contexto, perfilEmpresa } = 
         oportunidades: arr(parsed.swot?.oportunidades),
         ameacas: arr(parsed.swot?.ameacas),
       },
-      gancho: parsed.gancho || '',
+      sinal_comercial: parsed.sinal_comercial || '',
       baseado_em_site: !!perfilEmpresa?.resumoSite,
+      baseado_em_match: !!(perfilEmpresa?.breakdown && perfilEmpresa.breakdown.length),
       modelo: body.model,
       gerado_em: new Date().toISOString(),
     };

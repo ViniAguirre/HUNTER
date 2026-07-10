@@ -1,9 +1,10 @@
 'use strict';
 /*
  * Hunter — agente SWOT (Fase 3.2).
- * Roda depois do Score 1 aprovar. Pega a firmografia (que já temos de graça)
- * e pede à OpenAI um briefing SWOT + gancho pro closer. Se não houver chave
- * OpenAI ativa, apenas deixa o lead como 'scored' (sem gasto, sem erro).
+ * Roda depois do Score 1 aprovar. Pega a firmografia (que já temos de graça) +
+ * o motivo do match (breakdown do Score 1) e monta um briefing analítico pro
+ * closer. Se não houver chave OpenAI ativa, deixa o lead como 'scored' (sem
+ * gasto, sem erro) — a formulação da abordagem em si é feita no CRM, não aqui.
  */
 const openai = require('../providers/openai');
 
@@ -23,15 +24,19 @@ module.exports = async function swot(job, pool, queues) {
   if (ig?.key_cifrada) {
     const [{ rows: [empresa] }, { rows: [lead] }] = await Promise.all([
       pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [cnpj]),
-      pool.query(`SELECT contato_validado FROM leads WHERE id=$1`, [lead_id]),
+      pool.query(`SELECT contato_validado, score, breakdown FROM leads WHERE id=$1`, [lead_id]),
     ]);
     if (empresa) {
       const crit = busca?.criterios || {};
       const contexto = crit.params?.proposta_valor || crit.proposta_valor || crit.texto || '';
       // Contato validado (Google/Econodata) traz o resumo REAL do site da empresa
-      // — dá ao agente algo específico pra falar, além do CNAE genérico.
+      // — dá ao agente algo específico pra falar, além do CNAE genérico. O
+      // breakdown do Score 1 fundamenta a análise em POR QUE essa empresa deu match.
       const cv = lead?.contato_validado || {};
-      const perfilEmpresa = { resumoSite: cv.resumo_site || null, siteValidado: !!cv.validado, fonteContato: cv.fonte || null };
+      const perfilEmpresa = {
+        resumoSite: cv.resumo_site || null, siteValidado: !!cv.validado, fonteContato: cv.fonte || null,
+        score: lead?.score ?? null, breakdown: Array.isArray(lead?.breakdown) ? lead.breakdown : [],
+      };
       const briefing = await openai.gerarSwot(empresa, { apiKey: ig.key_cifrada, modelo: ig.config?.modelo, contexto, perfilEmpresa });
       await pool.query(
         `UPDATE leads SET swot=$2::jsonb, estagio='pronto', atualizado_em=now() WHERE id=$1`,

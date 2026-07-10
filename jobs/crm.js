@@ -67,6 +67,9 @@ module.exports = async function crm(job, pool) {
     `UPDATE leads SET status='Enviado', enviado_crm_em=now(), atualizado_em=now() WHERE id=$1`,
     [lead_id]
   );
+  // Trava definitiva: uma vez no CRM, nenhuma busca (nem outra, nem esta de
+  // novo) volta a criar lead pra esse CNPJ.
+  await pool.query(`UPDATE empresas SET estado_global='em_crm' WHERE cnpj=$1`, [lead.cnpj]);
 
   return { ok: true, lead_id, provedor: ig.provedor };
 };
