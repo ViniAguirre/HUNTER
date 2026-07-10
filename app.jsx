@@ -1232,35 +1232,43 @@ function NovaBusca({ onSalvar }) {
           : `Envie ao menos ${MIN_LOOKALIKE} CNPJs válidos (14 dígitos).`));
       return;
     }
-    if (tipo === 'icp' && cnaeSel.length === 0 && keywords.length === 0 && municSel.length === 0) {
+    if (tipo === 'icp' && modoDesc === 'web' && keywords.length === 0) {
+      alert('No modo "Pela internet", informe o que buscar (ex.: purificadores de água).');
+      return;
+    }
+    if (tipo === 'icp' && modoDesc === 'cnpja' && cnaeSel.length === 0 && keywords.length === 0 && municSel.length === 0) {
       const ok = window.confirm(
         'Nenhuma atividade, palavra-chave ou município.\n\nA busca vai trazer empresas de TODOS os ramos' +
         (ufs.length ? ' da(s) UF(s) escolhida(s)' : ' do Brasil') +
-        '. Para mirar o alvo, escolha uma atividade (CNAE) OU use a "palavra-chave no nome" (ex.: purificador, filtro).\n\nContinuar mesmo assim?'
+        '. Para mirar o alvo, escolha uma atividade OU use a "palavra-chave no nome" (ex.: purificador, filtro).\n\nContinuar mesmo assim?'
       );
       if (!ok) return;
     }
     setSaving(true);
     try {
-      const cnaes = cnaeSel.map(s => s.c);
-      const fnd = foundedFromPreset(abertura);
-      const cap = CAPITAL_OPCOES.find(o => o.k === capital) || {};
+      // No modo internet, filtros de base cadastral (CNAE/abertura/capital) não se
+      // aplicam à descoberta — zera pra não sujar os chips nem o Score 1.
+      const isWeb = modoDesc === 'web';
+      const cnaes = isWeb ? [] : cnaeSel.map(s => s.c);
+      const cnaesRot = isWeb ? [] : cnaeSel;
+      const fnd = isWeb ? {} : foundedFromPreset(abertura);
+      const cap = isWeb ? {} : (CAPITAL_OPCOES.find(o => o.k === capital) || {});
       const aberturaLabel = ABERTURA_OPCOES.find(o => o.k === abertura)?.label;
       const capitalLabel = CAPITAL_OPCOES.find(o => o.k === capital)?.label;
       const chips = [
+        ...(isWeb ? ['Descoberta: internet'] : []),
+        ...(keywords.length ? [`${isWeb ? 'Busca' : 'Palavra-chave'}: ${keywords.join(', ')}`] : []),
         ...ufs.map(u => `UF: ${u}`),
         ...municSel.map(m => `Município: ${m.n}`),
         ...portes.map(p => `Porte: ${p}`),
-        ...cnaeSel.map(s => `CNAE: ${s.d}`),
-        ...(keywords.length ? [`Palavra-chave: ${keywords.join(', ')}`] : []),
-        ...(modoDesc === 'web' ? ['Descoberta: internet'] : []),
-        ...(abertura !== 'qualquer' ? [`Abertura: ${aberturaLabel}`] : []),
-        ...(capital !== 'qualquer' ? [`Capital: ${capitalLabel}`] : []),
+        ...cnaesRot.map(s => `CNAE: ${s.d}`),
+        ...(!isWeb && abertura !== 'qualquer' ? [`Abertura: ${aberturaLabel}`] : []),
+        ...(!isWeb && capital !== 'qualquer' ? [`Capital: ${capitalLabel}`] : []),
       ];
       const propostaValor = (tipo === 'icp' ? criteriosRef.current?.value : propostaRef.current?.value) || '';
       const criterios = tipo === 'icp'
         ? { chips, params: {
-            ufs, portes, cnaes, cnaes_rotulos: cnaeSel, keywords, modo_descoberta: modoDesc,
+            ufs, portes, cnaes, cnaes_rotulos: cnaesRot, keywords, modo_descoberta: modoDesc,
             municipios_cod: municSel.map(m => m.c), municipios_rotulos: municSel,
             founded_gte: fnd.gte || null, founded_lte: fnd.lte || null,
             equity_gte: cap.gte ?? null, equity_lte: cap.lte ?? null,
@@ -1306,14 +1314,13 @@ function NovaBusca({ onSalvar }) {
             <label style={{ display:'flex', alignItems:'center', fontSize:12, color:'var(--dim)', marginBottom:9 }}>
               Como descobrir as empresas
               <InfoTip text={<>
-                <b>Base cadastral:</b> filtra por atividade, UF e palavra-chave — econômico e direto.<br/><br/>
-                <b>Internet:</b> busca pelo que a empresa anuncia e depois confirma os dados oficiais — pega nichos que a
-                classificação padrão não cobre. Tende a ser mais caro. Nesse modo, a palavra-chave abaixo é o termo pesquisado;
-                município/UF ajudam a mirar a região.
+                <b>Por CNPJ:</b> filtra a base cadastral oficial por atividade, UF e palavra-chave no nome — econômico e direto.<br/><br/>
+                <b>Pela internet:</b> busca pelo que a empresa anuncia (como um cliente pesquisaria) e depois confirma os dados
+                oficiais — pega nichos que a classificação padrão não cobre. Tende a ser mais caro.
               </>}/>
             </label>
             <div style={{ display:'flex', gap:8 }}>
-              {[['cnpja','Base cadastral'], ['web','Internet']].map(([k, t]) => {
+              {[['cnpja','Por CNPJ'], ['web','Pela internet']].map(([k, t]) => {
                 const on = modoDesc === k;
                 return (
                   <div key={k} onClick={() => setModoDesc(k)}
@@ -1326,6 +1333,7 @@ function NovaBusca({ onSalvar }) {
               })}
             </div>
           </div>
+          {modoDesc === 'cnpja' && (
           <div style={{ marginBottom:18, position:'relative' }}>
             <label style={{ display:'flex', alignItems:'center', fontSize:12, color:'var(--dim)', marginBottom:7 }}>
               Atividade — descreva em palavras quem você quer
@@ -1403,17 +1411,27 @@ function NovaBusca({ onSalvar }) {
               </div>
             )}
           </div>
+          )}
           <div style={{ marginBottom:18 }}>
-            <label style={{ display:'flex', alignItems:'center', fontSize:12, color:'var(--dim)', marginBottom:7 }}>
-              Palavra-chave no nome <span style={{ color:'var(--faint)', marginLeft:4 }}>(opcional)</span>
-              <InfoTip text={<>
-                Busca no nome/razão social da empresa — use quando o ramo não tem uma atividade específica (ex.: purificadores).<br/><br/>
-                <b>Vírgula = OU</b> (purificador, filtro → tem um ou outro). <b>Espaço = E</b> (purificador água → tem os dois
-                no nome). Dica: uma palavra específica já basta. Pode combinar com atividade/UF.
-              </>}/>
-            </label>
+            {modoDesc === 'cnpja' ? (
+              <label style={{ display:'flex', alignItems:'center', fontSize:12, color:'var(--dim)', marginBottom:7 }}>
+                Palavra-chave no nome <span style={{ color:'var(--faint)', marginLeft:4 }}>(opcional)</span>
+                <InfoTip text={<>
+                  Busca no nome/razão social da empresa — use quando o ramo não tem uma atividade específica (ex.: purificadores).<br/><br/>
+                  <b>Vírgula = OU</b> (purificador, filtro → tem um ou outro). <b>Espaço = E</b> (purificador água → tem os dois
+                  no nome). Dica: uma palavra específica já basta. Pode combinar com atividade/UF.
+                </>}/>
+              </label>
+            ) : (
+              <label style={{ display:'flex', alignItems:'center', fontSize:12, color:'var(--dim)', marginBottom:7 }}>
+                O que buscar na internet
+                <InfoTip text="Escreva como um cliente pesquisaria (ex.: purificadores de água). É o termo da busca — UF e município abaixo miram a região. Depois de achar, o sistema confirma os dados oficiais e segue a qualificação normal."/>
+              </label>
+            )}
             <input value={kwText} onChange={e => setKwText(e.target.value)}
-              placeholder="Ex: purificador, filtro, água — separe por vírgula"
+              placeholder={modoDesc === 'cnpja'
+                ? 'Ex: purificador, filtro, água — separe por vírgula'
+                : 'Ex: purificadores de água, energia solar, clínicas de estética…'}
               style={{ width:'100%', height:40, borderRadius:9, border:'1px solid var(--border)',
                 background:'var(--panel2)', color:'var(--text)', padding:'0 12px', fontSize:13, fontFamily:'inherit' }}/>
             {keywords.length > 0 && (
@@ -1491,6 +1509,7 @@ function NovaBusca({ onSalvar }) {
               </div>
             )}
           </div>
+          {modoDesc === 'cnpja' && (
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginBottom:18 }}>
             <div>
               <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>Data de abertura</label>
@@ -1509,6 +1528,7 @@ function NovaBusca({ onSalvar }) {
               </select>
             </div>
           </div>
+          )}
           <div>
             <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>
               O que você vende — proposta de valor <span style={{ color:'var(--faint)' }}>(alimenta o agente SWOT)</span>
@@ -1575,15 +1595,15 @@ function NovaBusca({ onSalvar }) {
         );
       })()}
 
-      {tipo === 'icp' && cnaeSel.length === 0 && municSel.length === 0 && (
+      {tipo === 'icp' && modoDesc === 'cnpja' && cnaeSel.length === 0 && keywords.length === 0 && municSel.length === 0 && (
         <div style={{ display:'flex', gap:11, padding:'13px 15px', marginBottom:18, borderRadius:12,
           background:'color-mix(in srgb, var(--amber, #FBBF24) 12%, transparent)',
           border:'1px solid color-mix(in srgb, #FBBF24 45%, transparent)' }}>
           <Svg d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"
             color="#FBBF24" w={20} h={20} sw={1.7} extra={{ flexShrink:0, marginTop:1 }}/>
           <div style={{ fontSize:12.5, lineHeight:1.5 }}>
-            <b>Critério muito amplo.</b> Sem atividade (CNAE) nem município, a busca varre {ufs.length ? `todas as empresas de ${ufs.join('/')}` : 'o Brasil inteiro'} —
-            isso traz nicho errado e <b>consome muito crédito</b>. Escolha ao menos uma atividade (campo acima) ou um município.
+            <b>Critério muito amplo.</b> Sem atividade, palavra-chave ou município, a busca varre {ufs.length ? `todas as empresas de ${ufs.join('/')}` : 'o Brasil inteiro'} —
+            isso traz nicho errado e <b>consome muito crédito</b>. Escolha ao menos uma atividade, palavra-chave ou município.
           </div>
         </div>
       )}
@@ -2691,22 +2711,30 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
           <section style={{ borderTop:'1px solid var(--border)', paddingTop:18 }}>
             <div style={{ fontSize:11, fontWeight:600, letterSpacing:'.08em', color:'var(--faint)',
               marginBottom:12, textTransform:'uppercase' }}>Decisor</div>
-            <div style={{ display:'flex', alignItems:'center', gap:13 }}>
-              <div style={{ width:42, height:42, borderRadius:11, background:C.blue, color:'#fff',
-                display:'flex', alignItems:'center', justifyContent:'center', fontWeight:600,
-                fontSize:14, flexShrink:0 }}>{decisorIni}</div>
-              <div>
-                <div style={{ fontSize:14, fontWeight:500 }}>{l.decisor}</div>
-                <div style={{ fontSize:12, color:'var(--dim)' }}>{l.cargo}</div>
+            {l.decisor ? (
+              <div style={{ display:'flex', alignItems:'center', gap:13 }}>
+                <div style={{ width:42, height:42, borderRadius:11, background:C.blue, color:'#fff',
+                  display:'flex', alignItems:'center', justifyContent:'center', fontWeight:600,
+                  fontSize:14, flexShrink:0 }}>{decisorIni}</div>
+                <div>
+                  <div style={{ fontSize:14, fontWeight:500 }}>{l.decisor}</div>
+                  <div style={{ fontSize:12, color:'var(--dim)' }}>{l.cargo || 'Sócio(a)'}</div>
+                </div>
+                <div style={{ flex:1 }}/>
+                <span style={{ display:'inline-flex', alignItems:'center', gap:5, fontSize:11,
+                  color:C.cyan, background:'rgba(122,217,255,.1)', border:'1px solid rgba(122,217,255,.2)',
+                  padding:'5px 9px', borderRadius:7 }}>
+                  <SvgMulti w={12} h={12} sw={2} color={C.cyan}><path d="M20 6L9 17l-5-5"/></SvgMulti>
+                  Receita Federal
+                </span>
               </div>
-              <div style={{ flex:1 }}/>
-              <span style={{ display:'inline-flex', alignItems:'center', gap:5, fontSize:11,
-                color:C.cyan, background:'rgba(122,217,255,.1)', border:'1px solid rgba(122,217,255,.2)',
-                padding:'5px 9px', borderRadius:7 }}>
-                <SvgMulti w={12} h={12} sw={2} color={C.cyan}><path d="M20 6L9 17l-5-5"/></SvgMulti>
-                Receita Federal
-              </span>
-            </div>
+            ) : (
+              <div style={{ fontSize:12.5, color:'var(--faint)', lineHeight:1.5, background:'var(--panel2)',
+                border:'1px dashed var(--border)', borderRadius:10, padding:'11px 13px' }}>
+                Decisor não identificado no quadro societário — comum em MEI e empresas com sócio único
+                pessoa jurídica. Use o contato comercial validado abaixo, quando houver.
+              </div>
+            )}
           </section>
 
           {l.contato_validado && (l.contato_validado.telefone || l.contato_validado.email) && (

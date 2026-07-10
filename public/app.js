@@ -2911,18 +2911,26 @@ function NovaBusca({
       alert(`Poucos CNPJs válidos (${cnpjsParsed.length}). ` + (tipo === 'lookalike' ? `Para o sistema traçar um perfil médio confiável, envie ao menos ${MIN_LOOKALIKE} (recomendado 15+).` : `Envie ao menos ${MIN_LOOKALIKE} CNPJs válidos (14 dígitos).`));
       return;
     }
-    if (tipo === 'icp' && cnaeSel.length === 0 && keywords.length === 0 && municSel.length === 0) {
-      const ok = window.confirm('Nenhuma atividade, palavra-chave ou município.\n\nA busca vai trazer empresas de TODOS os ramos' + (ufs.length ? ' da(s) UF(s) escolhida(s)' : ' do Brasil') + '. Para mirar o alvo, escolha uma atividade (CNAE) OU use a "palavra-chave no nome" (ex.: purificador, filtro).\n\nContinuar mesmo assim?');
+    if (tipo === 'icp' && modoDesc === 'web' && keywords.length === 0) {
+      alert('No modo "Pela internet", informe o que buscar (ex.: purificadores de água).');
+      return;
+    }
+    if (tipo === 'icp' && modoDesc === 'cnpja' && cnaeSel.length === 0 && keywords.length === 0 && municSel.length === 0) {
+      const ok = window.confirm('Nenhuma atividade, palavra-chave ou município.\n\nA busca vai trazer empresas de TODOS os ramos' + (ufs.length ? ' da(s) UF(s) escolhida(s)' : ' do Brasil') + '. Para mirar o alvo, escolha uma atividade OU use a "palavra-chave no nome" (ex.: purificador, filtro).\n\nContinuar mesmo assim?');
       if (!ok) return;
     }
     setSaving(true);
     try {
-      const cnaes = cnaeSel.map(s => s.c);
-      const fnd = foundedFromPreset(abertura);
-      const cap = CAPITAL_OPCOES.find(o => o.k === capital) || {};
+      // No modo internet, filtros de base cadastral (CNAE/abertura/capital) não se
+      // aplicam à descoberta — zera pra não sujar os chips nem o Score 1.
+      const isWeb = modoDesc === 'web';
+      const cnaes = isWeb ? [] : cnaeSel.map(s => s.c);
+      const cnaesRot = isWeb ? [] : cnaeSel;
+      const fnd = isWeb ? {} : foundedFromPreset(abertura);
+      const cap = isWeb ? {} : CAPITAL_OPCOES.find(o => o.k === capital) || {};
       const aberturaLabel = ABERTURA_OPCOES.find(o => o.k === abertura)?.label;
       const capitalLabel = CAPITAL_OPCOES.find(o => o.k === capital)?.label;
-      const chips = [...ufs.map(u => `UF: ${u}`), ...municSel.map(m => `Município: ${m.n}`), ...portes.map(p => `Porte: ${p}`), ...cnaeSel.map(s => `CNAE: ${s.d}`), ...(keywords.length ? [`Palavra-chave: ${keywords.join(', ')}`] : []), ...(modoDesc === 'web' ? ['Descoberta: internet'] : []), ...(abertura !== 'qualquer' ? [`Abertura: ${aberturaLabel}`] : []), ...(capital !== 'qualquer' ? [`Capital: ${capitalLabel}`] : [])];
+      const chips = [...(isWeb ? ['Descoberta: internet'] : []), ...(keywords.length ? [`${isWeb ? 'Busca' : 'Palavra-chave'}: ${keywords.join(', ')}`] : []), ...ufs.map(u => `UF: ${u}`), ...municSel.map(m => `Município: ${m.n}`), ...portes.map(p => `Porte: ${p}`), ...cnaesRot.map(s => `CNAE: ${s.d}`), ...(!isWeb && abertura !== 'qualquer' ? [`Abertura: ${aberturaLabel}`] : []), ...(!isWeb && capital !== 'qualquer' ? [`Capital: ${capitalLabel}`] : [])];
       const propostaValor = (tipo === 'icp' ? criteriosRef.current?.value : propostaRef.current?.value) || '';
       const criterios = tipo === 'icp' ? {
         chips,
@@ -2930,7 +2938,7 @@ function NovaBusca({
           ufs,
           portes,
           cnaes,
-          cnaes_rotulos: cnaeSel,
+          cnaes_rotulos: cnaesRot,
           keywords,
           modo_descoberta: modoDesc,
           municipios_cod: municSel.map(m => m.c),
@@ -3036,13 +3044,13 @@ function NovaBusca({
       marginBottom: 9
     }
   }, "Como descobrir as empresas", /*#__PURE__*/React.createElement(InfoTip, {
-    text: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("b", null, "Base cadastral:"), " filtra por atividade, UF e palavra-chave \u2014 econ\xF4mico e direto.", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("b", null, "Internet:"), " busca pelo que a empresa anuncia e depois confirma os dados oficiais \u2014 pega nichos que a classifica\xE7\xE3o padr\xE3o n\xE3o cobre. Tende a ser mais caro. Nesse modo, a palavra-chave abaixo \xE9 o termo pesquisado; munic\xEDpio/UF ajudam a mirar a regi\xE3o.")
+    text: /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("b", null, "Por CNPJ:"), " filtra a base cadastral oficial por atividade, UF e palavra-chave no nome \u2014 econ\xF4mico e direto.", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("b", null, "Pela internet:"), " busca pelo que a empresa anuncia (como um cliente pesquisaria) e depois confirma os dados oficiais \u2014 pega nichos que a classifica\xE7\xE3o padr\xE3o n\xE3o cobre. Tende a ser mais caro.")
   })), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 8
     }
-  }, [['cnpja', 'Base cadastral'], ['web', 'Internet']].map(([k, t]) => {
+  }, [['cnpja', 'Por CNPJ'], ['web', 'Pela internet']].map(([k, t]) => {
     const on = modoDesc === k;
     return /*#__PURE__*/React.createElement("div", {
       key: k,
@@ -3063,7 +3071,7 @@ function NovaBusca({
         color: on ? 'var(--text)' : 'var(--dim)'
       }
     }, t));
-  }))), /*#__PURE__*/React.createElement("div", {
+  }))), modoDesc === 'cnpja' && /*#__PURE__*/React.createElement("div", {
     style: {
       marginBottom: 18,
       position: 'relative'
@@ -3266,7 +3274,7 @@ function NovaBusca({
     style: {
       marginBottom: 18
     }
-  }, /*#__PURE__*/React.createElement("label", {
+  }, modoDesc === 'cnpja' ? /*#__PURE__*/React.createElement("label", {
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -3281,10 +3289,20 @@ function NovaBusca({
     }
   }, "(opcional)"), /*#__PURE__*/React.createElement(InfoTip, {
     text: /*#__PURE__*/React.createElement(React.Fragment, null, "Busca no nome/raz\xE3o social da empresa \u2014 use quando o ramo n\xE3o tem uma atividade espec\xEDfica (ex.: purificadores).", /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("br", null), /*#__PURE__*/React.createElement("b", null, "V\xEDrgula = OU"), " (purificador, filtro \u2192 tem um ou outro). ", /*#__PURE__*/React.createElement("b", null, "Espa\xE7o = E"), " (purificador \xE1gua \u2192 tem os dois no nome). Dica: uma palavra espec\xEDfica j\xE1 basta. Pode combinar com atividade/UF.")
+  })) : /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 7
+    }
+  }, "O que buscar na internet", /*#__PURE__*/React.createElement(InfoTip, {
+    text: "Escreva como um cliente pesquisaria (ex.: purificadores de \xE1gua). \xC9 o termo da busca \u2014 UF e munic\xEDpio abaixo miram a regi\xE3o. Depois de achar, o sistema confirma os dados oficiais e segue a qualifica\xE7\xE3o normal."
   })), /*#__PURE__*/React.createElement("input", {
     value: kwText,
     onChange: e => setKwText(e.target.value),
-    placeholder: "Ex: purificador, filtro, \xE1gua \u2014 separe por v\xEDrgula",
+    placeholder: modoDesc === 'cnpja' ? 'Ex: purificador, filtro, água — separe por vírgula' : 'Ex: purificadores de água, energia solar, clínicas de estética…',
     style: {
       width: '100%',
       height: 40,
@@ -3480,7 +3498,7 @@ function NovaBusca({
       lineHeight: 1,
       opacity: .8
     }
-  }, "\xD7"))))), /*#__PURE__*/React.createElement("div", {
+  }, "\xD7"))))), modoDesc === 'cnpja' && /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
       gridTemplateColumns: '1fr 1fr',
@@ -3676,7 +3694,7 @@ function NovaBusca({
         resize: 'vertical'
       }
     })));
-  })(), tipo === 'icp' && cnaeSel.length === 0 && municSel.length === 0 && /*#__PURE__*/React.createElement("div", {
+  })(), tipo === 'icp' && modoDesc === 'cnpja' && cnaeSel.length === 0 && keywords.length === 0 && municSel.length === 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 11,
@@ -3701,7 +3719,7 @@ function NovaBusca({
       fontSize: 12.5,
       lineHeight: 1.5
     }
-  }, /*#__PURE__*/React.createElement("b", null, "Crit\xE9rio muito amplo."), " Sem atividade (CNAE) nem munic\xEDpio, a busca varre ", ufs.length ? `todas as empresas de ${ufs.join('/')}` : 'o Brasil inteiro', " \u2014 isso traz nicho errado e ", /*#__PURE__*/React.createElement("b", null, "consome muito cr\xE9dito"), ". Escolha ao menos uma atividade (campo acima) ou um munic\xEDpio.")), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("b", null, "Crit\xE9rio muito amplo."), " Sem atividade, palavra-chave ou munic\xEDpio, a busca varre ", ufs.length ? `todas as empresas de ${ufs.join('/')}` : 'o Brasil inteiro', " \u2014 isso traz nicho errado e ", /*#__PURE__*/React.createElement("b", null, "consome muito cr\xE9dito"), ". Escolha ao menos uma atividade, palavra-chave ou munic\xEDpio.")), /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'var(--panel)',
       border: '1px solid var(--border)',
@@ -6246,7 +6264,7 @@ function LeadDetailPanel({
       marginBottom: 12,
       textTransform: 'uppercase'
     }
-  }, "Decisor"), /*#__PURE__*/React.createElement("div", {
+  }, "Decisor"), l.decisor ? /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -6276,7 +6294,7 @@ function LeadDetailPanel({
       fontSize: 12,
       color: 'var(--dim)'
     }
-  }, l.cargo)), /*#__PURE__*/React.createElement("div", {
+  }, l.cargo || 'Sócio(a)')), /*#__PURE__*/React.createElement("div", {
     style: {
       flex: 1
     }
@@ -6299,7 +6317,17 @@ function LeadDetailPanel({
     color: C.cyan
   }, /*#__PURE__*/React.createElement("path", {
     d: "M20 6L9 17l-5-5"
-  })), "Receita Federal"))), l.contato_validado && (l.contato_validado.telefone || l.contato_validado.email) && /*#__PURE__*/React.createElement("section", {
+  })), "Receita Federal")) : /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: 'var(--faint)',
+      lineHeight: 1.5,
+      background: 'var(--panel2)',
+      border: '1px dashed var(--border)',
+      borderRadius: 10,
+      padding: '11px 13px'
+    }
+  }, "Decisor n\xE3o identificado no quadro societ\xE1rio \u2014 comum em MEI e empresas com s\xF3cio \xFAnico pessoa jur\xEDdica. Use o contato comercial validado abaixo, quando houver.")), l.contato_validado && (l.contato_validado.telefone || l.contato_validado.email) && /*#__PURE__*/React.createElement("section", {
     style: {
       borderTop: '1px solid var(--border)',
       paddingTop: 18
