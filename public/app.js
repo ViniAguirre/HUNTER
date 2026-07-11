@@ -3956,7 +3956,34 @@ function IntegracaoGK({
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState(null);
   const [msg, setMsg] = useState(null);
+  const [desconectando, setDesconectando] = useState(false);
   const conectado = !!(row && row.ativo && row.tem_chave && cfg.backend && cfg.queueId);
+  const desconectar = async () => {
+    if (!row) return;
+    if (!window.confirm('Desconectar o CRM GK SaaS? O Hunter para de enviar leads pra ele até você reativar.')) return;
+    setDesconectando(true);
+    try {
+      const r = await fetch('/api/integracoes/' + row.id, {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          ativo: false
+        })
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error(d.erro || 'Erro ao desconectar.');
+      }
+      onSaved();
+    } catch (e) {
+      setErro(e.message);
+    } finally {
+      setDesconectando(false);
+    }
+  };
   const conectar = async () => {
     setErro(null);
     setMsg(null);
@@ -4233,7 +4260,22 @@ function IntegracaoGK({
       cursor: salvando ? 'default' : 'pointer',
       opacity: salvando ? .6 : 1
     }
-  }, salvando ? 'Salvando…' : 'Salvar configuração')));
+  }, salvando ? 'Salvando…' : 'Salvar configuração'), row?.ativo && /*#__PURE__*/React.createElement("button", {
+    onClick: desconectar,
+    disabled: desconectando,
+    style: {
+      height: 38,
+      padding: '0 16px',
+      borderRadius: 9,
+      border: '1px solid var(--border)',
+      background: 'transparent',
+      color: 'var(--dim)',
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      cursor: desconectando ? 'default' : 'pointer',
+      opacity: desconectando ? .6 : 1
+    }
+  }, desconectando ? 'Desconectando…' : 'Desconectar')));
 }
 function Integracoes() {
   const [rows, setRows] = useState(null);
