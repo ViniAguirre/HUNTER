@@ -1679,7 +1679,7 @@ const INTEGRACOES_META = {
   'crm|gk': { nome:'CRM GK SaaS (nativo)', provedor:'Contato + ticket automático na fila',
     icon:'M3 3h18v4H3zM3 10h18v4H3zM3 17h18v4H3z', especial:'gk' },
   'crm|webhook': { nome:'CRM via Webhook', provedor:'Qualquer CRM (URL de webhook / n8n)',
-    icon:'M3 3h18v4H3zM3 10h18v4H3zM3 17h18v4H3z', editavel:true, placeholder:'Colar URL do webhook…' },
+    icon:'M3 3h18v4H3zM3 10h18v4H3zM3 17h18v4H3z', editavel:true, placeholder:'Colar URL do webhook…', temSegredo:true },
   'validacao_email|neverbounce': { nome:'Validação de e-mail', provedor:'NeverBounce',
     icon:'M3 5h18v14H3zM3 7l9 6 9-6', editavel:false },
   'validacao_tel|twilio': { nome:'Validação de telefone', provedor:'Twilio Lookup',
@@ -1828,6 +1828,7 @@ function Integracoes() {
   const [erro, setErro] = useState(null);
   const [salvando, setSalvando] = useState(null);
   const chaveRefs = useRef({});
+  const segredoRefs = useRef({});
 
   const carregar = () => {
     setErro(null);
@@ -1843,21 +1844,24 @@ function Integracoes() {
 
   const salvar = async (chave, categoria, provedor) => {
     const key = (chaveRefs.current[chave]?.value || '').trim();
+    const segredo = (segredoRefs.current[chave]?.value || '').trim();
     const existente = porChave[chave];
     setSalvando(chave);
     try {
+      const corpoConfig = segredo ? { config: { ...(existente?.config || {}), secret: segredo } } : {};
       if (existente) {
         await fetch('/api/integracoes/' + existente.id, {
           method:'PATCH', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
-          body: JSON.stringify({ ativo:true, ...(key ? { key } : {}) })
+          body: JSON.stringify({ ativo:true, ...(key ? { key } : {}), ...corpoConfig })
         });
       } else {
         await fetch('/api/integracoes', {
           method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
-          body: JSON.stringify({ categoria, provedor, ativo:true, key })
+          body: JSON.stringify({ categoria, provedor, ativo:true, key, ...corpoConfig })
         });
       }
       if (chaveRefs.current[chave]) chaveRefs.current[chave].value = '';
+      if (segredoRefs.current[chave]) segredoRefs.current[chave].value = '';
       carregar();
     } catch (_) {
       window.alert('Erro ao salvar credencial.');
@@ -1908,6 +1912,7 @@ function Integracoes() {
               </div>
               <div style={{ fontSize:12.5, color:'var(--faint)', marginTop:3 }}>
                 {meta.provedor}{row?.chave_mascarada ? ' · ' + row.chave_mascarada : ''}
+                {meta.temSegredo ? (row?.config?.secret ? ' · segredo configurado' : ' · sem segredo (assinatura desativada)') : ''}
               </div>
             </div>
             {meta.editavel ? (
@@ -1916,6 +1921,12 @@ function Integracoes() {
                   style={{ width:190, height:38, borderRadius:9, border:'1px solid var(--border)',
                     background:'var(--panel2)', color:'var(--dim)', padding:'0 12px', fontSize:12.5,
                     fontFamily:'inherit', letterSpacing:'.05em' }}/>
+                {meta.temSegredo && (
+                  <input ref={el => segredoRefs.current[chave] = el} placeholder="Colar segredo (HMAC, opcional)…"
+                    style={{ width:190, height:38, borderRadius:9, border:'1px solid var(--border)',
+                      background:'var(--panel2)', color:'var(--dim)', padding:'0 12px', fontSize:12.5,
+                      fontFamily:'inherit', letterSpacing:'.05em' }}/>
+                )}
                 <button onClick={() => salvar(chave, categoria, provedor)} disabled={salvando === chave}
                   style={{ height:38, padding:'0 15px', borderRadius:9, border:'1px solid var(--border)',
                     background:'transparent', color:'var(--text)', fontSize:12.5, fontFamily:'inherit',

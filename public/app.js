@@ -3915,7 +3915,8 @@ const INTEGRACOES_META = {
     provedor: 'Qualquer CRM (URL de webhook / n8n)',
     icon: 'M3 3h18v4H3zM3 10h18v4H3zM3 17h18v4H3z',
     editavel: true,
-    placeholder: 'Colar URL do webhook…'
+    placeholder: 'Colar URL do webhook…',
+    temSegredo: true
   },
   'validacao_email|neverbounce': {
     nome: 'Validação de e-mail',
@@ -4239,6 +4240,7 @@ function Integracoes() {
   const [erro, setErro] = useState(null);
   const [salvando, setSalvando] = useState(null);
   const chaveRefs = useRef({});
+  const segredoRefs = useRef({});
   const carregar = () => {
     setErro(null);
     fetch('/api/integracoes', {
@@ -4258,9 +4260,16 @@ function Integracoes() {
   });
   const salvar = async (chave, categoria, provedor) => {
     const key = (chaveRefs.current[chave]?.value || '').trim();
+    const segredo = (segredoRefs.current[chave]?.value || '').trim();
     const existente = porChave[chave];
     setSalvando(chave);
     try {
+      const corpoConfig = segredo ? {
+        config: {
+          ...(existente?.config || {}),
+          secret: segredo
+        }
+      } : {};
       if (existente) {
         await fetch('/api/integracoes/' + existente.id, {
           method: 'PATCH',
@@ -4272,7 +4281,8 @@ function Integracoes() {
             ativo: true,
             ...(key ? {
               key
-            } : {})
+            } : {}),
+            ...corpoConfig
           })
         });
       } else {
@@ -4286,11 +4296,13 @@ function Integracoes() {
             categoria,
             provedor,
             ativo: true,
-            key
+            key,
+            ...corpoConfig
           })
         });
       }
       if (chaveRefs.current[chave]) chaveRefs.current[chave].value = '';
+      if (segredoRefs.current[chave]) segredoRefs.current[chave].value = '';
       carregar();
     } catch (_) {
       window.alert('Erro ao salvar credencial.');
@@ -4404,9 +4416,24 @@ function Integracoes() {
         color: 'var(--faint)',
         marginTop: 3
       }
-    }, meta.provedor, row?.chave_mascarada ? ' · ' + row.chave_mascarada : '')), meta.editavel ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("input", {
+    }, meta.provedor, row?.chave_mascarada ? ' · ' + row.chave_mascarada : '', meta.temSegredo ? row?.config?.secret ? ' · segredo configurado' : ' · sem segredo (assinatura desativada)' : '')), meta.editavel ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("input", {
       ref: el => chaveRefs.current[chave] = el,
       placeholder: meta.placeholder || 'Colar chave da API…',
+      style: {
+        width: 190,
+        height: 38,
+        borderRadius: 9,
+        border: '1px solid var(--border)',
+        background: 'var(--panel2)',
+        color: 'var(--dim)',
+        padding: '0 12px',
+        fontSize: 12.5,
+        fontFamily: 'inherit',
+        letterSpacing: '.05em'
+      }
+    }), meta.temSegredo && /*#__PURE__*/React.createElement("input", {
+      ref: el => segredoRefs.current[chave] = el,
+      placeholder: "Colar segredo (HMAC, opcional)\u2026",
       style: {
         width: 190,
         height: 38,
