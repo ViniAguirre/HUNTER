@@ -389,6 +389,19 @@ async function init() {
     );
   `);
 
+  // Mesma ideia, mas por HORA — usada só pra fracionar tetos diários (leads e
+  // confirmação paga) ao longo do dia, sem deixar o motor gastar tudo de uma
+  // vez quando a busca fica ligada direto.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS contadores_hora (
+      chave  TEXT NOT NULL,
+      dia    DATE NOT NULL DEFAULT CURRENT_DATE,
+      hora   SMALLINT NOT NULL DEFAULT EXTRACT(HOUR FROM now()),
+      valor  INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (chave, dia, hora)
+    );
+  `);
+
   // Garante a linha do provider de descoberta (CNPJá) pra tela de Integrações
   // ter o que mostrar mesmo antes da chave ser cadastrada.
   await pool.query(`

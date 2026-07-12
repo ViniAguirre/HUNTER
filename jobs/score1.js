@@ -55,14 +55,18 @@ module.exports = async function score1(job, pool, queues) {
   // momento em que o lead nasceria (evita corrida: cada worker relê o valor
   // fresco antes de criar). Se estourou, reagenda pra tentar de novo mais tarde
   // em vez de descartar uma empresa boa por causa de timing.
-  const orcamento = await orcamentoHoje(pool);
-  if (orcamento <= 0) {
+  // Também respeita a cota DESTA hora (limite diário / 24) — sem isso, uma busca
+  // ligada direto consumiria o dia inteiro na primeira hora em vez de espalhar
+  // a captação ao longo do dia.
+  const [orcamentoDia, orcamentoDaHora] = await Promise.all([orcamentoHoje(pool), orcamentoHora(pool)]);
+  if (orcamentoDia <= 0 || orcamentoDaHora <= 0) {
     const tentativas = (job.data.tentativa_orcamento || 0) + 1;
     if (tentativas <= MAX_TENTATIVAS_ORCAMENTO && queues?.score1) {
       await queues.score1.add('score1', { cnpj, busca_id, tentativa_orcamento: tentativas },
         { delay: 30 * 60 * 1000, removeOnComplete: { count: 50 }, removeOnFail: { count: 50 } });
     }
-    return { cnpj, score, corte, passou: true, aguardando_orcamento: true, tentativas };
+    return { cnpj, score, corte, passou: true, aguardando_orcamento: true, tentativas,
+      motivo: orcamentoDia <= 0 ? 'limite_diario' : 'cadencia_horaria' };
   }
 
   const breakdownJson = JSON.stringify(breakdown);
@@ -110,6 +114,21 @@ async function orcamentoHoje(pool) {
     `SELECT COUNT(*)::int n FROM leads WHERE criado_em >= date_trunc('day', now())`
   );
   return Math.max(0, limite - n);
+}
+
+// Cota da HORA atual (limite diário / 24, arredondado pra cima). Espalha a
+// captação ao longo do dia em vez de deixar o motor gastar tudo de uma vez
+// se a busca ficar ligada 24h. O teto diário acima continua valendo por cima
+// disso — o menor dos dois é quem trava.
+async function orcamentoHora(pool) {
+  const { rows: [cfg] } = await pool.query(`SELECT limite_diario FROM config WHERE id=1`);
+  const limite = cfg?.limite_diario ?? 350;
+  if (!limite) return Number.MAX_SAFE_INTEGER;
+  const porHora = Math.max(1, Math.ceil(limite / 24));
+  const { rows: [{ n }] } = await pool.query(
+    `SELECT COUNT(*)::int n FROM leads WHERE criado_em >= date_trunc('hour', now())`
+  );
+  return Math.max(0, porHora - n);
 }
 
 function parseCriterios(criterios) {

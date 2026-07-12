@@ -5238,7 +5238,7 @@ function Config() {
       marginTop: 12,
       lineHeight: 1.5
     }
-  }, "O ", /*#__PURE__*/React.createElement("b", null, "limite di\xE1rio"), " \xE9 o teto de leads novos que o motor capta por dia somando todas as buscas \u2014 protege o or\xE7amento. Ao atingi-lo, a capta\xE7\xE3o pausa e retoma no dia seguinte. 0 = sem teto."), /*#__PURE__*/React.createElement("div", {
+  }, "O ", /*#__PURE__*/React.createElement("b", null, "limite di\xE1rio"), " \xE9 o teto de leads novos que o motor capta por dia somando todas as buscas \u2014 protege o or\xE7amento. Ao atingi-lo, a capta\xE7\xE3o pausa e retoma no dia seguinte. O motor tamb\xE9m divide esse n\xFAmero por 24h e respeita uma cota por hora, pra n\xE3o gastar o dia inteiro logo na primeira hora se a busca ficar ligada direto \u2014 a capta\xE7\xE3o fica espalhada ao longo do dia. 0 = sem teto."), /*#__PURE__*/React.createElement("div", {
     style: {
       borderTop: '1px solid var(--border)',
       marginTop: 16,
@@ -5306,7 +5306,7 @@ function Config() {
       margin: '0 0 12px',
       lineHeight: 1.5
     }
-  }, "Quando o site da empresa n\xE3o traz o CNPJ, confirmar o cadastro custa 1 consulta paga por empresa \u2014 bem mais caro que o modo Por CNPJ (~1 cr\xE9dito a cada 100 empresas). Controle esse gasto aqui."), /*#__PURE__*/React.createElement("div", {
+  }, "Quando o site da empresa n\xE3o traz o CNPJ, confirmar o cadastro custa 1 consulta paga por empresa \u2014 bem mais caro que o modo Por CNPJ (~1 cr\xE9dito a cada 100 empresas). Controle esse gasto aqui. Ao atingir o limite, o motor para de confirmar por essa via e segue s\xF3 com o que acha de gra\xE7a no pr\xF3prio site \u2014 tamb\xE9m dividido por hora, igual ao limite di\xE1rio de leads."), /*#__PURE__*/React.createElement("div", {
     onClick: () => set('web_paid_lookup_ativo', !cfg.web_paid_lookup_ativo),
     style: {
       display: 'flex',

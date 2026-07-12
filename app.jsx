@@ -2294,7 +2294,9 @@ function Config() {
         </div>
         <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:12, lineHeight:1.5 }}>
           O <b>limite diário</b> é o teto de leads novos que o motor capta por dia somando todas as buscas — protege o
-          orçamento. Ao atingi-lo, a captação pausa e retoma no dia seguinte. 0 = sem teto.
+          orçamento. Ao atingi-lo, a captação pausa e retoma no dia seguinte. O motor também divide esse número por 24h
+          e respeita uma cota por hora, pra não gastar o dia inteiro logo na primeira hora se a busca ficar ligada
+          direto — a captação fica espalhada ao longo do dia. 0 = sem teto.
         </div>
         <div style={{ borderTop:'1px solid var(--border)', marginTop:16, paddingTop:16 }}>
           <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:9 }}>Modo de descoberta padrão <span style={{ color:'var(--faint)' }}>(cada busca pode trocar)</span></label>
@@ -2319,7 +2321,9 @@ function Config() {
           </label>
           <p style={{ fontSize:11.5, color:'var(--faint)', margin:'0 0 12px', lineHeight:1.5 }}>
             Quando o site da empresa não traz o CNPJ, confirmar o cadastro custa 1 consulta paga por empresa — bem mais
-            caro que o modo Por CNPJ (~1 crédito a cada 100 empresas). Controle esse gasto aqui.
+            caro que o modo Por CNPJ (~1 crédito a cada 100 empresas). Controle esse gasto aqui. Ao atingir o limite,
+            o motor para de confirmar por essa via e segue só com o que acha de graça no próprio site — também
+            dividido por hora, igual ao limite diário de leads.
           </p>
           <div onClick={() => set('web_paid_lookup_ativo', !cfg.web_paid_lookup_ativo)}
             style={{ display:'flex', alignItems:'center', gap:13, cursor:'pointer', marginBottom:14,

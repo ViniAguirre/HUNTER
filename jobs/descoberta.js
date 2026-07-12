@@ -44,9 +44,18 @@ module.exports = async function descoberta(job, pool, queues) {
   // começar? Nem vale a pena varrer hoje. O teto de verdade (preciso, à prova de
   // corrida) é aplicado no Score 1, no momento exato em que o lead nasceria —
   // aqui é só uma saída rápida pra não gastar crédito à toa num dia já esgotado.
-  if ((await orcamentoHoje(pool)) <= 0) {
+  // A cota da HORA atual (mesmo teto, dividido por 24) também é checada aqui —
+  // evita ficar paginando a CNPJá à toa numa hora já cheia; a busca continua
+  // "Ativa" e o scheduler tenta de novo no próximo ciclo (60s), retomando assim
+  // que a hora virar ou o dia liberar orçamento.
+  const [orcamentoDia, orcamentoDaHora] = await Promise.all([orcamentoHoje(pool), orcamentoHora(pool)]);
+  if (orcamentoDia <= 0 || orcamentoDaHora <= 0) {
     await pool.query(`UPDATE buscas SET ultimo_heartbeat=now() WHERE id=$1`, [busca_id]);
-    return { skipped: 'limite_diario', motivo: 'teto diário de leads atingido', novos: 0 };
+    return {
+      skipped: orcamentoDia <= 0 ? 'limite_diario' : 'cadencia_horaria',
+      motivo: orcamentoDia <= 0 ? 'teto diário de leads atingido' : 'cota da hora atual já usada — retoma na próxima hora',
+      novos: 0,
+    };
   }
 
   // ── Modo WEB-FIRST (icp): descobre pela internet e confirma CNPJ/ativa na CNPJá.
@@ -121,6 +130,18 @@ async function orcamentoHoje(pool) {
   return Math.max(0, limite - n);
 }
 
+// Cota da HORA atual (limite diário / 24, arredondado pra cima) — ver score1.js.
+async function orcamentoHora(pool) {
+  const { rows: [cfg] } = await pool.query(`SELECT limite_diario FROM config WHERE id=1`);
+  const limite = cfg?.limite_diario ?? 350;
+  if (!limite) return Number.MAX_SAFE_INTEGER;
+  const porHora = Math.max(1, Math.ceil(limite / 24));
+  const { rows: [{ n }] } = await pool.query(
+    `SELECT COUNT(*)::int n FROM leads WHERE criado_em >= date_trunc('hour', now())`
+  );
+  return Math.max(0, porHora - n);
+}
+
 const semAcentoLower = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 
 async function modoPadrao(pool) {
@@ -151,7 +172,11 @@ async function descobrirWebFirst(pool, queues, busca_id, criterios, cnpjaKey) {
   );
   const pagoAtivo = cfgWeb?.web_paid_lookup_ativo ?? true;
   const pagoLimite = cfgWeb?.web_paid_lookup_limite ?? 30;
+  // Mesmo teto diário, dividido por 24h — evita gastar o limite do dia inteiro
+  // logo nos primeiros minutos se a busca ficar ligada direto.
+  const pagoLimiteHora = pagoLimite > 0 ? Math.max(1, Math.ceil(pagoLimite / 24)) : 0;
   let pagoUsadoHoje = pagoAtivo ? await contadorHoje(pool, 'web_paid_lookup') : 0;
+  let pagoUsadoHora = pagoAtivo ? await contadorHora(pool, 'web_paid_lookup') : 0;
 
   const candidatos = await google.buscarEmpresasWeb(termo, cidade, uf, 40);
   const counters = { novos: 0, pulados: 0, enfileirados: 0, total: candidatos.length, via_site: 0, via_cnpja: 0, via_cnpja_bloqueado: 0 };
@@ -162,11 +187,14 @@ async function descobrirWebFirst(pool, queues, busca_id, criterios, cnpjaKey) {
     let firmo = null;
     if (s.cnpj) { try { firmo = await cnpja.enrichCnpj(s.cnpj); counters.via_site++; } catch (_) {} } // grátis
     if (!firmo && cnpjaKey) {
-      if (pagoAtivo && pagoUsadoHoje < pagoLimite) {
+      if (pagoAtivo && pagoUsadoHoje < pagoLimite && pagoUsadoHora < pagoLimiteHora) {
         firmo = await resolverPorNome(cand.titulo || cand.site, uf, cidade, cnpjaKey);
-        if (firmo) { counters.via_cnpja++; pagoUsadoHoje++; await incrementarContador(pool, 'web_paid_lookup'); }
+        if (firmo) {
+          counters.via_cnpja++; pagoUsadoHoje++; pagoUsadoHora++;
+          await Promise.all([incrementarContador(pool, 'web_paid_lookup'), incrementarContadorHora(pool, 'web_paid_lookup')]);
+        }
       } else {
-        counters.via_cnpja_bloqueado++;   // site sem CNPJ + confirmação paga desligada/esgotada hoje
+        counters.via_cnpja_bloqueado++;   // site sem CNPJ + confirmação paga desligada/esgotada hoje ou nesta hora
       }
     }
 
@@ -200,6 +228,21 @@ async function incrementarContador(pool, chave) {
   await pool.query(
     `INSERT INTO contadores (chave, dia, valor) VALUES ($1, CURRENT_DATE, 1)
      ON CONFLICT (chave, dia) DO UPDATE SET valor = contadores.valor + 1`, [chave]
+  );
+}
+
+// Mesmo contador, mas por HORA (tabela separada) — usado só pra fracionar o
+// teto diário de confirmação paga ao longo do dia, sem mexer no total diário.
+async function contadorHora(pool, chave) {
+  const { rows: [c] } = await pool.query(
+    `SELECT valor FROM contadores_hora WHERE chave=$1 AND dia=CURRENT_DATE AND hora=EXTRACT(HOUR FROM now())`, [chave]
+  );
+  return c?.valor || 0;
+}
+async function incrementarContadorHora(pool, chave) {
+  await pool.query(
+    `INSERT INTO contadores_hora (chave, dia, hora, valor) VALUES ($1, CURRENT_DATE, EXTRACT(HOUR FROM now()), 1)
+     ON CONFLICT (chave, dia, hora) DO UPDATE SET valor = contadores_hora.valor + 1`, [chave]
   );
 }
 
