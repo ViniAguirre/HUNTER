@@ -3904,6 +3904,13 @@ const INTEGRACOES_META = {
     editavel: true,
     placeholder: 'Colar x-api-token…'
   },
+  'busca_web|tavily': {
+    nome: 'Busca na web (enriquecimento)',
+    provedor: 'Tavily — acha site/contexto na internet (sem ela: busca grátis)',
+    icon: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18M3 12h18',
+    editavel: true,
+    placeholder: 'Colar chave da Tavily (tvly-…)…'
+  },
   'crm|gk': {
     nome: 'CRM GK SaaS (nativo)',
     provedor: 'Contato + ticket automático na fila',
@@ -3937,7 +3944,7 @@ const INTEGRACOES_META = {
     editavel: true
   }
 };
-const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'contato|google', 'contato|econodata', 'ia|openai', 'crm|gk', 'crm|webhook'];
+const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'contato|google', 'contato|econodata', 'busca_web|tavily', 'ia|openai', 'crm|gk', 'crm|webhook'];
 
 // Card especial do CRM GK: fluxo em etapas (conexão → empresas → filas → salvar).
 function IntegracaoGK({

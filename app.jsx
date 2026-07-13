@@ -1676,6 +1676,8 @@ const INTEGRACOES_META = {
     icon:'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18M3 12h18', editavel:true, placeholder:'Colar chave da Places API…' },
   'contato|econodata': { nome:'Contato do decisor (premium)', provedor:'Econodata (match por CNPJ) — opcional',
     icon:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 11l-3 3-1.5-1.5', editavel:true, placeholder:'Colar x-api-token…' },
+  'busca_web|tavily': { nome:'Busca na web (enriquecimento)', provedor:'Tavily — acha site/contexto na internet (sem ela: busca grátis)',
+    icon:'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18M3 12h18', editavel:true, placeholder:'Colar chave da Tavily (tvly-…)…' },
   'crm|gk': { nome:'CRM GK SaaS (nativo)', provedor:'Contato + ticket automático na fila',
     icon:'M3 3h18v4H3zM3 10h18v4H3zM3 17h18v4H3z', especial:'gk' },
   'crm|webhook': { nome:'CRM via Webhook', provedor:'Qualquer CRM (URL de webhook / n8n)',
@@ -1687,7 +1689,7 @@ const INTEGRACOES_META = {
   'ia|openai': { nome:'Inteligência (IA) — agente SWOT', provedor:'OpenAI (gpt-4o-mini)',
     icon:'M12 3v2M12 19v2M5 12H3M21 12h-2M7 7L5.5 5.5M18.5 18.5L17 17M17 7l1.5-1.5M5.5 18.5L7 17', editavel:true },
 };
-const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'contato|google', 'contato|econodata', 'ia|openai', 'crm|gk', 'crm|webhook'];
+const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'contato|google', 'contato|econodata', 'busca_web|tavily', 'ia|openai', 'crm|gk', 'crm|webhook'];
 
 // Card especial do CRM GK: fluxo em etapas (conexão → empresas → filas → salvar).
 function IntegracaoGK({ row, meta, onSaved }) {

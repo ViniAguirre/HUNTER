@@ -296,7 +296,7 @@ async function init() {
     CREATE TABLE IF NOT EXISTS integracoes (
       id            SERIAL PRIMARY KEY,
       categoria     TEXT NOT NULL
-                      CHECK (categoria IN ('descoberta','contato','validacao_email','validacao_tel','crm','ia')),
+                      CHECK (categoria IN ('descoberta','contato','validacao_email','validacao_tel','crm','ia','busca_web')),
       provedor      TEXT NOT NULL,
       key_cifrada   TEXT,
       config        JSONB NOT NULL DEFAULT '{}',
@@ -400,6 +400,14 @@ async function init() {
       valor  INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (chave, dia, hora)
     );
+  `);
+
+  // Categoria de busca web (Tavily) — bancos criados antes desta versão têm a
+  // CHECK antiga; recria a constraint incluindo 'busca_web'.
+  await pool.query(`
+    ALTER TABLE integracoes DROP CONSTRAINT IF EXISTS integracoes_categoria_check;
+    ALTER TABLE integracoes ADD CONSTRAINT integracoes_categoria_check
+      CHECK (categoria IN ('descoberta','contato','validacao_email','validacao_tel','crm','ia','busca_web'));
   `);
 
   // Garante a linha do provider de descoberta (CNPJá) pra tela de Integrações
@@ -1049,7 +1057,7 @@ app.post('/api/integracoes', requireAuth, requireMaster, async (req, res) => {
   const ativo = !!req.body.ativo;
   const ordem = Number.isInteger(req.body.ordem) ? req.body.ordem : 100;
   const config = req.body.config && typeof req.body.config === 'object' ? JSON.stringify(req.body.config) : null;
-  const categoriasValidas = ['descoberta','contato','validacao_email','validacao_tel','crm','ia'];
+  const categoriasValidas = ['descoberta','contato','validacao_email','validacao_tel','crm','ia','busca_web'];
   if (!categoriasValidas.includes(categoria) || !provedor) {
     return res.status(400).json({ erro: 'categoria/provedor inválidos' });
   }

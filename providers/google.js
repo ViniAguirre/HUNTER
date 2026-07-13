@@ -7,6 +7,7 @@
  * o Google não expõe e-mail. Nada disso é o contato do contador.
  */
 const axios = require('axios');
+const tavily = require('./tavily');
 
 const PLACES_URL = 'https://places.googleapis.com/v1/places:searchText';
 const FIELD_MASK = [
@@ -180,35 +181,64 @@ function resultadosDDG(html) {
   return out;
 }
 
+// Remove diretórios/redes e deduplica por domínio — aplicado tanto aos
+// resultados da Tavily quanto aos do DDG, uniformemente.
+function filtrarResultados(lista) {
+  const out = [];
+  for (const r of (lista || [])) {
+    if (!r?.site || hostBloqueado(r.site)) continue;
+    if (out.some(x => x.site === r.site)) continue;
+    out.push(r);
+  }
+  return out;
+}
+
+// Camada de busca web unificada: usa a Tavily quando há chave (mais estável e
+// já traz um trecho de conteúdo), senão cai no DuckDuckGo grátis. Retorna
+// sempre [{ site, titulo, conteudo? }].
+async function buscarResultados(termo, opts = {}) {
+  if (opts.tavilyKey) {
+    const r = filtrarResultados(await tavily.buscar(termo, { apiKey: opts.tavilyKey, max: 40 }));
+    if (r.length) return r;   // Tavily vazia (ex.: rate limit) → tenta o grátis
+  }
+  return resultadosDDG(await buscarDDG(termo));
+}
+
 // Acha o site oficial (1º resultado) — usado no fallback de validação.
-async function acharSite(nome, cidade, uf) {
-  const r = resultadosDDG(await buscarDDG([nome, cidade, uf].filter(Boolean).join(' ')));
+async function acharSite(nome, cidade, uf, opts = {}) {
+  const r = await buscarResultados([nome, cidade, uf].filter(Boolean).join(' '), opts);
   return r.length ? r[0].site : null;
 }
 
 // Descoberta WEB-FIRST: lista negócios que aparecem na busca (como o cliente
-// pesquisaria no Google) pra depois confirmar CNPJ/ativa na CNPJá. Grátis.
-async function buscarEmpresasWeb(termo, cidade, uf, max = 30) {
-  const html = await buscarDDG([termo, cidade, uf].filter(Boolean).join(' '));
-  return resultadosDDG(html).slice(0, max);
+// pesquisaria no Google) pra depois confirmar CNPJ/ativa na CNPJá.
+async function buscarEmpresasWeb(termo, cidade, uf, max = 30, opts = {}) {
+  const r = await buscarResultados([termo, cidade, uf].filter(Boolean).join(' '), opts);
+  return r.slice(0, max);
 }
 
-// Contato comercial SEM chave paga: acha o site (busca grátis) e faz o scrape rico.
-async function buscarContatoGratis(nome, cidade, uf) {
+// Contato comercial SEM chave paga: acha o site (busca) e faz o scrape rico.
+// Se o scrape não render um resumo, usa o trecho de conteúdo da busca (Tavily)
+// como reserva — dá contexto ao SWOT mesmo em sites pobres em texto.
+async function buscarContatoGratis(nome, cidade, uf, opts = {}) {
   const agora = new Date().toISOString();
-  const site = await acharSite(nome, cidade, uf);
-  if (!site) return { encontrado: false, fonte: 'busca_gratis', validado: false, validado_em: agora };
+  const r = await buscarResultados([nome, cidade, uf].filter(Boolean).join(' '), opts);
+  const primeiro = r[0];
+  if (!primeiro) return { encontrado: false, fonte: 'busca_gratis', validado: false, validado_em: agora };
+  const site = primeiro.site;
   const s = await scrapeSite(site);
+  const resumo = s.resumo || primeiro.conteudo || null;
+  const resumoFonte = s.resumo ? s.resumo_fonte : (primeiro.conteudo ? 'busca' : null);
   return {
     encontrado: true,
     telefone: s.telefone || null,
     whatsapp: s.telefone || null,
     website: site,
     email: s.email || null,
-    resumo_site: s.resumo || null,
-    resumo_fonte: s.resumo_fonte || null,
+    resumo_site: resumo,
+    resumo_fonte: resumoFonte,
     fonte: 'busca_gratis',
-    validado: !!(s.email || s.telefone || s.resumo),
+    validado: !!(s.email || s.telefone || resumo),
     validado_em: agora,
   };
 }
