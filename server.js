@@ -24,6 +24,9 @@ const ADMIN_NAME = process.env.ADMIN_NAME || 'Administrador';
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'admin@hunter.local').toLowerCase();
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'mudar123';
 
+// PGSSL=true liga TLS na conexão com o Postgres — necessário pra bancos
+// gerenciados externos (Supabase, RDS, etc.) que exigem criptografia. Sem essa
+// variável, comportamento igual a sempre (banco local no próprio stack, sem TLS).
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   host: process.env.PGHOST,
@@ -31,6 +34,7 @@ const pool = new Pool({
   user: process.env.PGUSER,
   password: process.env.PGPASSWORD,
   database: process.env.PGDATABASE,
+  ssl: process.env.PGSSL === 'true' ? { rejectUnauthorized: false } : false,
 });
 
 // Conexão com o Redis do motor (opcional — só pra leitura de stats das filas).

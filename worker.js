@@ -13,6 +13,9 @@ const REDIS_OPTS = {
   maxRetriesPerRequest: null,
 };
 
+// PGSSL=true liga TLS na conexão com o Postgres — necessário pra bancos
+// gerenciados externos (Supabase, RDS, etc.) que exigem criptografia. Sem essa
+// variável, comportamento igual a sempre (banco local no próprio stack, sem TLS).
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   host: process.env.PGHOST,
@@ -20,6 +23,7 @@ const pool = new Pool({
   user: process.env.PGUSER,
   password: process.env.PGPASSWORD,
   database: process.env.PGDATABASE,
+  ssl: process.env.PGSSL === 'true' ? { rejectUnauthorized: false } : false,
 });
 
 const queues = {
