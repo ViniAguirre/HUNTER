@@ -16,8 +16,17 @@
  */
 const axios = require('axios');
 
-const API_URL = 'https://api.openai.com/v1/chat/completions';
-const MODELO_PADRAO = 'gpt-4o-mini';
+// Dois provedores compatíveis com a mesma API de chat completions. O OpenRouter
+// roteia pra vários modelos com uma chave só; quando ativo, tem preferência —
+// e se a chave dele falhar (ex.: crédito esgotado, HTTP 402), o chamador cai
+// automaticamente pra OpenAI (ver jobs/swot.js).
+const PROVEDORES = {
+  openai:     { url: 'https://api.openai.com/v1/chat/completions',     modelo: 'gpt-4o-mini',        rotulo: 'OpenAI' },
+  openrouter: { url: 'https://openrouter.ai/api/v1/chat/completions',  modelo: 'openai/gpt-4o-mini', rotulo: 'OpenRouter' },
+};
+const MODELO_PADRAO = PROVEDORES.openai.modelo;
+
+function provedorDe(nome) { return PROVEDORES[nome] || PROVEDORES.openai; }
 
 const SYSTEM = `Você é um analista de inteligência comercial B2B brasileiro. A partir dos dados de
 uma empresa-alvo (firmografia da Receita, por que ela deu match no perfil buscado, e o que o site
@@ -78,10 +87,12 @@ function montarPrompt(empresa, contexto, perfilEmpresa) {
 }
 
 // Gera o briefing SWOT. Retorna objeto já parseado (ou lança em erro de API).
-async function gerarSwot(empresa, { apiKey, modelo, contexto, perfilEmpresa } = {}) {
-  if (!apiKey) throw new Error('OpenAI: chave obrigatória (configure em Integrações → Inteligência).');
+// `provedor`: 'openai' (padrão) ou 'openrouter' — mesma API, endpoint diferente.
+async function gerarSwot(empresa, { apiKey, modelo, contexto, perfilEmpresa, provedor } = {}) {
+  const prov = provedorDe(provedor);
+  if (!apiKey) throw new Error(`${prov.rotulo}: chave obrigatória (configure em Integrações → Inteligência).`);
   const body = {
-    model: modelo || MODELO_PADRAO,
+    model: modelo || prov.modelo,
     messages: [
       { role: 'system', content: SYSTEM },
       { role: 'user', content: montarPrompt(empresa, contexto, perfilEmpresa) },
@@ -92,7 +103,7 @@ async function gerarSwot(empresa, { apiKey, modelo, contexto, perfilEmpresa } = 
   };
   const arr = v => Array.isArray(v) ? v.filter(Boolean).map(x => String(x)) : (v ? [String(v)] : []);
   try {
-    const { data } = await axios.post(API_URL, body, {
+    const { data } = await axios.post(prov.url, body, {
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       timeout: 30000,
     });
@@ -116,9 +127,13 @@ async function gerarSwot(empresa, { apiKey, modelo, contexto, perfilEmpresa } = 
   } catch (err) {
     if (err.response) {
       const msg = err.response.data?.error?.message || JSON.stringify(err.response.data).slice(0, 200);
-      throw new Error(`OpenAI HTTP ${err.response.status}: ${msg}`);
+      const e = new Error(`${prov.rotulo} HTTP ${err.response.status}: ${msg}`);
+      // 402 = crédito esgotado (OpenRouter) / 401 = chave inválida / 429 = rate
+      // limit — todos justificam tentar o próximo provedor da fila.
+      e.status = err.response.status;
+      throw e;
     }
-    throw new Error(`OpenAI: ${err.message}`);
+    throw new Error(`${prov.rotulo}: ${err.message}`);
   }
 }
 
@@ -130,14 +145,15 @@ Recebe uma descrição em linguagem natural do tipo de empresa que o usuário qu
 oficial de subclasses CNAE (código e descrição). Devolve os códigos MAIS ADEQUados, do mais relevante
 para o menos. Use SOMENTE códigos que existem na lista. Responda SOMENTE com JSON válido.`;
 
-async function sugerirCnae(texto, catalogo, { apiKey, modelo, max = 8 } = {}) {
-  if (!apiKey) throw new Error('OpenAI: chave obrigatória (Integrações → Inteligência).');
+async function sugerirCnae(texto, catalogo, { apiKey, modelo, max = 8, provedor } = {}) {
+  const prov = provedorDe(provedor);
+  if (!apiKey) throw new Error(`${prov.rotulo}: chave obrigatória (Integrações → Inteligência).`);
   if (!texto || !texto.trim()) return [];
   const valido = new Map((catalogo || []).map(x => [String(x.c), x.d]));
   const lista = (catalogo || []).map(x => `${x.c}\t${x.d}`).join('\n');
 
   const body = {
-    model: modelo || MODELO_PADRAO,
+    model: modelo || prov.modelo,
     messages: [
       { role: 'system', content: SYS_CNAE },
       { role: 'user', content:
@@ -150,7 +166,7 @@ async function sugerirCnae(texto, catalogo, { apiKey, modelo, max = 8 } = {}) {
     max_tokens: 200,
   };
   try {
-    const { data } = await axios.post(API_URL, body, {
+    const { data } = await axios.post(prov.url, body, {
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       timeout: 30000,
     });
@@ -166,10 +182,24 @@ async function sugerirCnae(texto, catalogo, { apiKey, modelo, max = 8 } = {}) {
   } catch (err) {
     if (err.response) {
       const msg = err.response.data?.error?.message || JSON.stringify(err.response.data).slice(0, 200);
-      throw new Error(`OpenAI HTTP ${err.response.status}: ${msg}`);
+      const e = new Error(`${prov.rotulo} HTTP ${err.response.status}: ${msg}`);
+      e.status = err.response.status;
+      throw e;
     }
-    throw new Error(`OpenAI: ${err.message}`);
+    throw new Error(`${prov.rotulo}: ${err.message}`);
   }
 }
 
-module.exports = { gerarSwot, sugerirCnae, MODELO_PADRAO };
+// Lista as integrações de IA ativas, na ordem de preferência do sistema:
+// OpenRouter primeiro (quando ligado), depois OpenAI. O chamador tenta na
+// ordem e cai pro próximo se a chave falhar (crédito esgotado, rate limit...).
+async function integracoesIA(pool) {
+  const { rows } = await pool.query(
+    `SELECT provedor, key_cifrada, config FROM integracoes
+     WHERE categoria='ia' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> ''
+     ORDER BY CASE provedor WHEN 'openrouter' THEN 0 ELSE 1 END, ordem`
+  );
+  return rows;
+}
+
+module.exports = { gerarSwot, sugerirCnae, integracoesIA, MODELO_PADRAO };

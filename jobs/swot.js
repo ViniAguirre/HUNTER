@@ -15,13 +15,12 @@ module.exports = async function swot(job, pool, queues) {
   const { rows: [cfg] } = await pool.query(`SELECT crm_auto_global FROM config WHERE id=1`);
   const crmAuto = !!(busca?.crm_auto || cfg?.crm_auto_global);
 
-  const { rows: [ig] } = await pool.query(
-    `SELECT key_cifrada, config FROM integracoes
-     WHERE categoria='ia' AND provedor='openai' AND ativo=true
-     ORDER BY ordem LIMIT 1`
-  );
+  // Integrações de IA ativas em ordem de preferência (OpenRouter antes de
+  // OpenAI). Se a primeira falhar — crédito esgotado, chave inválida, rate
+  // limit — tenta a próxima automaticamente.
+  const igs = await openai.integracoesIA(pool);
 
-  if (ig?.key_cifrada) {
+  if (igs.length) {
     const [{ rows: [empresa] }, { rows: [lead] }] = await Promise.all([
       pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [cnpj]),
       pool.query(`SELECT contato_validado, score, breakdown FROM leads WHERE id=$1`, [lead_id]),
@@ -37,7 +36,19 @@ module.exports = async function swot(job, pool, queues) {
         resumoSite: cv.resumo_site || null, siteValidado: !!cv.validado, fonteContato: cv.fonte || null,
         score: lead?.score ?? null, breakdown: Array.isArray(lead?.breakdown) ? lead.breakdown : [],
       };
-      const briefing = await openai.gerarSwot(empresa, { apiKey: ig.key_cifrada, modelo: ig.config?.modelo, contexto, perfilEmpresa });
+      let briefing = null, ultimoErro = null;
+      for (const ig of igs) {
+        try {
+          briefing = await openai.gerarSwot(empresa, {
+            apiKey: ig.key_cifrada, modelo: ig.config?.modelo, contexto, perfilEmpresa, provedor: ig.provedor,
+          });
+          break;
+        } catch (e) {
+          ultimoErro = e;
+          console.warn(`[swot] provedor ${ig.provedor} falhou (${e.message}) — tentando o próximo`);
+        }
+      }
+      if (!briefing) throw ultimoErro;   // todas as chaves falharam → job re-tenta com backoff
       await pool.query(
         `UPDATE leads SET swot=$2::jsonb, estagio='pronto', atualizado_em=now() WHERE id=$1`,
         [lead_id, JSON.stringify(briefing)]
@@ -52,5 +63,5 @@ module.exports = async function swot(job, pool, queues) {
       { jobId: `crm-${lead_id}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 4, backoff: { type: 'exponential', delay: 15000 } });
   }
 
-  return { cnpj, lead_id, swot: !!ig?.key_cifrada, crm_auto: crmAuto };
+  return { cnpj, lead_id, swot: igs.length > 0, crm_auto: crmAuto };
 };

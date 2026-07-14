@@ -1325,15 +1325,19 @@ app.post('/api/cnae/sugerir', requireAuth, requireEditor, iaLimiter, async (req,
     const chave = texto.toLowerCase();
     if (_cacheSugestao.has(chave)) return res.json({ sugestoes: _cacheSugestao.get(chave), cache: true });
 
-    const { rows: [ig] } = await pool.query(
-      `SELECT key_cifrada, config FROM integracoes
-       WHERE categoria='ia' AND provedor='openai' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> ''
-       ORDER BY ordem LIMIT 1`
-    );
-    if (!ig) return res.json({ sugestoes: [], erro: 'ia_inativa' });
-
     const openai = require('./providers/openai');
-    const sugestoes = await openai.sugerirCnae(texto, catalogoCnae(), { apiKey: ig.key_cifrada, modelo: ig.config?.modelo });
+    // Preferência: OpenRouter primeiro (quando ativo); se falhar, cai na OpenAI.
+    const igs = await openai.integracoesIA(pool);
+    if (!igs.length) return res.json({ sugestoes: [], erro: 'ia_inativa' });
+
+    let sugestoes = null, ultimoErro = null;
+    for (const ig of igs) {
+      try {
+        sugestoes = await openai.sugerirCnae(texto, catalogoCnae(), { apiKey: ig.key_cifrada, modelo: ig.config?.modelo, provedor: ig.provedor });
+        break;
+      } catch (e) { ultimoErro = e; }
+    }
+    if (sugestoes === null) throw ultimoErro;
     if (sugestoes.length) _cacheSugestao.set(chave, sugestoes);
     res.json({ sugestoes });
   } catch (e) {

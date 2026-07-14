@@ -41,9 +41,17 @@ module.exports = async function score1(job, pool, queues) {
   }
 
   const params = parseCriterios(busca.criterios);
-  const { score, breakdown } = computeScore1(empresa, params);
+  let { score, breakdown } = computeScore1(empresa, params);
   const corte = busca.corte_score ?? 60;
-  const passou = score >= corte;
+  // Importação por CNPJ: o usuário pediu explicitamente ESTA empresa — qualifica
+  // por intenção, sem corte de score. Com lista curta (sem perfil médio), o score
+  // proximidade nem existe; marca o motivo real no breakdown.
+  const importacao = busca.tipo === 'cnpj';
+  if (importacao && !params?.perfil) {
+    score = 100;
+    breakdown = [{ item: 'Importada por CNPJ (solicitada explicitamente)', pts: 100 }];
+  }
+  const passou = importacao ? true : score >= corte;
 
   if (!passou) {
     // Verificada mas fora do perfil: NÃO vira lead — só conta na busca.

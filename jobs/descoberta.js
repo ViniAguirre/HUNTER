@@ -34,10 +34,15 @@ module.exports = async function descoberta(job, pool, queues) {
   );
 
   // ── Perfilamento (lookalike / importação): destila o perfil médio da lista ──
+  // Importação (tipo 'cnpj') com lista curta (1-2 CNPJs) NÃO perfila: não há
+  // amostra pra traçar perfil médio — importa direto e qualifica por intenção.
   if ((tipo === 'lookalike' || tipo === 'cnpj') && !(criterios.params && criterios.params.perfil)) {
-    const resultado = await perfilar(pool, criterios, busca_id, busca.lista);
-    if (resultado.erro) return resultado;
-    criterios = resultado.criterios;
+    const nLista = perfilamento.parseCnpjs(criterios).length;
+    if (tipo === 'lookalike' || nLista >= perfilamento.MIN_PERFIL) {
+      const resultado = await perfilar(pool, criterios, busca_id, busca.lista);
+      if (resultado.erro) return resultado;
+      criterios = resultado.criterios;
+    }
   }
 
   // Teto diário GERAL de leads (empresas qualificadas) já bate zero antes de
@@ -71,8 +76,13 @@ module.exports = async function descoberta(job, pool, queues) {
     const cnpjs = perfilamento.parseCnpjs(criterios);
     const counters = { novos: 0, pulados: 0, enfileirados: 0, total: cnpjs.length };
     for (const cnpj of cnpjs) {
-      const { rows: [emp] } = await pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [cnpj]);
-      if (!emp) { counters.pulados++; continue; }   // não perfilou/não existe → pula
+      let { rows: [emp] } = await pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [cnpj]);
+      if (!emp) {
+        // Lista curta não passou pelo perfilamento (que já enriquecia/cacheava):
+        // consulta o cadastro no endpoint aberto (grátis) aqui mesmo.
+        try { const f = await cnpja.enrichCnpj(cnpj); await upsertEmpresa(pool, f); emp = f; }
+        catch (_) { counters.pulados++; continue; }   // CNPJ inválido/indisponível → pula
+      }
       await processarOffice(pool, queues, busca_id, emp, counters);
     }
     await pool.query(

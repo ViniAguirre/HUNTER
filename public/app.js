@@ -2891,8 +2891,8 @@ function NovaBusca({
     icon: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM12 12h.01'
   }, {
     key: 'cnpj',
-    titulo: 'Por lista de CNPJ',
-    desc: 'Faça upload ou cole uma lista de CNPJs.',
+    titulo: 'Por CNPJ (um ou lista)',
+    desc: 'Cole 1 ou mais CNPJs — cada um vira um lead.',
     icon: 'M9 12h6M9 16h6M9 8h2M14 2v6h6M14 2l6 6v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z'
   }, {
     key: 'lookalike',
@@ -2907,8 +2907,12 @@ function NovaBusca({
       alert('Informe o nome da busca.');
       return;
     }
-    if ((tipo === 'cnpj' || tipo === 'lookalike') && cnpjsParsed.length < MIN_LOOKALIKE) {
-      alert(`Poucos CNPJs válidos (${cnpjsParsed.length}). ` + (tipo === 'lookalike' ? `Para o sistema traçar um perfil médio confiável, envie ao menos ${MIN_LOOKALIKE} (recomendado 15+).` : `Envie ao menos ${MIN_LOOKALIKE} CNPJs válidos (14 dígitos).`));
+    if (tipo === 'lookalike' && cnpjsParsed.length < MIN_LOOKALIKE) {
+      alert(`Poucos CNPJs válidos (${cnpjsParsed.length}). ` + `Para o sistema traçar um perfil médio confiável, envie ao menos ${MIN_LOOKALIKE} (recomendado 15+).`);
+      return;
+    }
+    if (tipo === 'cnpj' && cnpjsParsed.length < 1) {
+      alert('Informe ao menos 1 CNPJ válido (14 dígitos).');
       return;
     }
     if (tipo === 'icp' && modoDesc === 'web' && keywords.length === 0) {
@@ -3591,7 +3595,10 @@ function NovaBusca({
     }
   }, "Descreva seu produto/servi\xE7o. O agente usa isso pra analisar cada empresa sob a \xF3tica do que voc\xEA vende \u2014 quanto mais claro, mais preciso o briefing."))) : (() => {
     const n = cnpjsParsed.length;
-    const ok = n >= MIN_LOOKALIKE;
+    // Importação direta aceita a partir de 1 CNPJ (consulta grátis na Receita);
+    // lookalike precisa de amostra pra traçar o perfil médio.
+    const minimo = tipo === 'lookalike' ? MIN_LOOKALIKE : 1;
+    const ok = n >= minimo;
     const conf = n < 6 ? 'baixa' : n < 15 ? 'média' : 'alta';
     const confCor = conf === 'alta' ? '#4ADE80' : conf === 'média' ? C.gold : '#F59E0B';
     return /*#__PURE__*/React.createElement("div", {
@@ -3660,7 +3667,7 @@ function NovaBusca({
         fontSize: 11.5,
         color: '#F59E0B'
       }
-    }, "m\xEDnimo ", MIN_LOOKALIKE, tipo === 'lookalike' ? ' · recomendado 15+' : '')), tipo === 'lookalike' && /*#__PURE__*/React.createElement("div", {
+    }, "m\xEDnimo ", minimo, tipo === 'lookalike' ? ' · recomendado 15+' : '')), tipo === 'lookalike' && /*#__PURE__*/React.createElement("div", {
       style: {
         marginTop: 18,
         borderTop: '1px solid var(--border)',
@@ -3942,9 +3949,16 @@ const INTEGRACOES_META = {
     provedor: 'OpenAI (gpt-4o-mini)',
     icon: 'M12 3v2M12 19v2M5 12H3M21 12h-2M7 7L5.5 5.5M18.5 18.5L17 17M17 7l1.5-1.5M5.5 18.5L7 17',
     editavel: true
+  },
+  'ia|openrouter': {
+    nome: 'Inteligência (IA) — OpenRouter',
+    provedor: 'OpenRouter (openai/gpt-4o-mini) — preferida quando ativa; sem crédito, cai na OpenAI',
+    icon: 'M12 3v2M12 19v2M5 12H3M21 12h-2M7 7L5.5 5.5M18.5 18.5L17 17M17 7l1.5-1.5M5.5 18.5L7 17',
+    editavel: true,
+    placeholder: 'Colar chave da OpenRouter (sk-or-…)…'
   }
 };
-const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'contato|google', 'contato|econodata', 'busca_web|tavily', 'ia|openai', 'crm|gk', 'crm|webhook'];
+const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'contato|google', 'contato|econodata', 'busca_web|tavily', 'ia|openrouter', 'ia|openai', 'crm|gk', 'crm|webhook'];
 
 // Card especial do CRM GK: fluxo em etapas (conexão → empresas → filas → salvar).
 function IntegracaoGK({
