@@ -74,6 +74,13 @@ module.exports = async function descoberta(job, pool, queues) {
     const cnpjs = perfilamento.parseCnpjs(criterios);
     const counters = { novos: 0, pulados: 0, enfileirados: 0, total: cnpjs.length };
     for (const cnpj of cnpjs) {
+      // Import é um pedido EXPLÍCITO por este CNPJ: se a empresa foi excluída
+      // antes (descarte_duro), destrava pra reprocessar — o lead antigo já não
+      // existe, então não gera duplicata. 'qualificado'/'em_crm' seguem travados
+      // (ainda têm lead ativo; nesse caso use "Re-enriquecer" pra atualizar).
+      await pool.query(
+        `UPDATE empresas SET estado_global='coletado', contatos_verificados='[]'::jsonb
+         WHERE cnpj=$1 AND estado_global='descarte_duro'`, [cnpj]);
       let { rows: [emp] } = await pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [cnpj]);
       if (!emp) {
         // Consulta o cadastro no endpoint aberto (grátis). Se bater no limite de
