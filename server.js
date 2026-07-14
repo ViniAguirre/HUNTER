@@ -905,6 +905,24 @@ app.post('/api/leads/acoes', requireAuth, requireEditor, async (req, res) => {
       return res.json({ ok: true, enfileirados: idsInt.length });
     }
 
+    // Re-enriquecer: re-roda a validação de contato + SWOT nos leads JÁ
+    // existentes, com busca NOVA (limpa o contato web em cache), sem criar
+    // duplicata. Útil pra atualizar dados após melhorar a busca (ex.: Tavily).
+    if (acao === 'reenriquecer') {
+      if (!monitorQueues?.validacao) return res.status(503).json({ erro: 'motor de enriquecimento indisponível' });
+      const { rows } = await pool.query(
+        `SELECT id, cnpj, busca_id FROM leads WHERE id = ANY($1::int[])`, [idsInt]);
+      const cnpjs = rows.map(r => r.cnpj).filter(Boolean);
+      // Zera o contato web em cache pra forçar uma busca fresca (pega o provedor atual).
+      if (cnpjs.length) await pool.query(
+        `UPDATE empresas SET contatos_verificados='[]'::jsonb WHERE cnpj = ANY($1::text[])`, [cnpjs]);
+      await Promise.all(rows.map(r =>
+        monitorQueues.validacao.add('validacao', { cnpj: r.cnpj, busca_id: r.busca_id, lead_id: r.id },
+          { jobId: `reval-${r.id}-${Date.now()}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 2, backoff: { type: 'exponential', delay: 10000 } })
+      ));
+      return res.json({ ok: true, reenfileirados: rows.length });
+    }
+
     // Exclusão definitiva dos leads selecionados. Marca a empresa como
     // 'descarte_duro' (estado travado) pra ela NÃO reaparecer: sem isso, uma
     // busca ativa re-descobriria a empresa e recriaria o lead na hora — dando a

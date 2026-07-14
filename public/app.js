@@ -1781,6 +1781,36 @@ function Leads({
     batchAction('excluir');
   };
 
+  // Re-enriquecer: re-roda a validação de contato + SWOT dos selecionados (busca
+  // nova), sem duplicar. Bom pra atualizar dados de leads já existentes.
+  const [reenriq, setReenriq] = useState(false);
+  const reenriquecerLote = async () => {
+    if (!selected.length || reenriq) return;
+    setReenriq(true);
+    try {
+      const r = await fetch('/api/leads/acoes', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          ids: selected,
+          acao: 'reenriquecer'
+        })
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        window.alert(d.erro || 'Não foi possível re-enriquecer agora.');
+        return;
+      }
+      setSelected([]);
+      window.alert(`Re-enriquecimento iniciado para ${d.reenfileirados ?? selected.length} empresa(s). Os dados atualizam em alguns instantes — recarregue a lista ou abra o lead para ver.`);
+    } finally {
+      setReenriq(false);
+    }
+  };
+
   // PDF em lote: busca o detalhe completo de cada lead selecionado e gera uma
   // folha com todos (1 empresa por página), mesma info do PDF individual.
   const [gerandoPdf, setGerandoPdf] = useState(false);
@@ -1977,6 +2007,15 @@ function Leads({
     h: 14,
     sw: 1.7
   }), gerandoPdf ? 'Gerando…' : 'Gerar PDF'), /*#__PURE__*/React.createElement("button", {
+    onClick: reenriquecerLote,
+    disabled: reenriq,
+    style: selBtnStyle('normal')
+  }, /*#__PURE__*/React.createElement(Svg, {
+    d: "M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16",
+    w: 14,
+    h: 14,
+    sw: 1.7
+  }), reenriq ? 'Enviando…' : 'Re-enriquecer'), /*#__PURE__*/React.createElement("button", {
     onClick: () => batchAction('aprovar'),
     style: selBtnStyle('normal')
   }, "Aprovar"), /*#__PURE__*/React.createElement("button", {
