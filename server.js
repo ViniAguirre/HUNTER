@@ -1490,7 +1490,13 @@ app.get('/api/admin/motor', requireAuth, requireMaster, async (req, res) => {
       if (list.length) {
         const { rows } = await pool.query(
           `SELECT e.cnpj, e.estado_global, e.razao, e.fantasia,
-             (SELECT COUNT(*)::int FROM leads l WHERE l.cnpj = e.cnpj) AS leads
+             (SELECT COUNT(*)::int FROM leads l WHERE l.cnpj = e.cnpj) AS leads,
+             (SELECT jsonb_build_object(
+                'status', l.status, 'pendente', l.contato_pendente,
+                'site', l.contato_validado->>'website', 'tel', l.contato_validado->>'telefone',
+                'email', l.contato_validado->>'email', 'fonte', l.contato_validado->>'fonte',
+                'resumo', left(coalesce(l.contato_validado->>'resumo_site',''), 140))
+              FROM leads l WHERE l.cnpj = e.cnpj ORDER BY l.id DESC LIMIT 1) AS contato
            FROM empresas e WHERE e.cnpj = ANY($1::text[])`, [list]);
         const achados = new Set(rows.map(r => r.cnpj));
         cnpjs = rows;
