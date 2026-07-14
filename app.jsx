@@ -1817,7 +1817,7 @@ function NovaBusca({ onSalvar }) {
             )}
           </div>
 
-          {tipo === 'lookalike' && (
+          {(tipo === 'lookalike' || tipo === 'cnpj') && (
             <div style={{ marginTop:18, borderTop:'1px solid var(--border)', paddingTop:16 }}>
               <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>
                 O que você vende — proposta de valor <span style={{ color:'var(--faint)' }}>(alimenta o agente SWOT)</span>
@@ -1826,6 +1826,10 @@ function NovaBusca({ onSalvar }) {
                 style={{ width:'100%', minHeight:64, borderRadius:12, border:'1px solid var(--border)',
                   background:'var(--panel2)', color:'var(--text)', padding:12, fontSize:13,
                   fontFamily:'inherit', lineHeight:1.5, resize:'vertical' }}/>
+              <div style={{ fontSize:11, color:'var(--faint)', marginTop:6, lineHeight:1.4 }}>
+                O agente usa isso pra analisar cada empresa sob a ótica do que você vende e gerar dados úteis
+                pro closer. Quanto mais claro, mais preciso o briefing.
+              </div>
             </div>
           )}
         </div>

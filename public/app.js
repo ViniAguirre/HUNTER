@@ -4026,7 +4026,7 @@ function NovaBusca({
         fontSize: 11.5,
         color: '#F59E0B'
       }
-    }, "m\xEDnimo ", minimo, tipo === 'lookalike' ? ' · recomendado 15+' : '')), tipo === 'lookalike' && /*#__PURE__*/React.createElement("div", {
+    }, "m\xEDnimo ", minimo, tipo === 'lookalike' ? ' · recomendado 15+' : '')), (tipo === 'lookalike' || tipo === 'cnpj') && /*#__PURE__*/React.createElement("div", {
       style: {
         marginTop: 18,
         borderTop: '1px solid var(--border)',
@@ -4059,7 +4059,14 @@ function NovaBusca({
         lineHeight: 1.5,
         resize: 'vertical'
       }
-    })));
+    }), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11,
+        color: 'var(--faint)',
+        marginTop: 6,
+        lineHeight: 1.4
+      }
+    }, "O agente usa isso pra analisar cada empresa sob a \xF3tica do que voc\xEA vende e gerar dados \xFAteis pro closer. Quanto mais claro, mais preciso o briefing.")));
   })(), tipo === 'icp' && modoDesc === 'cnpja' && cnaeSel.length === 0 && keywords.length === 0 && municSel.length === 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
