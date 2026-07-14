@@ -892,6 +892,19 @@ app.post('/api/leads/acoes', requireAuth, requireEditor, async (req, res) => {
       return res.json({ ok: true, enfileirados: idsInt.length });
     }
 
+    // Exclusão definitiva dos leads selecionados. Libera a empresa (qualificada
+    // mas ainda NÃO enviada ao CRM) de volta pra 'coletado', pra poder ser
+    // reavaliada por buscas futuras; as que já foram ao CRM seguem travadas
+    // (não queremos que voltem e virem lead duplicado).
+    if (acao === 'excluir') {
+      await pool.query(
+        `UPDATE empresas SET estado_global='coletado'
+         WHERE cnpj IN (SELECT cnpj FROM leads WHERE id = ANY($1::int[])) AND estado_global='qualificado'`,
+        [idsInt]);
+      const { rowCount } = await pool.query(`DELETE FROM leads WHERE id = ANY($1::int[])`, [idsInt]);
+      return res.json({ ok: true, excluidos: rowCount });
+    }
+
     if (!['Novo','Qualificado','Incompleto','Descartado','Enviado'].includes(status))
       return res.status(400).json({ erro: 'status inválido' });
     await pool.query(

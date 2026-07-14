@@ -1712,6 +1712,15 @@ function Leads({
     setPage(p => p); // trigger refresh via useEffect
   };
 
+  // Exclusão definitiva (com confirmação): remove os leads da base. Diferente de
+  // "Descartar", que só muda o status e mantém a empresa na lista.
+  const excluirLote = () => {
+    if (!selected.length) return;
+    const ok = window.confirm(`Excluir definitivamente ${selected.length} empresa${selected.length !== 1 ? 's' : ''} da lista de leads?\n\n` + `Esta ação não pode ser desfeita. (As empresas que ainda não foram enviadas ao CRM poderão reaparecer em buscas futuras; as já enviadas ao CRM não voltam.)`);
+    if (!ok) return;
+    batchAction('excluir');
+  };
+
   // PDF em lote: busca o detalhe completo de cada lead selecionado e gera uma
   // folha com todos (1 empresa por página), mesma info do PDF individual.
   const [gerandoPdf, setGerandoPdf] = useState(false);
@@ -1913,7 +1922,29 @@ function Leads({
   }, "Aprovar"), /*#__PURE__*/React.createElement("button", {
     onClick: () => batchAction('descartar'),
     style: selBtnStyle('dim')
-  }, "Descartar"), /*#__PURE__*/React.createElement("div", {
+  }, "Descartar"), /*#__PURE__*/React.createElement("button", {
+    onClick: excluirLote,
+    style: {
+      height: 34,
+      padding: '0 12px',
+      borderRadius: 8,
+      border: `1px solid ${C.red}`,
+      background: 'transparent',
+      color: C.red,
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      cursor: 'pointer',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 7
+    }
+  }, /*#__PURE__*/React.createElement(Svg, {
+    d: "M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6",
+    color: C.red,
+    w: 14,
+    h: 14,
+    sw: 1.7
+  }), "Excluir"), /*#__PURE__*/React.createElement("div", {
     style: {
       flex: 1
     }
