@@ -509,7 +509,7 @@ function requireMaster(req, res, next) {
 
 const app = express();
 app.set('trust proxy', 1);
-app.use(express.json());
+app.use(express.json({ limit: '12mb' }));   // 12mb cobre upload de PDF/CSV em base64
 app.use(cookieParser());
 
 // healthcheck
@@ -1316,6 +1316,26 @@ function catalogoCnae() {
 }
 const _cacheSugestao = new Map();               // memoiza por texto (evita repagar a IA)
 const iaLimiter = rateLimit({ windowMs: 60_000, max: 30 });
+
+// Extrai CNPJs de um arquivo enviado (.txt/.csv/.pdf). O front manda o conteúdo
+// em base64; devolvemos a lista de CNPJs (14 dígitos, sem repetição) pra popular
+// o campo da busca "Por CNPJ". Não consulta nada pago — só lê o arquivo.
+const uploadLimiter = rateLimit({ windowMs: 60_000, max: 20 });
+app.post('/api/cnpjs/extrair', requireAuth, requireEditor, uploadLimiter, async (req, res) => {
+  try {
+    const b64 = String(req.body?.base64 || '');
+    const nome = String(req.body?.nome || '');
+    if (!b64) return res.status(400).json({ erro: 'arquivo vazio' });
+    const buffer = Buffer.from(b64, 'base64');
+    if (!buffer.length) return res.status(400).json({ erro: 'não consegui ler o arquivo' });
+    const arquivoCnpj = require('./providers/arquivo-cnpj');
+    const { cnpjs, tipo } = arquivoCnpj.extrair(buffer, nome);
+    res.json({ cnpjs, total: cnpjs.length, tipo });
+  } catch (e) {
+    console.error('[cnpjs/extrair]', e.message);
+    res.status(500).json({ erro: 'não consegui extrair CNPJs deste arquivo' });
+  }
+});
 
 app.post('/api/cnae/sugerir', requireAuth, requireEditor, iaLimiter, async (req, res) => {
   try {

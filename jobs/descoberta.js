@@ -33,16 +33,14 @@ module.exports = async function descoberta(job, pool, queues) {
      ORDER BY ordem LIMIT 1`
   );
 
-  // ── Perfilamento (lookalike / importação): destila o perfil médio da lista ──
-  // Importação (tipo 'cnpj') com lista curta (1-2 CNPJs) NÃO perfila: não há
-  // amostra pra traçar perfil médio — importa direto e qualifica por intenção.
-  if ((tipo === 'lookalike' || tipo === 'cnpj') && !(criterios.params && criterios.params.perfil)) {
-    const nLista = perfilamento.parseCnpjs(criterios).length;
-    if (tipo === 'lookalike' || nLista >= perfilamento.MIN_PERFIL) {
-      const resultado = await perfilar(pool, criterios, busca_id, busca.lista);
-      if (resultado.erro) return resultado;
-      criterios = resultado.criterios;
-    }
+  // ── Perfilamento: SÓ o lookalike destila um perfil médio pra buscar semelhantes.
+  // A importação (tipo 'cnpj') NÃO perfila: cada CNPJ é importado como pedido e
+  // qualifica por intenção no Score 1 (o enriquecimento acontece no laço abaixo,
+  // respeitando o limite grátis de 5/min da Receita).
+  if (tipo === 'lookalike' && !(criterios.params && criterios.params.perfil)) {
+    const resultado = await perfilar(pool, criterios, busca_id, busca.lista);
+    if (resultado.erro) return resultado;
+    criterios = resultado.criterios;
   }
 
   // Teto diário GERAL de leads (empresas qualificadas) já bate zero antes de
@@ -78,12 +76,14 @@ module.exports = async function descoberta(job, pool, queues) {
     for (const cnpj of cnpjs) {
       let { rows: [emp] } = await pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [cnpj]);
       if (!emp) {
-        // Lista curta não passou pelo perfilamento (que já enriquecia/cacheava):
-        // consulta o cadastro no endpoint aberto (grátis) aqui mesmo.
-        try { const f = await cnpja.enrichCnpj(cnpj); await upsertEmpresa(pool, f); emp = f; }
+        // Consulta o cadastro no endpoint aberto (grátis). Se bater no limite de
+        // 5/min (429), ESPERA e tenta de novo — em vez de descartar o CNPJ. É o
+        // que faz a lista grande do upload ir sendo processada ~5/min sem perder.
+        try { const f = await enrichComRetry(cnpj); await upsertEmpresa(pool, f); emp = f; }
         catch (_) { counters.pulados++; continue; }   // CNPJ inválido/indisponível → pula
       }
       await processarOffice(pool, queues, busca_id, emp, counters);
+      await pool.query(`UPDATE buscas SET ultimo_heartbeat=now() WHERE id=$1`, [busca_id]);   // sinal de vida em lista longa
     }
     await pool.query(
       `UPDATE buscas SET status='Esgotada', ultimo_heartbeat=now() WHERE id=$1`, [busca_id]
@@ -328,6 +328,24 @@ async function perfilarComLista(pool, criterios, busca_id, cnpjs) {
   const novo = { ...criterios, params };
   await pool.query(`UPDATE buscas SET criterios=$2::jsonb WHERE id=$1`, [busca_id, JSON.stringify(novo)]);
   return { criterios: novo };
+}
+
+// Enriquecimento individual (endpoint aberto, grátis) tolerante ao limite de
+// 5/min: no 429, espera o retry-after (limitado) e tenta de novo, até 6 vezes.
+// Assim uma lista longa vinda de upload vai sendo consumida ~5/min sem descartar.
+async function enrichComRetry(cnpj, maxTentativas = 6) {
+  for (let i = 1; ; i++) {
+    try {
+      return await cnpja.enrichCnpj(cnpj);
+    } catch (e) {
+      if (e.code === 'RATE_LIMIT' && i < maxTentativas) {
+        const espera = Math.min(Math.max((e.retryAfter || 60), 5), 70) * 1000;
+        await new Promise(r => setTimeout(r, espera));
+        continue;
+      }
+      throw e;   // outro erro (CNPJ inválido) ou acabaram as tentativas
+    }
+  }
 }
 
 // Grava/atualiza a empresa no ledger (cache), sem criar lead.

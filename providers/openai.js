@@ -28,6 +28,28 @@ const MODELO_PADRAO = PROVEDORES.openai.modelo;
 
 function provedorDe(nome) { return PROVEDORES[nome] || PROVEDORES.openai; }
 
+// Só a OpenAI nativa (e modelos openai/* via OpenRouter) garantem o "JSON mode"
+// (response_format). Modelos livres/de terceiros no OpenRouter podem não aceitar
+// — então só enviamos response_format quando é seguro.
+function suportaJsonMode(provedor, modelo) {
+  return provedor === 'openai' || /^openai\//i.test(String(modelo || ''));
+}
+
+// Parser tolerante: aceita JSON puro, JSON em cerca de código (```json … ```),
+// ou JSON no meio de texto. Necessário pra modelos que não têm JSON mode e às
+// vezes embrulham a resposta. Lança se não achar objeto algum.
+function extrairJson(txt) {
+  const s = String(txt || '').trim();
+  try { return JSON.parse(s); } catch (_) {}
+  const semCerca = s.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  try { return JSON.parse(semCerca); } catch (_) {}
+  const ini = semCerca.indexOf('{'), fim = semCerca.lastIndexOf('}');
+  if (ini !== -1 && fim > ini) {
+    try { return JSON.parse(semCerca.slice(ini, fim + 1)); } catch (_) {}
+  }
+  throw new Error('resposta da IA não veio em JSON válido');
+}
+
 const SYSTEM = `Você é um analista de inteligência comercial B2B brasileiro. A partir dos dados de
 uma empresa-alvo (firmografia da Receita, por que ela deu match no perfil buscado, e o que o site
 dela diz sobre si) e do que NÓS vendemos, produz um briefing ANALÍTICO para o closer conhecer essa
@@ -97,10 +119,10 @@ async function gerarSwot(empresa, { apiKey, modelo, contexto, perfilEmpresa, pro
       { role: 'system', content: SYSTEM },
       { role: 'user', content: montarPrompt(empresa, contexto, perfilEmpresa) },
     ],
-    response_format: { type: 'json_object' },
     temperature: 0.4,
     max_tokens: 900,
   };
+  if (suportaJsonMode(provedor, body.model)) body.response_format = { type: 'json_object' };
   const arr = v => Array.isArray(v) ? v.filter(Boolean).map(x => String(x)) : (v ? [String(v)] : []);
   try {
     const { data } = await axios.post(prov.url, body, {
@@ -108,7 +130,7 @@ async function gerarSwot(empresa, { apiKey, modelo, contexto, perfilEmpresa, pro
       timeout: 30000,
     });
     const txt = data?.choices?.[0]?.message?.content || '{}';
-    const parsed = JSON.parse(txt);
+    const parsed = extrairJson(txt);
     return {
       resumo: parsed.resumo || '',
       dores_provaveis: arr(parsed.dores_provaveis),
@@ -161,16 +183,16 @@ async function sugerirCnae(texto, catalogo, { apiKey, modelo, max = 8, provedor 
         `Escolha até ${max} códigos CNAE da lista abaixo (formato "codigo<tab>descricao"):\n${lista}\n\n` +
         `Responda no formato JSON: { "codigos": ["7500100", "..."] } — só os códigos, do mais relevante ao menos.` },
     ],
-    response_format: { type: 'json_object' },
     temperature: 0.1,
     max_tokens: 200,
   };
+  if (suportaJsonMode(provedor, body.model)) body.response_format = { type: 'json_object' };
   try {
     const { data } = await axios.post(prov.url, body, {
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
       timeout: 30000,
     });
-    const parsed = JSON.parse(data?.choices?.[0]?.message?.content || '{}');
+    const parsed = extrairJson(data?.choices?.[0]?.message?.content || '{}');
     const codigos = Array.isArray(parsed.codigos) ? parsed.codigos : [];
     const out = [];
     for (const raw of codigos) {

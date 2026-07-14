@@ -1113,6 +1113,8 @@ function NovaBusca({ onSalvar }) {
   const [capital, setCapital] = useState('qualquer');
   const [crmAuto, setCrmAuto] = useState(false);
   const [listaCnpj, setListaCnpj] = useState('');
+  const [uploadMsg, setUploadMsg] = useState(null);   // feedback do upload de arquivo
+  const arquivoRef = useRef();
   const [iaCarregando, setIaCarregando] = useState(false);
   const [iaSug, setIaSug] = useState(null);   // resultados da IA (ou null)
   const [iaErro, setIaErro] = useState(null);
@@ -1130,6 +1132,41 @@ function NovaBusca({ onSalvar }) {
     return [...vistos];
   }, [listaCnpj]);
   const MIN_LOOKALIKE = 3;
+
+  // Upload de arquivo (.txt/.csv/.pdf) com CNPJs: lê o arquivo, extrai os CNPJs
+  // no servidor (grátis, sem consulta paga) e junta ao que já está no campo.
+  const importarArquivo = async (file) => {
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { setUploadMsg({ ok:false, txt:'Arquivo muito grande (máx. 10MB).' }); return; }
+    setUploadMsg({ ok:true, txt:'Lendo arquivo…' });
+    try {
+      const base64 = await new Promise((res, rej) => {
+        const fr = new FileReader();
+        fr.onload = () => res(String(fr.result).split(',')[1] || '');
+        fr.onerror = () => rej(new Error('falha ao ler'));
+        fr.readAsDataURL(file);
+      });
+      const r = await fetch('/api/cnpjs/extrair', {
+        method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ nome: file.name, base64 })
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.erro || 'erro ao extrair');
+      if (!d.cnpjs?.length) {
+        setUploadMsg({ ok:false, txt:'Nenhum CNPJ encontrado no arquivo. Se for PDF escaneado (imagem), use um .txt/.csv.' });
+        return;
+      }
+      // Junta ao textarea sem duplicar com o que já foi digitado.
+      const jaTem = new Set(listaCnpj.split(/[\s,;]+/).map(x => x.replace(/\D/g,'')).filter(x => x.length === 14));
+      const novos = d.cnpjs.filter(c => !jaTem.has(c));
+      setListaCnpj(prev => (prev.trim() ? prev.trim() + '\n' : '') + novos.join('\n'));
+      setUploadMsg({ ok:true, txt:`${d.cnpjs.length} CNPJ(s) no arquivo · ${novos.length} novo(s) adicionado(s).` });
+    } catch (e) {
+      setUploadMsg({ ok:false, txt: 'Não consegui ler este arquivo. Tente um .txt, .csv ou PDF com texto.' });
+    } finally {
+      if (arquivoRef.current) arquivoRef.current.value = '';
+    }
+  };
 
   // Palavra-chave no nome/fantasia. Vírgula = OU; dentro de um termo, espaço = E.
   // Removemos conectivos (de, da, e...) pra "Purificador de água" virar E("purificador","água").
@@ -1564,8 +1601,22 @@ function NovaBusca({ onSalvar }) {
               ? 'O sistema lê a firmografia dessas empresas (grátis), monta um perfil médio — CNAE, UF, porte, capital — e busca semelhantes na nossa base de empresas ativas. Quanto mais clientes, mais preciso o perfil.'
               : 'Cada CNPJ vira um lead e passa por todo o pipeline (contato, SWOT, CRM). Não expande para semelhantes.'}
           </div>
+          <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:10, flexWrap:'wrap' }}>
+            <input ref={arquivoRef} type="file" accept=".txt,.csv,.pdf,text/plain,text/csv,application/pdf"
+              onChange={e => importarArquivo(e.target.files?.[0])} style={{ display:'none' }}/>
+            <button type="button" onClick={() => arquivoRef.current?.click()}
+              style={{ height:34, padding:'0 14px', borderRadius:9, border:'1px dashed var(--border)',
+                background:'transparent', color:'var(--text)', fontSize:12.5, fontFamily:'inherit', cursor:'pointer',
+                display:'inline-flex', alignItems:'center', gap:7 }}>
+              <Svg d="M12 3v12M7 8l5-5 5 5M5 21h14" w={15} h={15} sw={1.7}/>
+              Enviar arquivo (.txt, .csv, .pdf)
+            </button>
+            {uploadMsg && (
+              <span style={{ fontSize:11.5, color: uploadMsg.ok ? 'var(--faint)' : '#F59E0B' }}>{uploadMsg.txt}</span>
+            )}
+          </div>
           <textarea value={listaCnpj} onChange={e => setListaCnpj(e.target.value)}
-            placeholder="Cole os CNPJs (um por linha, ou separados por vírgula). Ex: 12.345.678/0001-90"
+            placeholder="Cole os CNPJs (um por linha, ou separados por vírgula), ou envie um arquivo acima. Ex: 12.345.678/0001-90"
             style={{ width:'100%', minHeight:110, borderRadius:12, border:'1px solid var(--border)',
               background:'var(--panel2)', color:'var(--text)', padding:12, fontSize:13,
               fontFamily:'inherit', lineHeight:1.6, resize:'vertical' }}/>
@@ -1692,9 +1743,12 @@ const INTEGRACOES_META = {
   'validacao_tel|twilio': { nome:'Validação de telefone', provedor:'Twilio Lookup',
     icon:'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.6A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.3 1.8.6 2.6a2 2 0 0 1-.5 2.1L8 9.6a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.5c.8.3 1.7.5 2.6.6a2 2 0 0 1 1.7 2z', editavel:false },
   'ia|openai': { nome:'Inteligência (IA) — agente SWOT', provedor:'OpenAI (gpt-4o-mini)',
-    icon:'M12 3v2M12 19v2M5 12H3M21 12h-2M7 7L5.5 5.5M18.5 18.5L17 17M17 7l1.5-1.5M5.5 18.5L7 17', editavel:true },
-  'ia|openrouter': { nome:'Inteligência (IA) — OpenRouter', provedor:'OpenRouter (openai/gpt-4o-mini) — preferida quando ativa; sem crédito, cai na OpenAI',
-    icon:'M12 3v2M12 19v2M5 12H3M21 12h-2M7 7L5.5 5.5M18.5 18.5L17 17M17 7l1.5-1.5M5.5 18.5L7 17', editavel:true, placeholder:'Colar chave da OpenRouter (sk-or-…)…' },
+    icon:'M12 3v2M12 19v2M5 12H3M21 12h-2M7 7L5.5 5.5M18.5 18.5L17 17M17 7l1.5-1.5M5.5 18.5L7 17', editavel:true,
+    temModelo:true, modeloPlaceholder:'modelo (padrão gpt-4o-mini)' },
+  'ia|openrouter': { nome:'Inteligência (IA) — OpenRouter', provedor:'OpenRouter — preferida quando ativa; sem crédito, cai na OpenAI',
+    icon:'M12 3v2M12 19v2M5 12H3M21 12h-2M7 7L5.5 5.5M18.5 18.5L17 17M17 7l1.5-1.5M5.5 18.5L7 17', editavel:true,
+    placeholder:'Colar chave da OpenRouter (sk-or-…)…',
+    temModelo:true, modeloPlaceholder:'modelo (ex.: meta-llama/llama-3.3-70b-instruct:free)' },
 };
 const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'contato|google', 'contato|econodata', 'busca_web|tavily', 'ia|openrouter', 'ia|openai', 'crm|gk', 'crm|webhook'];
 
@@ -1862,6 +1916,7 @@ function Integracoes() {
   const [salvando, setSalvando] = useState(null);
   const chaveRefs = useRef({});
   const segredoRefs = useRef({});
+  const modeloRefs = useRef({});
 
   const carregar = () => {
     setErro(null);
@@ -1878,10 +1933,15 @@ function Integracoes() {
   const salvar = async (chave, categoria, provedor) => {
     const key = (chaveRefs.current[chave]?.value || '').trim();
     const segredo = (segredoRefs.current[chave]?.value || '').trim();
+    const modelo = (modeloRefs.current[chave]?.value || '').trim();
     const existente = porChave[chave];
     setSalvando(chave);
     try {
-      const corpoConfig = segredo ? { config: { ...(existente?.config || {}), secret: segredo } } : {};
+      const cfgExtra = {};
+      if (segredo) cfgExtra.secret = segredo;
+      if (modelo) cfgExtra.modelo = modelo;
+      const corpoConfig = Object.keys(cfgExtra).length
+        ? { config: { ...(existente?.config || {}), ...cfgExtra } } : {};
       if (existente) {
         await fetch('/api/integracoes/' + existente.id, {
           method:'PATCH', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
@@ -1946,6 +2006,7 @@ function Integracoes() {
               <div style={{ fontSize:12.5, color:'var(--faint)', marginTop:3 }}>
                 {meta.provedor}{row?.chave_mascarada ? ' · ' + row.chave_mascarada : ''}
                 {meta.temSegredo ? (row?.config?.secret ? ' · segredo configurado' : ' · sem segredo (assinatura desativada)') : ''}
+                {meta.temModelo && row?.config?.modelo ? ' · modelo: ' + row.config.modelo : ''}
               </div>
             </div>
             {meta.editavel ? (
@@ -1959,6 +2020,13 @@ function Integracoes() {
                     style={{ width:190, height:38, borderRadius:9, border:'1px solid var(--border)',
                       background:'var(--panel2)', color:'var(--dim)', padding:'0 12px', fontSize:12.5,
                       fontFamily:'inherit', letterSpacing:'.05em' }}/>
+                )}
+                {meta.temModelo && (
+                  <input ref={el => modeloRefs.current[chave] = el} defaultValue={row?.config?.modelo || ''}
+                    placeholder={meta.modeloPlaceholder || 'modelo (opcional)'}
+                    style={{ width:200, height:38, borderRadius:9, border:'1px solid var(--border)',
+                      background:'var(--panel2)', color:'var(--dim)', padding:'0 12px', fontSize:12,
+                      fontFamily:'inherit' }}/>
                 )}
                 <button onClick={() => salvar(chave, categoria, provedor)} disabled={salvando === chave}
                   style={{ height:38, padding:'0 15px', borderRadius:9, border:'1px solid var(--border)',
@@ -2744,6 +2812,71 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
     { k:'Endereço', v:l.endereco },
   ];
 
+  // Gera uma folha limpa do lead numa nova janela e abre o diálogo de impressão
+  // (o navegador permite "Salvar como PDF"). Sem dependência, sem servidor.
+  const imprimirLead = () => {
+    const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+    const cv = l.contato_validado || {};
+    const sw = l.swot || {};
+    const listaHtml = (arr) => (Array.isArray(arr) && arr.length)
+      ? '<ul>' + arr.map(x => `<li>${esc(x)}</li>`).join('') + '</ul>' : '<p class="vazio">—</p>';
+    const linha = (k, v) => `<tr><th>${esc(k)}</th><td>${esc(v || '—')}</td></tr>`;
+    const quad = (titulo, arr) => `<div class="q"><h4>${esc(titulo)}</h4>${listaHtml(arr)}</div>`;
+    const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<title>${esc(l.fantasia || l.razao || l.cnpj)} — Hunter</title>
+<style>
+  *{box-sizing:border-box} body{font:14px/1.5 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#111;margin:32px;max-width:760px}
+  h1{font-size:22px;margin:0 0 2px} .sub{color:#555;margin:0 0 2px} .cnpj{color:#777;font-size:12px;font-family:ui-monospace,monospace}
+  .score{display:inline-block;margin-top:8px;padding:3px 10px;border:1px solid #bbb;border-radius:20px;font-size:12px}
+  h3{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#666;border-bottom:1px solid #ddd;padding-bottom:5px;margin:26px 0 10px}
+  table{width:100%;border-collapse:collapse} th,td{text-align:left;padding:5px 8px;vertical-align:top;font-size:13px}
+  th{color:#666;font-weight:600;width:38%} tr:nth-child(even){background:#f6f6f6}
+  .swot{display:grid;grid-template-columns:1fr 1fr;gap:12px} .q{border:1px solid #e2e2e2;border-radius:8px;padding:10px 12px}
+  .q h4{margin:0 0 6px;font-size:12px} ul{margin:0;padding-left:18px} li{margin:2px 0} .vazio{color:#999;margin:0}
+  .callout{background:#f2f7ff;border:1px solid #cfe0f7;border-radius:8px;padding:10px 12px;margin-top:8px}
+  .rod{margin-top:30px;color:#999;font-size:11px;border-top:1px solid #eee;padding-top:8px}
+  @media print{body{margin:12mm}}
+</style></head><body>
+  <h1>${esc(l.fantasia || l.razao)}</h1>
+  <p class="sub">${esc(l.razao)}</p>
+  <p class="cnpj">CNPJ ${esc(l.cnpj)}</p>
+  <span class="score">Score ${esc(l.score)} / 100 · ${esc(status)}</span>
+
+  <h3>Dados cadastrais · Receita Federal</h3>
+  <table>
+    ${linha('CNAE principal', l.cnae)}${linha('Setor', l.setor)}${linha('Porte', l.porte)}
+    ${linha('Situação', l.situacao)}${linha('Abertura', l.abertura)}${linha('Capital social', l.capital)}
+    ${linha('Cidade/UF', [l.cidade, l.uf].filter(Boolean).join('/'))}${linha('Endereço', l.endereco)}
+  </table>
+
+  <h3>Decisor</h3>
+  <table>${linha('Nome', l.decisor)}${linha('Cargo', l.cargo)}</table>
+
+  <h3>Contato comercial validado</h3>
+  <table>
+    ${linha('Telefone', cv.telefone)}${linha('WhatsApp', cv.whatsapp)}${linha('E-mail', cv.email)}${linha('Site', cv.website)}
+  </table>
+  ${cv.resumo_site ? `<div class="callout"><b>Sobre a empresa (site):</b><br>${esc(cv.resumo_site)}</div>` : ''}
+
+  ${sw.resumo || sw.swot ? `<h3>Análise SWOT · briefing</h3>
+    ${sw.resumo ? `<p>${esc(sw.resumo)}</p>` : ''}
+    ${(Array.isArray(sw.dores_provaveis) && sw.dores_provaveis.length) ? `<div class="q"><h4>Dores prováveis</h4>${listaHtml(sw.dores_provaveis)}</div>` : ''}
+    <div class="swot" style="margin-top:12px">
+      ${quad('Forças', sw.swot?.forcas)}${quad('Fraquezas', sw.swot?.fraquezas)}
+      ${quad('Oportunidades', sw.swot?.oportunidades)}${quad('Ameaças', sw.swot?.ameacas)}
+    </div>
+    ${(sw.sinal_comercial || sw.gancho) ? `<div class="callout" style="margin-top:12px"><b>Sinal comercial:</b> ${esc(sw.sinal_comercial || sw.gancho)}</div>` : ''}
+  ` : ''}
+
+  <div class="rod">Gerado pelo Hunter em ${esc(new Date().toLocaleString('pt-BR'))}</div>
+  <script>window.onload=function(){window.print()}<\/script>
+</body></html>`;
+    const w = window.open('', '_blank');
+    if (!w) { window.alert('Permita pop-ups para gerar o PDF/impressão.'); return; }
+    w.document.write(html);
+    w.document.close();
+  };
+
   return (
     <div style={{ position:'fixed', inset:0, zIndex:60 }}>
       <div onClick={onClose} style={{ position:'absolute', inset:0, background:'rgba(5,9,20,.55)', animation:'hfade .2s ease' }}/>
@@ -2763,6 +2896,13 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
             <p style={{ fontSize:12.5, color:'var(--dim)', margin:'3px 0 0' }}>{l.razao}</p>
           </div>
           <ScoreRing score={l.score} size={84}/>
+          <button onClick={imprimirLead} title="Imprimir ou salvar em PDF"
+            style={{ flexShrink:0, height:32, padding:'0 11px', borderRadius:8,
+              border:'1px solid var(--border)', background:'transparent', color:'var(--dim)',
+              cursor:'pointer', fontSize:12, fontFamily:'inherit', display:'inline-flex', alignItems:'center', gap:6 }}>
+            <Svg d="M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v8H6z" w={15} h={15} sw={1.7}/>
+            PDF
+          </button>
           <button onClick={onClose} style={{ flexShrink:0, width:32, height:32, borderRadius:8,
             border:'1px solid var(--border)', background:'transparent', color:'var(--dim)',
             cursor:'pointer', fontSize:15 }}>✕</button>
