@@ -8,7 +8,7 @@
 const contato = require('../providers/contato');
 const google = require('../providers/google');
 
-const MAX_TENT_CONTATO = 2;   // até +2 tentativas de enriquecimento se faltar WhatsApp
+const MAX_TENT_CONTATO = 1;   // 1 re-enriquecimento se o contato vier incompleto
 
 // Chave da busca web (Tavily), se houver integração ativa. Grátis por padrão.
 async function chaveBuscaWeb(pool) {
@@ -121,25 +121,42 @@ module.exports = async function validacao(job, pool, queues) {
       await pool.query(`UPDATE leads SET contato_validado=NULL WHERE id=$1`, [lead_id]);
     }
 
-    // Regra do WhatsApp: SEM telefone/WhatsApp, o lead NÃO vai ao CRM automático.
-    // Entra em "qualificação": até +2 tentativas de enriquecer. Se achar, segue
-    // normal; se esgotar, marca contato_pendente (vermelho na lista) e segue pro
-    // SWOT sem enviar ao CRM — pra você ver quais ficaram sem contato e decidir.
-    const temWhatsapp = !!(c && (c.whatsapp || c.telefone));
-    if (!temWhatsapp && tentativa < MAX_TENT_CONTATO && queues?.validacao) {
+    // ── Árvore de decisão do contato ────────────────────────────────────────
+    const hasPhone = !!(c && (c.whatsapp || c.telefone));
+    const hasEmail = !!(c && c.email);
+    const completo = hasPhone && hasEmail;
+
+    // Incompleto (falta telefone OU e-mail): 1 re-enriquecimento (busca fresca).
+    if (!completo && tentativa < MAX_TENT_CONTATO && queues?.validacao) {
       await queues.validacao.add('validacao',
         { cnpj, busca_id, lead_id, tentativa_contato: tentativa + 1 },
-        { delay: 3 * 60 * 1000, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 2, backoff: { type: 'exponential', delay: 10000 } });
-      return { lead_id, retry: tentativa + 1, motivo: 'sem_whatsapp' };
+        { delay: 2 * 60 * 1000, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 2, backoff: { type: 'exponential', delay: 10000 } });
+      return { lead_id, retry: tentativa + 1, motivo: 'contato_incompleto' };
     }
 
-    const contatoPendente = !temWhatsapp;
-    await pool.query(`UPDATE leads SET contato_pendente=$2 WHERE id=$1`, [lead_id, contatoPendente]);
-    await seguirParaSwot(queues, { cnpj, busca_id, lead_id, contato_ok: temWhatsapp });
-    return { lead_id, validado: !!c?.validado, tem_whatsapp: temWhatsapp, contato_pendente: contatoPendente };
+    // 1) Completo (telefone + e-mail) → segue e pode ir ao CRM automático.
+    if (completo) {
+      await pool.query(`UPDATE leads SET contato_status='completo', contato_pendente=false WHERE id=$1`, [lead_id]);
+      await seguirParaSwot(queues, { cnpj, busca_id, lead_id, contato_ok: true });
+      return { lead_id, contato: 'completo' };
+    }
+
+    // 2) Só telefone (sem e-mail) → NÃO vai ao CRM automático; entra na fila de
+    //    DECISÃO manual (popup no próximo login). Gera o SWOT pra ter o briefing.
+    if (hasPhone && !hasEmail) {
+      await pool.query(`UPDATE leads SET contato_status='decisao', contato_pendente=true WHERE id=$1`, [lead_id]);
+      await seguirParaSwot(queues, { cnpj, busca_id, lead_id, contato_ok: false });
+      return { lead_id, contato: 'decisao_so_telefone' };
+    }
+
+    // 3) SEM telefone → não é um lead útil: vira só "empresa encontrada". Remove o
+    //    lead (a empresa continua no ledger/contagem). Sem SWOT, sem CRM.
+    await pool.query(`UPDATE buscas SET sem_contato = sem_contato + 1 WHERE id=$1`, [busca_id]).catch(() => {});
+    await pool.query(`DELETE FROM leads WHERE id=$1`, [lead_id]);
+    return { lead_id, contato: 'sem_telefone_removido' };
   } catch (err) {
-    // Erro não trava o pipeline: segue pro SWOT sem contato (marca pendência).
-    try { await pool.query(`UPDATE leads SET contato_pendente=true WHERE id=$1`, [lead_id]); } catch (_) {}
+    // Erro não trava o pipeline: marca pra decisão manual (não some silenciosamente).
+    try { await pool.query(`UPDATE leads SET contato_status='decisao', contato_pendente=true WHERE id=$1`, [lead_id]); } catch (_) {}
     await seguirParaSwot(queues, { cnpj, busca_id, lead_id, contato_ok: false });
     return { lead_id, erro: err.message };
   }

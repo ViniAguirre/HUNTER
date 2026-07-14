@@ -355,6 +355,8 @@ async function init() {
     ALTER TABLE leads  ADD COLUMN IF NOT EXISTS crm_ref TEXT;
     CREATE INDEX IF NOT EXISTS idx_leads_crm_ref ON leads(crm_ref);
     ALTER TABLE leads  ADD COLUMN IF NOT EXISTS contato_pendente BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE leads  ADD COLUMN IF NOT EXISTS contato_status TEXT;
+    ALTER TABLE buscas ADD COLUMN IF NOT EXISTS sem_contato INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE config ADD COLUMN IF NOT EXISTS limite_diario INTEGER NOT NULL DEFAULT 350;
     ALTER TABLE config ADD COLUMN IF NOT EXISTS descoberta_modo_padrao TEXT NOT NULL DEFAULT 'cnpja';
     ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS master BOOLEAN NOT NULL DEFAULT false;
@@ -853,6 +855,21 @@ app.get('/api/leads/export', requireAuth, async (req, res) => {
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
+// Leads que precisam de DECISÃO manual (acharam só telefone, sem e-mail).
+// Alimenta o popup do próximo login. DEVE vir antes de /:id.
+app.get('/api/leads/decisao-pendente', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, fantasia, razao, cnpj, cidade, uf, score,
+              contato_validado->>'telefone' AS telefone,
+              contato_validado->>'website'  AS website
+       FROM leads WHERE contato_status='decisao'
+       ORDER BY score DESC, id LIMIT 100`
+    );
+    res.json({ leads: rows, total: rows.length });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
 app.get('/api/leads/:id', requireAuth, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
@@ -883,6 +900,60 @@ app.patch('/api/leads/:id', requireAuth, requireEditor, async (req, res) => {
     if (!l) return res.status(404).json({ erro: 'não encontrado' });
     res.json(l);
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// Resolve a decisão de um lead pendente: enviar mesmo assim / marcar não
+// qualificado / deixar em revisão manual (o usuário vai achar o dado).
+app.post('/api/leads/:id/decisao', requireAuth, requireEditor, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
+  const acao = String(req.body?.acao || '');
+  try {
+    if (acao === 'enviar') {
+      // Envia ao CRM mesmo sem e-mail (decisão do usuário).
+      await pool.query(`UPDATE leads SET contato_status='completo', contato_pendente=false WHERE id=$1`, [id]);
+      if (monitorQueues?.crm) {
+        await monitorQueues.crm.add('crm', { lead_id: id },
+          { jobId: `crm-dec-${id}-${Date.now()}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 4, backoff: { type: 'exponential', delay: 15000 } });
+      }
+      return res.json({ ok: true, acao });
+    }
+    if (acao === 'descartar') {
+      await pool.query(`UPDATE leads SET status='Descartado', contato_status='descartado', contato_pendente=false, atualizado_em=now() WHERE id=$1`, [id]);
+      return res.json({ ok: true, acao });
+    }
+    if (acao === 'manual') {
+      // Sai do popup; fica pra o usuário achar/editar o contato à mão.
+      await pool.query(`UPDATE leads SET contato_status='revisao_manual' WHERE id=$1`, [id]);
+      return res.json({ ok: true, acao });
+    }
+    return res.status(400).json({ erro: 'ação inválida' });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// Edição MANUAL do contato do lead (quando o usuário acha o dado por conta).
+app.patch('/api/leads/:id/contato', requireAuth, requireEditor, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
+  const tel = String(req.body?.telefone || '').replace(/[^\d]/g, '').slice(0, 15) || null;
+  const email = String(req.body?.email || '').trim().slice(0, 160) || null;
+  const website = String(req.body?.website || '').trim().slice(0, 200) || null;
+  try {
+    const { rows: [l] } = await pool.query(`SELECT contato_validado FROM leads WHERE id=$1`, [id]);
+    if (!l) return res.status(404).json({ erro: 'não encontrado' });
+    const cv = { ...(l.contato_validado || {}) };
+    if (tel !== null) { cv.telefone = tel; cv.whatsapp = tel; }
+    if (email !== null) cv.email = email;
+    if (website !== null) cv.website = website;
+    cv.fonte = cv.fonte ? `${cv.fonte}+manual` : 'manual';
+    cv.validado = !!(cv.telefone || cv.email);
+    const completo = !!((cv.telefone || cv.whatsapp) && cv.email);
+    await pool.query(
+      `UPDATE leads SET contato_validado=$2::jsonb, contato_status=$3, contato_pendente=$4, atualizado_em=now() WHERE id=$1`,
+      [id, JSON.stringify(cv), completo ? 'completo' : 'decisao', !completo]
+    );
+    res.json({ ok: true, completo, contato_validado: cv });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
 app.post('/api/leads/acoes', requireAuth, requireEditor, async (req, res) => {

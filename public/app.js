@@ -6534,17 +6534,56 @@ function LeadDetailPanel({
   const [lead, setLead] = useState(null);
   const [displayStatus, setDisplayStatus] = useState(null);
   const [actioning, setActioning] = useState(false);
+  const [editandoContato, setEditandoContato] = useState(false);
+  const [contatoForm, setContatoForm] = useState({
+    telefone: '',
+    email: '',
+    website: ''
+  });
+  const [salvandoContato, setSalvandoContato] = useState(false);
   useEffect(() => {
     if (!leadId) return;
     setLead(null);
     setDisplayStatus(null);
+    setEditandoContato(false);
     fetch('/api/leads/' + leadId, {
       credentials: 'same-origin'
     }).then(r => r.json()).then(l => {
       setLead(l);
       setDisplayStatus(l.status);
+      const cv = l.contato_validado || {};
+      setContatoForm({
+        telefone: cv.telefone || '',
+        email: cv.email || '',
+        website: cv.website || ''
+      });
     }).catch(() => {});
   }, [leadId]);
+  const salvarContato = async () => {
+    setSalvandoContato(true);
+    try {
+      const r = await fetch(`/api/leads/${leadId}/contato`, {
+        method: 'PATCH',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(contatoForm)
+      });
+      const d = await r.json();
+      if (r.ok) {
+        setLead(l => ({
+          ...l,
+          contato_validado: d.contato_validado,
+          contato_pendente: !d.completo
+        }));
+        setEditandoContato(false);
+        onStatusChange && onStatusChange();
+      }
+    } catch (_) {} finally {
+      setSalvandoContato(false);
+    }
+  };
   const patchStatus = async novoStatus => {
     if (actioning) return;
     setActioning(true);
@@ -6913,133 +6952,210 @@ function LeadDetailPanel({
       borderRadius: 10,
       padding: '11px 13px'
     }
-  }, "Decisor n\xE3o identificado no quadro societ\xE1rio \u2014 comum em MEI e empresas com s\xF3cio \xFAnico pessoa jur\xEDdica. Use o contato comercial validado abaixo, quando houver.")), l.contato_validado && (l.contato_validado.telefone || l.contato_validado.email) && /*#__PURE__*/React.createElement("section", {
-    style: {
-      borderTop: '1px solid var(--border)',
-      paddingTop: 18
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 8,
-      marginBottom: 12
-    }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 11,
-      fontWeight: 600,
-      letterSpacing: '.08em',
+  }, "Decisor n\xE3o identificado no quadro societ\xE1rio \u2014 comum em MEI e empresas com s\xF3cio \xFAnico pessoa jur\xEDdica. Use o contato comercial validado abaixo, quando houver.")), (() => {
+    const cvv = l.contato_validado || {};
+    const temContato = !!(cvv.telefone || cvv.email);
+    return /*#__PURE__*/React.createElement("section", {
+      style: {
+        borderTop: '1px solid var(--border)',
+        paddingTop: 18
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        marginBottom: 12
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 11,
+        fontWeight: 600,
+        letterSpacing: '.08em',
+        color: temContato ? C.green : C.red,
+        textTransform: 'uppercase',
+        flex: 1
+      }
+    }, temContato ? 'Contato do decisor · validado' : 'Contato · pendente'), /*#__PURE__*/React.createElement("button", {
+      onClick: () => setEditandoContato(v => !v),
+      style: {
+        height: 26,
+        padding: '0 10px',
+        borderRadius: 7,
+        border: '1px solid var(--border)',
+        background: 'transparent',
+        color: 'var(--dim)',
+        fontSize: 11.5,
+        fontFamily: 'inherit',
+        cursor: 'pointer'
+      }
+    }, editandoContato ? 'Cancelar' : 'Editar')), editandoContato && /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 8,
+        marginBottom: 12,
+        background: 'var(--panel2)',
+        border: '1px solid var(--border)',
+        borderRadius: 11,
+        padding: '12px 13px'
+      }
+    }, [['telefone', 'Telefone / WhatsApp', '(11) 99999-9999'], ['email', 'E-mail', 'contato@empresa.com.br'], ['website', 'Site', 'https://empresa.com.br']].map(([k, lbl, ph]) => /*#__PURE__*/React.createElement("div", {
+      key: k
+    }, /*#__PURE__*/React.createElement("label", {
+      style: {
+        display: 'block',
+        fontSize: 10.5,
+        color: 'var(--faint)',
+        marginBottom: 3
+      }
+    }, lbl), /*#__PURE__*/React.createElement("input", {
+      value: contatoForm[k],
+      onChange: e => setContatoForm(f => ({
+        ...f,
+        [k]: e.target.value
+      })),
+      placeholder: ph,
+      style: {
+        width: '100%',
+        height: 34,
+        borderRadius: 8,
+        border: '1px solid var(--border)',
+        background: 'var(--panel)',
+        color: 'var(--text)',
+        padding: '0 10px',
+        fontSize: 12.5,
+        fontFamily: 'inherit'
+      }
+    }))), /*#__PURE__*/React.createElement("button", {
+      onClick: salvarContato,
+      disabled: salvandoContato,
+      style: {
+        height: 34,
+        borderRadius: 8,
+        border: 'none',
+        background: 'var(--gold)',
+        color: '#0E1936',
+        fontWeight: 600,
+        fontSize: 12.5,
+        fontFamily: 'inherit',
+        cursor: 'pointer',
+        marginTop: 2
+      }
+    }, salvandoContato ? 'Salvando…' : 'Salvar contato')), !temContato && !editandoContato && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        color: 'var(--faint)',
+        lineHeight: 1.5,
+        marginBottom: 12
+      }
+    }, "O enriquecimento n\xE3o achou telefone/e-mail v\xE1lidos. Use \"Editar\" pra inserir manualmente."), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 9
+      }
+    }, l.contato_validado?.telefone && /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 11,
+        background: 'rgba(74,222,128,.08)',
+        border: '1px solid rgba(74,222,128,.25)',
+        borderRadius: 10,
+        padding: '11px 13px'
+      }
+    }, /*#__PURE__*/React.createElement(Svg, {
+      d: "M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.6A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.3 1.8.6 2.6a2 2 0 0 1-.5 2.1L8 9.6a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.5c.8.3 1.7.5 2.6.6a2 2 0 0 1 1.7 2z",
       color: C.green,
-      textTransform: 'uppercase',
-      flex: 1
-    }
-  }, "Contato do decisor \xB7 validado")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 9
-    }
-  }, l.contato_validado.telefone && /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 11,
-      background: 'rgba(74,222,128,.08)',
-      border: '1px solid rgba(74,222,128,.25)',
-      borderRadius: 10,
-      padding: '11px 13px'
-    }
-  }, /*#__PURE__*/React.createElement(Svg, {
-    d: "M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.6A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.3 1.8.6 2.6a2 2 0 0 1-.5 2.1L8 9.6a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.5c.8.3 1.7.5 2.6.6a2 2 0 0 1 1.7 2z",
-    color: C.green,
-    w: 16,
-    h: 16,
-    sw: 1.8
-  }), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 13.5,
-      flex: 1
-    }
-  }, l.contato_validado.telefone), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 10,
-      fontWeight: 600,
-      color: C.green
-    }
-  }, "\u2713 validado")), l.contato_validado.email && /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 11,
-      background: 'rgba(74,222,128,.08)',
-      border: '1px solid rgba(74,222,128,.25)',
-      borderRadius: 10,
-      padding: '11px 13px'
-    }
-  }, /*#__PURE__*/React.createElement(Svg, {
-    d: "M3 5h18v14H3zM3 7l9 6 9-6",
-    color: C.green,
-    w: 16,
-    h: 16,
-    sw: 1.8
-  }), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 13.5,
-      flex: 1,
-      wordBreak: 'break-all'
-    }
-  }, l.contato_validado.email), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 10,
-      fontWeight: 600,
-      color: C.green
-    }
-  }, "\u2713 validado")), l.contato_validado.website && /*#__PURE__*/React.createElement("a", {
-    href: l.contato_validado.website,
-    target: "_blank",
-    rel: "noopener noreferrer",
-    style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 11,
-      background: 'var(--panel2)',
-      border: '1px solid var(--border)',
-      borderRadius: 10,
-      padding: '11px 13px',
-      textDecoration: 'none'
-    }
-  }, /*#__PURE__*/React.createElement(Svg, {
-    d: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18M3 12h18",
-    color: "var(--dim)",
-    w: 16,
-    h: 16,
-    sw: 1.8
-  }), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 13,
-      flex: 1,
-      color: 'var(--text)',
-      wordBreak: 'break-all'
-    }
-  }, l.contato_validado.website)), l.contato_validado.resumo_site && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      color: 'var(--dim)',
-      lineHeight: 1.5,
-      background: 'var(--panel2)',
-      borderRadius: 10,
-      padding: '10px 13px',
-      fontStyle: 'italic'
-    }
-  }, "\"", l.contato_validado.resumo_site, "\"", /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 10,
-      color: 'var(--faint)',
-      marginTop: 5,
-      fontStyle: 'normal'
-    }
-  }, "Extra\xEDdo do site \u2014 usado como contexto pelo agente SWOT")))), contatos.length > 0 && /*#__PURE__*/React.createElement("section", {
+      w: 16,
+      h: 16,
+      sw: 1.8
+    }), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 13.5,
+        flex: 1
+      }
+    }, l.contato_validado.telefone), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10,
+        fontWeight: 600,
+        color: C.green
+      }
+    }, "\u2713 validado")), l.contato_validado?.email && /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 11,
+        background: 'rgba(74,222,128,.08)',
+        border: '1px solid rgba(74,222,128,.25)',
+        borderRadius: 10,
+        padding: '11px 13px'
+      }
+    }, /*#__PURE__*/React.createElement(Svg, {
+      d: "M3 5h18v14H3zM3 7l9 6 9-6",
+      color: C.green,
+      w: 16,
+      h: 16,
+      sw: 1.8
+    }), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 13.5,
+        flex: 1,
+        wordBreak: 'break-all'
+      }
+    }, l.contato_validado.email), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10,
+        fontWeight: 600,
+        color: C.green
+      }
+    }, "\u2713 validado")), l.contato_validado?.website && /*#__PURE__*/React.createElement("a", {
+      href: l.contato_validado.website,
+      target: "_blank",
+      rel: "noopener noreferrer",
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 11,
+        background: 'var(--panel2)',
+        border: '1px solid var(--border)',
+        borderRadius: 10,
+        padding: '11px 13px',
+        textDecoration: 'none'
+      }
+    }, /*#__PURE__*/React.createElement(Svg, {
+      d: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18M3 12h18",
+      color: "var(--dim)",
+      w: 16,
+      h: 16,
+      sw: 1.8
+    }), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 13,
+        flex: 1,
+        color: 'var(--text)',
+        wordBreak: 'break-all'
+      }
+    }, l.contato_validado.website)), l.contato_validado?.resumo_site && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        color: 'var(--dim)',
+        lineHeight: 1.5,
+        background: 'var(--panel2)',
+        borderRadius: 10,
+        padding: '10px 13px',
+        fontStyle: 'italic'
+      }
+    }, "\"", l.contato_validado.resumo_site, "\"", /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 10,
+        color: 'var(--faint)',
+        marginTop: 5,
+        fontStyle: 'normal'
+      }
+    }, "Extra\xEDdo do site \u2014 usado como contexto pelo agente SWOT"))));
+  })(), contatos.length > 0 && /*#__PURE__*/React.createElement("section", {
     style: {
       borderTop: '1px solid var(--border)',
       paddingTop: 18
@@ -7564,11 +7680,19 @@ function App() {
   const [buscaDetailId, setBuscaDetailId] = useState(null);
   const [user, setUser] = useState(null);
   const [leadsRefreshKey, setLeadsRefreshKey] = useState(0);
+  const [decisao, setDecisao] = useState(null); // leads aguardando decisão manual
+
   useEffect(() => {
     fetch('/api/auth/me', {
       credentials: 'same-origin'
     }).then(r => r.ok ? r.json() : null).then(u => {
       if (u) setUser(u);
+    }).catch(() => {});
+    // Popup do próximo login: leads que acharam só telefone (sem e-mail).
+    fetch('/api/leads/decisao-pendente', {
+      credentials: 'same-origin'
+    }).then(r => r.ok ? r.json() : null).then(d => {
+      if (d?.leads?.length) setDecisao(d.leads);
     }).catch(() => {});
   }, []);
   const navTo = s => {
@@ -7708,7 +7832,201 @@ function App() {
       setCrmIds(null);
       setLeadsRefreshKey(k => k + 1);
     }
+  }), decisao && decisao.length > 0 && /*#__PURE__*/React.createElement(DecisaoModal, {
+    leads: decisao,
+    onClose: () => setDecisao(null),
+    onAbrirLead: id => {
+      setDecisao(null);
+      setOpenLeadId(id);
+    },
+    onResolvido: () => setLeadsRefreshKey(k => k + 1)
   }));
+}
+
+// Popup do próximo login: leads que acharam SÓ telefone (sem e-mail). Para cada
+// um: enviar mesmo assim ao CRM / achar manualmente / marcar não qualificado.
+function DecisaoModal({
+  leads,
+  onClose,
+  onAbrirLead,
+  onResolvido
+}) {
+  const [lista, setLista] = useState(leads);
+  const [busy, setBusy] = useState(null);
+  const resolver = async (id, acao) => {
+    setBusy(id);
+    try {
+      await fetch(`/api/leads/${id}/decisao`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          acao
+        })
+      });
+      onResolvido && onResolvido();
+      const resto = lista.filter(l => l.id !== id);
+      setLista(resto);
+      if (!resto.length) onClose();
+    } catch (_) {} finally {
+      setBusy(null);
+    }
+  };
+  const acharManual = async id => {
+    try {
+      await fetch(`/api/leads/${id}/decisao`, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          acao: 'manual'
+        })
+      });
+    } catch (_) {}
+    onResolvido && onResolvido();
+    onAbrirLead(id); // abre o lead pra editar o contato à mão
+  };
+  const btn = (cor, bg) => ({
+    height: 32,
+    padding: '0 12px',
+    borderRadius: 8,
+    border: `1px solid ${cor}`,
+    background: bg || 'transparent',
+    color: bg ? '#0E1936' : cor,
+    fontSize: 12,
+    fontFamily: 'inherit',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap'
+  });
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'fixed',
+      inset: 0,
+      zIndex: 95,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 20
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    onClick: onClose,
+    style: {
+      position: 'absolute',
+      inset: 0,
+      background: 'rgba(5,9,20,.6)'
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'relative',
+      width: 640,
+      maxWidth: '96vw',
+      maxHeight: '86vh',
+      overflowY: 'auto',
+      background: 'var(--panel)',
+      border: '1px solid var(--border)',
+      borderRadius: 16,
+      padding: '22px 24px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'flex-start',
+      gap: 12,
+      marginBottom: 6
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1
+    }
+  }, /*#__PURE__*/React.createElement("h2", {
+    style: {
+      fontSize: 17,
+      fontWeight: 600,
+      margin: 0
+    }
+  }, "Leads aguardando decis\xE3o"), /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 12.5,
+      color: 'var(--faint)',
+      margin: '4px 0 0',
+      lineHeight: 1.5
+    }
+  }, "Estes leads t\xEAm telefone mas o enriquecimento n\xE3o achou e-mail. Escolha o que fazer com cada um.")), /*#__PURE__*/React.createElement("button", {
+    onClick: onClose,
+    style: {
+      width: 30,
+      height: 30,
+      borderRadius: 8,
+      border: '1px solid var(--border)',
+      background: 'transparent',
+      color: 'var(--dim)',
+      cursor: 'pointer',
+      fontSize: 15
+    }
+  }, "\u2715")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 10,
+      marginTop: 14
+    }
+  }, lista.map(l => /*#__PURE__*/React.createElement("div", {
+    key: l.id,
+    style: {
+      border: '1px solid var(--border)',
+      borderRadius: 11,
+      padding: '12px 14px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      marginBottom: 9
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13.5,
+      fontWeight: 600,
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis'
+    }
+  }, l.fantasia || l.razao), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--faint)'
+    }
+  }, l.cidade, "/", l.uf, " \xB7 tel ", l.telefone || '—', " \xB7 sem e-mail")), /*#__PURE__*/React.createElement("span", {
+    style: badgeStyle(C.gold)
+  }, "score ", l.score)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    disabled: busy === l.id,
+    onClick: () => resolver(l.id, 'enviar'),
+    style: btn(C.gold, C.gold)
+  }, "Enviar assim mesmo"), /*#__PURE__*/React.createElement("button", {
+    disabled: busy === l.id,
+    onClick: () => acharManual(l.id),
+    style: btn('var(--border)')
+  }, "Achar manualmente"), /*#__PURE__*/React.createElement("button", {
+    disabled: busy === l.id,
+    onClick: () => resolver(l.id, 'descartar'),
+    style: btn(C.red)
+  }, "N\xE3o qualificado")))))));
 }
 ReactDOM.createRoot(document.getElementById('root')).render(/*#__PURE__*/React.createElement(App, null));
 
