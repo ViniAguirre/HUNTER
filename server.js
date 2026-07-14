@@ -917,6 +917,10 @@ app.post('/api/leads/acoes', requireAuth, requireEditor, async (req, res) => {
       // Zera o contato web em cache pra forçar uma busca fresca (pega o provedor atual).
       if (cnpjs.length) await pool.query(
         `UPDATE empresas SET contatos_verificados='[]'::jsonb WHERE cnpj = ANY($1::text[])`, [cnpjs]);
+      // Limpa o contato/pendência antigos do lead pra o resultado refletir só a
+      // busca nova (senão dado errado anterior fica "grudado" se a nova não achar).
+      await pool.query(
+        `UPDATE leads SET contato_validado=NULL, contato_pendente=false WHERE id = ANY($1::int[])`, [idsInt]);
       await Promise.all(rows.map(r =>
         monitorQueues.validacao.add('validacao', { cnpj: r.cnpj, busca_id: r.busca_id, lead_id: r.id },
           { jobId: `reval-${r.id}-${Date.now()}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 2, backoff: { type: 'exponential', delay: 10000 } })

@@ -115,6 +115,10 @@ module.exports = async function validacao(job, pool, queues) {
           [cnpj, JSON.stringify({ telefone: c.telefone, email: c.email, website: c.website || null, fonte: c.fonte })]
         );
       }
+    } else if (tentativa >= MAX_TENT_CONTATO) {
+      // Esgotou as tentativas sem achar contato bom: LIMPA o que estava lá pra
+      // não ficar mostrando dado antigo/errado (ex.: site de diretório anterior).
+      await pool.query(`UPDATE leads SET contato_validado=NULL WHERE id=$1`, [lead_id]);
     }
 
     // Regra do WhatsApp: SEM telefone/WhatsApp, o lead NÃO vai ao CRM automático.

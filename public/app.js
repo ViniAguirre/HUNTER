@@ -1670,6 +1670,7 @@ function secaoLeadHtml(l) {
 
   ${sw.resumo || sw.swot ? `<h3>Análise SWOT · briefing</h3>
     ${sw.resumo ? `<p>${esc(sw.resumo)}</p>` : ''}
+    ${Array.isArray(sw.fatos_uteis) && sw.fatos_uteis.length ? `<div class="q"><h4>Fatos úteis pro contato</h4>${listaHtml(sw.fatos_uteis)}</div>` : ''}
     ${Array.isArray(sw.dores_provaveis) && sw.dores_provaveis.length ? `<div class="q"><h4>Dores prováveis</h4>${listaHtml(sw.dores_provaveis)}</div>` : ''}
     <div class="swot" style="margin-top:12px">
       ${quad('Forças', sw.swot?.forcas)}${quad('Fraquezas', sw.swot?.fraquezas)}
@@ -7120,7 +7121,34 @@ function LeadDetailPanel({
       margin: '0 0 14px',
       color: 'var(--text)'
     }
-  }, l.swot.resumo), Array.isArray(l.swot.dores_provaveis) && l.swot.dores_provaveis.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, l.swot.resumo), Array.isArray(l.swot.fatos_uteis) && l.swot.fatos_uteis.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'color-mix(in srgb, ' + C.green + ' 9%, transparent)',
+      border: '1px solid color-mix(in srgb, ' + C.green + ' 28%, transparent)',
+      borderRadius: 11,
+      padding: '12px 14px',
+      marginBottom: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10.5,
+      fontWeight: 600,
+      color: C.green,
+      marginBottom: 6,
+      textTransform: 'uppercase',
+      letterSpacing: '.06em'
+    }
+  }, "Fatos \xFAteis pro contato"), /*#__PURE__*/React.createElement("ul", {
+    style: {
+      margin: 0,
+      padding: '0 0 0 16px',
+      fontSize: 12.5,
+      lineHeight: 1.6,
+      color: 'var(--text)'
+    }
+  }, l.swot.fatos_uteis.map((f, i) => /*#__PURE__*/React.createElement("li", {
+    key: i
+  }, f)))), Array.isArray(l.swot.dores_provaveis) && l.swot.dores_provaveis.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'color-mix(in srgb, ' + C.amber + ' 9%, transparent)',
       border: '1px solid color-mix(in srgb, ' + C.amber + ' 28%, transparent)',
@@ -7214,7 +7242,7 @@ function LeadDetailPanel({
       marginTop: 12
     }
   }, /*#__PURE__*/React.createElement("button", {
-    onClick: () => navigator.clipboard?.writeText([l.swot.resumo, l.swot.dores_provaveis?.length ? 'Dores prováveis:\n- ' + l.swot.dores_provaveis.join('\n- ') : '', l.swot.sinal_comercial || l.swot.gancho ? 'Sinal comercial: ' + (l.swot.sinal_comercial || l.swot.gancho) : ''].filter(Boolean).join('\n\n')).catch(() => {}),
+    onClick: () => navigator.clipboard?.writeText([l.swot.resumo, l.swot.fatos_uteis?.length ? 'Fatos úteis:\n- ' + l.swot.fatos_uteis.join('\n- ') : '', l.swot.dores_provaveis?.length ? 'Dores prováveis:\n- ' + l.swot.dores_provaveis.join('\n- ') : '', l.swot.sinal_comercial || l.swot.gancho ? 'Sinal comercial: ' + (l.swot.sinal_comercial || l.swot.gancho) : ''].filter(Boolean).join('\n\n')).catch(() => {}),
     style: {
       display: 'flex',
       alignItems: 'center',

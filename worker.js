@@ -91,7 +91,7 @@ async function runScheduler() {
 
 // Marca a versão + hora de boot do worker (pra confirmar, sem adivinhação, se o
 // deploy pegou a imagem nova). Bump WORKER_VERSAO a cada mudança relevante aqui.
-const WORKER_VERSAO = 'qualidade-contato-2026-07-14';
+const WORKER_VERSAO = 'site-proprio-swot-2026-07-14b';
 async function registrarBoot() {
   try {
     await pool.query(`CREATE TABLE IF NOT EXISTS motor_status (id int PRIMARY KEY, worker_boot timestamptz, worker_versao text)`);

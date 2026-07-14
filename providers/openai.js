@@ -52,16 +52,18 @@ function extrairJson(txt) {
 
 const SYSTEM = `Você é um analista de inteligência comercial B2B brasileiro. A partir dos dados de
 uma empresa-alvo (firmografia da Receita, por que ela deu match no perfil buscado, e o que o site
-dela diz sobre si) e do que NÓS vendemos, produz um briefing ANALÍTICO para o closer conhecer essa
-empresa antes de abordá-la. Regras:
-(1) Você entrega DADOS E ANÁLISE, não uma mensagem pronta. Nada de frases de abertura ou roteiro de
-    conversa — isso é formulado depois, no CRM. Seu papel é técnico: organizar o que se sabe.
-(2) O SWOT é sob a ÓTICA DA NOSSA VENDA: "oportunidades" e "ameaças" tratam de onde a nossa solução
+dela diz sobre si) e do que NÓS vendemos, produz um briefing para MUNICIAR o vendedor/closer com
+DADOS ÚTEIS sobre a empresa antes de ele fazer o contato. Regras:
+(1) Foco em FATOS ÚTEIS e ESPECÍFICOS desta empresa que ajudem na conversa: o que ela vende/faz,
+    marcas/produtos que trabalha, região que atende, porte/estrutura, tempo de mercado, sinais de
+    maturidade digital, diferenciais e possíveis gargalos. Extraia o máximo do texto do site.
+(2) Você entrega DADOS E ANÁLISE, NÃO uma mensagem pronta nem roteiro de conversa (isso é feito no
+    CRM). Nada de "diga que…", "comece com…". Entregue o que o vendedor precisa SABER, não o que dizer.
+(3) O SWOT é sob a ÓTICA DA NOSSA VENDA: "oportunidades" e "ameaças" tratam de onde a nossa solução
     encaixa (ou o que atrapalha o fechamento), não macroeconomia genérica.
-(3) NÃO invente fatos que os dados não sustentam. Se a base for rala, trabalhe com o provável e não
-    afirme como certo. Prefira "provavelmente/tende a" a inventar números ou clientes.
-(4) Seja concreto e ESPECÍFICO desta empresa (use o texto do site e o motivo do match quando houver);
-    evite frases de efeito.
+(4) NÃO invente. Se a base for rala (sem texto de site), diga menos e marque como provável — nunca
+    invente números, clientes, marcas ou fatos. Prefira "provavelmente/tende a" a afirmar sem base.
+(5) Seja CONCRETO — evite frases de efeito e generalidades que serviriam pra qualquer empresa.
 Responda SEMPRE em português do Brasil e SOMENTE com um JSON válido no formato pedido.`;
 
 function montarPrompt(empresa, contexto, perfilEmpresa) {
@@ -94,17 +96,18 @@ function montarPrompt(empresa, contexto, perfilEmpresa) {
     (motivoMatch ? `\nPor que essa empresa deu match no perfil buscado (Score ${perfilEmpresa?.score ?? '—'}/100):\n${motivoMatch}\n` : '') +
     (resumoSite ? `\nO que o site oficial da empresa diz sobre ela mesma:\n"${resumoSite}"\n` : '') +
     (ctx ? `\nContexto do que estamos vendendo / ICP:\n${ctx}\n` : '') +
-    `\nProduza o briefing no formato JSON (todas as listas com 2 a 4 itens curtos):
+    `\nProduza o briefing no formato JSON (listas com 2 a 4 itens curtos e específicos):
 {
-  "resumo": "2-3 frases: o que a empresa faz (use o que o site diz, se houver), porte, maturidade e por que ela deu match",
-  "dores_provaveis": ["dores/desafios que uma empresa deste tipo provavelmente enfrenta e que o que vendemos ajuda a resolver"],
+  "resumo": "2-3 frases CONCRETAS: o que a empresa faz/vende (use o texto do site), região que atende, porte, tempo de mercado e por que deu match. Nada genérico.",
+  "fatos_uteis": ["fatos ESPECÍFICOS desta empresa que o vendedor pode usar na conversa: marcas/produtos que trabalha, serviços, área de atuação, diferencial, canais, sinais do site. Só o que os dados sustentam."],
+  "dores_provaveis": ["dores/desafios prováveis dessa empresa que o que NÓS vendemos ajuda a resolver"],
   "swot": {
-    "forcas": ["forças da empresa relevantes pra decisão de compra"],
+    "forcas": ["forças relevantes pra decisão de compra"],
     "fraquezas": ["fraquezas/lacunas que a nossa solução endereça"],
     "oportunidades": ["onde a nossa solução gera ganho concreto pra ela"],
-    "ameacas": ["objeções ou obstáculos prováveis ao fechamento (ex.: já ter fornecedor, orçamento, momento)"]
+    "ameacas": ["objeções/obstáculos prováveis ao fechamento (já ter fornecedor, orçamento, momento)"]
   },
-  "sinal_comercial": "1-2 frases: o dado/contexto mais relevante pra CONHECER antes de abordar (timing, maturidade, característica que muda a abordagem) — um INSIGHT, não uma frase para dizer ao cliente"
+  "sinal_comercial": "1-2 frases: o dado/contexto mais relevante pra CONHECER antes de abordar (timing, maturidade, característica que muda a abordagem) — um INSIGHT, não uma frase pra dizer ao cliente"
 }`;
 }
 
@@ -133,6 +136,7 @@ async function gerarSwot(empresa, { apiKey, modelo, contexto, perfilEmpresa, pro
     const parsed = extrairJson(txt);
     return {
       resumo: parsed.resumo || '',
+      fatos_uteis: arr(parsed.fatos_uteis),
       dores_provaveis: arr(parsed.dores_provaveis),
       swot: {
         forcas: arr(parsed.swot?.forcas),

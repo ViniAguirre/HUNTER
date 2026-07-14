@@ -86,14 +86,31 @@ function tokensNome(nome) {
   return semAcento(String(nome || '').toLowerCase()).replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/).filter(t => t.length >= 4 && !NOME_STOP.has(t));
 }
-// O site achado parece ser DA empresa? Exige que ao menos um token distintivo do
-// nome apareça no domínio, título ou conteúdo. Evita casar com prefeitura, blog
-// aleatório ou homônimo. Nome genérico demais (sem token) → não barra (lenient).
-function pareceDaEmpresa(nome, { site, titulo, conteudo }) {
-  const toks = tokensNome(nome);
+function hostDe(u) { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } }
+
+// O site é DA PRÓPRIA empresa? Sinal forte: um token distintivo do nome aparece
+// no DOMÍNIO (fitpurificadores.com.br, casadospurificadores.com…). Diretórios
+// que listam a empresa (applocal, eguias, todosnegocios, raizlegal, encontra…)
+// não têm o nome no domínio → caem fora. Exclui o nome da cidade dos tokens
+// (senão "encontrasorocaba" casaria com "…de Sorocaba"). Sem token distintivo
+// → não dá pra checar → lenient (não barra).
+function siteDaEmpresa(nome, cidade, host) {
+  const stopCidade = new Set(semAcento(String(cidade || '').toLowerCase()).split(/\s+/).filter(Boolean));
+  const toks = tokensNome(nome).filter(t => !stopCidade.has(t));
   if (!toks.length) return true;
-  const alvo = semAcento(((site || '') + ' ' + (titulo || '') + ' ' + (conteudo || '')).toLowerCase());
-  return toks.some(t => alvo.includes(t));
+  const h = semAcento(String(host || '').toLowerCase()).replace(/[^a-z0-9]/g, '');
+  return toks.some(t => h.includes(t));
+}
+
+// Página com "cara" de diretório/agregador (consulta de CNPJ, guia de empresas,
+// lista telefônica…) — mesmo que cite a empresa, não é o site dela.
+const DIRETORIO_FRASES = ['guia mais completo', 'lista telefonica', 'encontre empresas', 'encontre prestadores',
+  'prestadores de servicos', 'consulte cnpj', 'quadros societarios', 'inteligencia de mercado',
+  'cadastre sua empresa', 'cadastre seu negocio', 'todos os negocios', 'anuncie gratis', 'guia comercial',
+  'guia de empresas', 'histórico de empresas', 'historico de empresas'].map(semAcento);
+function pareceDiretorio(txt) {
+  const t = semAcento(String(txt || '').toLowerCase());
+  return DIRETORIO_FRASES.some(f => t.includes(f));
 }
 
 // Links internos (mesmo domínio) cujo texto ou caminho batem com as palavras.
@@ -270,30 +287,31 @@ async function buscarEmpresasWeb(termo, cidade, uf, max = 30, opts = {}) {
 async function buscarContatoGratis(nome, cidade, uf, opts = {}) {
   const agora = new Date().toISOString();
   const r = await buscarResultados([nome, cidade, uf].filter(Boolean).join(' '), opts);
-  const primeiro = r[0];
-  if (!primeiro) return { encontrado: false, fonte: 'busca_gratis', validado: false, validado_em: agora };
-  const site = primeiro.site;
-  const s = await scrapeSite(site);
-  const resumo = s.resumo || primeiro.conteudo || null;
-  const resumoFonte = s.resumo ? s.resumo_fonte : (primeiro.conteudo ? 'busca' : null);
-  // Precisão: confirma que o site é REALMENTE da empresa (nome bate no domínio/
-  // título/conteúdo). Senão, não valida contato de site errado (prefeitura, blog,
-  // homônimo). Antes isso deixava passar, por ex., o site da prefeitura da cidade.
-  if (!pareceDaEmpresa(nome, { site, titulo: primeiro.titulo, conteudo: resumo })) {
-    return { encontrado: false, fonte: 'busca_gratis', validado: false, validado_em: agora, motivo: 'site_nao_confere' };
+  // Só considera resultados cujo DOMÍNIO parece ser da própria empresa — descarta
+  // diretórios/agregadores que citam a empresa mas não são ela. Varre até 3
+  // candidatos (o site real às vezes não é o 1º resultado).
+  const candidatos = r.filter(x => siteDaEmpresa(nome, cidade, hostDe(x.site))).slice(0, 3);
+  for (const cand of candidatos) {
+    const s = await scrapeSite(cand.site);
+    const resumo = s.resumo || cand.conteudo || null;
+    // Reforço: se a página se descreve como diretório/consulta de CNPJ, pula.
+    if (pareceDiretorio(resumo) || pareceDiretorio(cand.titulo)) continue;
+    return {
+      encontrado: true,
+      telefone: s.telefone || null,
+      whatsapp: s.telefone || null,
+      website: cand.site,
+      email: s.email || null,
+      resumo_site: resumo,
+      resumo_fonte: s.resumo ? s.resumo_fonte : (cand.conteudo ? 'busca' : null),
+      fonte: 'busca_gratis',
+      validado: !!(s.email || s.telefone || resumo),
+      validado_em: agora,
+    };
   }
-  return {
-    encontrado: true,
-    telefone: s.telefone || null,
-    whatsapp: s.telefone || null,
-    website: site,
-    email: s.email || null,
-    resumo_site: resumo,
-    resumo_fonte: resumoFonte,
-    fonte: 'busca_gratis',
-    validado: !!(s.email || s.telefone || resumo),
-    validado_em: agora,
-  };
+  // Nenhum resultado parece ser o site próprio da empresa → melhor não trazer
+  // dado nenhum (fica vermelho "sem contato") do que trazer contato errado.
+  return { encontrado: false, fonte: 'busca_gratis', validado: false, validado_em: agora, motivo: 'sem_site_proprio' };
 }
 
 // Busca o contato comercial da empresa no Google. Retorna também business_status
