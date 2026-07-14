@@ -2193,9 +2193,22 @@ function Leads({
     }), /*#__PURE__*/React.createElement(ContactCell, {
       emailVal: l.email_valor,
       phoneVal: l.telefone_valor
-    }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
+    }), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 4,
+        alignItems: 'flex-start'
+      }
+    }, /*#__PURE__*/React.createElement("span", {
       style: badgeStyle(statusColors[l.status] || C.gray)
-    }, l.status)));
+    }, l.status), l.contato_pendente && /*#__PURE__*/React.createElement("span", {
+      title: "Sem WhatsApp/telefone \u2014 n\xE3o enviado ao CRM automaticamente",
+      style: {
+        ...badgeStyle(C.red),
+        whiteSpace: 'nowrap'
+      }
+    }, "sem contato")));
   })), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',

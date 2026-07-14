@@ -57,11 +57,20 @@ module.exports = async function swot(job, pool, queues) {
   }
   // Sem chave IA: o lead segue 'scored' (sem gasto). Mesmo assim pode ir ao CRM.
 
-  // Envio automático ao CRM, se a busca OU a config global pedir.
-  if (crmAuto && queues?.crm) {
+  // Gate de WhatsApp: envio AUTOMÁTICO ao CRM só acontece se houver telefone/
+  // WhatsApp validado. Sem isso, o lead fica pendente (vermelho) pra decisão
+  // manual — o envio manual pela triagem continua liberado.
+  let contatoOk = job.data.contato_ok;
+  if (contatoOk === undefined) {
+    const { rows: [l] } = await pool.query(`SELECT contato_validado FROM leads WHERE id=$1`, [lead_id]);
+    const cv = l?.contato_validado || {};
+    contatoOk = !!(cv.whatsapp || cv.telefone);
+  }
+
+  if (crmAuto && contatoOk && queues?.crm) {
     await queues.crm.add('crm', { lead_id },
       { jobId: `crm-${lead_id}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 4, backoff: { type: 'exponential', delay: 15000 } });
   }
 
-  return { cnpj, lead_id, swot: igs.length > 0, crm_auto: crmAuto };
+  return { cnpj, lead_id, swot: igs.length > 0, crm_auto: crmAuto, contato_ok: contatoOk };
 };

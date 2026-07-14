@@ -8,6 +8,8 @@
 const contato = require('../providers/contato');
 const google = require('../providers/google');
 
+const MAX_TENT_CONTATO = 2;   // até +2 tentativas de enriquecimento se faltar WhatsApp
+
 // Chave da busca web (Tavily), se houver integração ativa. Grátis por padrão.
 async function chaveBuscaWeb(pool) {
   try {
@@ -43,10 +45,14 @@ module.exports = async function validacao(job, pool, queues) {
     const nome = emp?.fantasia || emp?.razao || '';
 
     let c = null;
+    const tentativa = job.data.tentativa_contato || 0;
+    // Nas retentativas, força busca FRESCA (não reaproveita cache) — a ideia é
+    // justamente tentar de novo achar o contato que faltou.
+    const forcarFresco = tentativa > 0;
 
     // 0) Descoberta WEB-FIRST já extraiu site/contato/resumo — reaproveita (sem re-buscar).
     const cvWeb = emp?.contatos_verificados;
-    if (cvWeb && cvWeb.fonte === 'web' && (cvWeb.email || cvWeb.telefone || cvWeb.resumo_site)) {
+    if (!forcarFresco && cvWeb && cvWeb.fonte === 'web' && (cvWeb.email || cvWeb.telefone || cvWeb.resumo_site)) {
       c = {
         telefone: cvWeb.telefone || null, whatsapp: cvWeb.telefone || null,
         email: cvWeb.email || null, website: cvWeb.website || null,
@@ -92,32 +98,45 @@ module.exports = async function validacao(job, pool, queues) {
       }
     }
 
-    if (!c) {
-      // Nada encontrado (nem grátis): segue pro SWOT só com firmografia.
-      await seguirParaSwot(queues, { cnpj, busca_id, lead_id });
-      return { skipped: 'sem_contato', lead_id };
-    }
-
-    // Cruzamento com a Receita: telefone comercial confirma/substitui o do contador.
-    const cr = emp?.contato_receita || {};
-    const telReceita = (Array.isArray(cr.telefones) && cr.telefones[0] || '').replace(/\D/g, '');
-    c.confere_receita = !!(c.telefone && telReceita && c.telefone.includes(telReceita.slice(-8)));
-
-    await pool.query(
-      `UPDATE leads SET contato_validado=$2::jsonb, atualizado_em=now() WHERE id=$1`,
-      [lead_id, JSON.stringify(c)]
-    );
-    if (c.validado) {
+    // IMPORTANTE: o contato comercial (telefone/e-mail/site) SÓ vem de fontes
+    // comerciais (site da empresa / Places / Econodata) — NUNCA da Receita/CNPJá
+    // (aquilo é o contato do contador). `contato_receita` é usado só pra CONFERIR.
+    if (c) {
+      const cr = emp?.contato_receita || {};
+      const telReceita = (Array.isArray(cr.telefones) && cr.telefones[0] || '').replace(/\D/g, '');
+      c.confere_receita = !!(c.telefone && telReceita && c.telefone.includes(telReceita.slice(-8)));
       await pool.query(
-        `UPDATE empresas SET contatos_verificados=$2::jsonb WHERE cnpj=$1`,
-        [cnpj, JSON.stringify({ telefone: c.telefone, email: c.email, website: c.website || null, fonte: c.fonte })]
+        `UPDATE leads SET contato_validado=$2::jsonb, atualizado_em=now() WHERE id=$1`,
+        [lead_id, JSON.stringify(c)]
       );
+      if (c.validado) {
+        await pool.query(
+          `UPDATE empresas SET contatos_verificados=$2::jsonb WHERE cnpj=$1`,
+          [cnpj, JSON.stringify({ telefone: c.telefone, email: c.email, website: c.website || null, fonte: c.fonte })]
+        );
+      }
     }
-    await seguirParaSwot(queues, { cnpj, busca_id, lead_id });
-    return { lead_id, validado: c.validado, fonte: c.fonte };
+
+    // Regra do WhatsApp: SEM telefone/WhatsApp, o lead NÃO vai ao CRM automático.
+    // Entra em "qualificação": até +2 tentativas de enriquecer. Se achar, segue
+    // normal; se esgotar, marca contato_pendente (vermelho na lista) e segue pro
+    // SWOT sem enviar ao CRM — pra você ver quais ficaram sem contato e decidir.
+    const temWhatsapp = !!(c && (c.whatsapp || c.telefone));
+    if (!temWhatsapp && tentativa < MAX_TENT_CONTATO && queues?.validacao) {
+      await queues.validacao.add('validacao',
+        { cnpj, busca_id, lead_id, tentativa_contato: tentativa + 1 },
+        { delay: 3 * 60 * 1000, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 2, backoff: { type: 'exponential', delay: 10000 } });
+      return { lead_id, retry: tentativa + 1, motivo: 'sem_whatsapp' };
+    }
+
+    const contatoPendente = !temWhatsapp;
+    await pool.query(`UPDATE leads SET contato_pendente=$2 WHERE id=$1`, [lead_id, contatoPendente]);
+    await seguirParaSwot(queues, { cnpj, busca_id, lead_id, contato_ok: temWhatsapp });
+    return { lead_id, validado: !!c?.validado, tem_whatsapp: temWhatsapp, contato_pendente: contatoPendente };
   } catch (err) {
-    // Erro não trava o pipeline: segue pro SWOT sem contato.
-    await seguirParaSwot(queues, { cnpj, busca_id, lead_id });
+    // Erro não trava o pipeline: segue pro SWOT sem contato (marca pendência).
+    try { await pool.query(`UPDATE leads SET contato_pendente=true WHERE id=$1`, [lead_id]); } catch (_) {}
+    await seguirParaSwot(queues, { cnpj, busca_id, lead_id, contato_ok: false });
     return { lead_id, erro: err.message };
   }
 };

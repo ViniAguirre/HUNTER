@@ -57,9 +57,43 @@ function resumoDe(html, maxParag) {
   return uniq.join(' ').trim() || titulo(html) || null;
 }
 
+// Domínio de governo/institucional (prefeitura, tribunal, etc.) — NUNCA é o site
+// comercial de uma empresa B2B. Cobre .gov.br, .go.gov.br (municipal), .jus.br,
+// .leg.br, .mil.br e .gov estrangeiro.
+function dominioInstitucional(host) {
+  const h = String(host || '').toLowerCase();
+  return /\.(gov|jus|leg|mil)\.br$/.test(h) || /\.gov$/.test(h) || h === 'gov.br';
+}
+function emailInstitucional(email) {
+  const dom = (String(email).split('@')[1] || '').toLowerCase();
+  return dominioInstitucional(dom);
+}
+
 function extrairEmailDe(html) {
   const achados = html.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g) || [];
-  return achados.find(e => !/(example|sentry|wixpress|godaddy|\.png|\.jpg|\.gif|\.webp|@2x)/i.test(e)) || null;
+  // Descarta e-mails de imagem/placeholder E e-mails .gov/institucionais (a busca
+  // é sobre EMPRESAS; contato de prefeitura/órgão público nunca é o alvo).
+  return achados.find(e =>
+    !/(example|sentry|wixpress|godaddy|\.png|\.jpg|\.gif|\.webp|@2x)/i.test(e) && !emailInstitucional(e)
+  ) || null;
+}
+
+// Tokens distintivos do nome da empresa (sem sufixos jurídicos e termos genéricos),
+// pra checar se um site achado é REALMENTE dela.
+const NOME_STOP = new Set(['ltda','me','epp','eireli','mei','cia','sa','comercio','comercial','servicos',
+  'servico','industria','industrias','the','and','das','dos','representacoes','distribuidora']);
+function tokensNome(nome) {
+  return semAcento(String(nome || '').toLowerCase()).replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/).filter(t => t.length >= 4 && !NOME_STOP.has(t));
+}
+// O site achado parece ser DA empresa? Exige que ao menos um token distintivo do
+// nome apareça no domínio, título ou conteúdo. Evita casar com prefeitura, blog
+// aleatório ou homônimo. Nome genérico demais (sem token) → não barra (lenient).
+function pareceDaEmpresa(nome, { site, titulo, conteudo }) {
+  const toks = tokensNome(nome);
+  if (!toks.length) return true;
+  const alvo = semAcento(((site || '') + ' ' + (titulo || '') + ' ' + (conteudo || '')).toLowerCase());
+  return toks.some(t => alvo.includes(t));
 }
 
 // Links internos (mesmo domínio) cujo texto ou caminho batem com as palavras.
@@ -163,6 +197,8 @@ function hostBloqueado(u) {
   // Heurística: domínio com "cnpj" no nome é quase sempre agregador de cadastro,
   // nunca o site comercial da empresa. Barra a classe inteira sem precisar listar.
   if (/cnpj/i.test(host)) return true;
+  // Governo/institucional (prefeitura, tribunal…) nunca é o site da empresa.
+  if (dominioInstitucional(host)) return true;
   return false;
 }
 
@@ -240,6 +276,12 @@ async function buscarContatoGratis(nome, cidade, uf, opts = {}) {
   const s = await scrapeSite(site);
   const resumo = s.resumo || primeiro.conteudo || null;
   const resumoFonte = s.resumo ? s.resumo_fonte : (primeiro.conteudo ? 'busca' : null);
+  // Precisão: confirma que o site é REALMENTE da empresa (nome bate no domínio/
+  // título/conteúdo). Senão, não valida contato de site errado (prefeitura, blog,
+  // homônimo). Antes isso deixava passar, por ex., o site da prefeitura da cidade.
+  if (!pareceDaEmpresa(nome, { site, titulo: primeiro.titulo, conteudo: resumo })) {
+    return { encontrado: false, fonte: 'busca_gratis', validado: false, validado_em: agora, motivo: 'site_nao_confere' };
+  }
   return {
     encontrado: true,
     telefone: s.telefone || null,
@@ -279,7 +321,10 @@ async function buscarContato(nome, cidade, uf, apiKey) {
   if (!p) return { encontrado: false, fonte: 'google', validado: false, validado_em: new Date().toISOString() };
 
   const telefone = (p.nationalPhoneNumber || p.internationalPhoneNumber || '').replace(/\D/g, '');
-  const website = p.websiteUri || null;
+  // Descarta site institucional/gov mesmo vindo do Places (ex.: casou com a
+  // prefeitura). O telefone do Places segue valendo (é do estabelecimento).
+  let website = p.websiteUri || null;
+  if (website) { try { if (dominioInstitucional(new URL(website).hostname.replace(/^www\./, ''))) website = null; } catch { website = null; } }
   const s = website ? await scrapeSite(website) : { email: null, resumo: null, resumo_fonte: null, paginas_lidas: 0 };
   const { email, resumo } = s;
 

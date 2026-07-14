@@ -933,7 +933,13 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
               </div>
               <ScoreBar score={l.score}/>
               <ContactCell emailVal={l.email_valor} phoneVal={l.telefone_valor}/>
-              <div><span style={badgeStyle(statusColors[l.status]||C.gray)}>{l.status}</span></div>
+              <div style={{ display:'flex', flexDirection:'column', gap:4, alignItems:'flex-start' }}>
+                <span style={badgeStyle(statusColors[l.status]||C.gray)}>{l.status}</span>
+                {l.contato_pendente && (
+                  <span title="Sem WhatsApp/telefone — não enviado ao CRM automaticamente"
+                    style={{ ...badgeStyle(C.red), whiteSpace:'nowrap' }}>sem contato</span>
+                )}
+              </div>
             </div>
           );
         })}

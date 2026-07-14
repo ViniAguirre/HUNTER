@@ -354,6 +354,7 @@ async function init() {
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS lista TEXT;
     ALTER TABLE leads  ADD COLUMN IF NOT EXISTS crm_ref TEXT;
     CREATE INDEX IF NOT EXISTS idx_leads_crm_ref ON leads(crm_ref);
+    ALTER TABLE leads  ADD COLUMN IF NOT EXISTS contato_pendente BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE config ADD COLUMN IF NOT EXISTS limite_diario INTEGER NOT NULL DEFAULT 350;
     ALTER TABLE config ADD COLUMN IF NOT EXISTS descoberta_modo_padrao TEXT NOT NULL DEFAULT 'cnpja';
     ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS master BOOLEAN NOT NULL DEFAULT false;
@@ -796,7 +797,7 @@ app.get('/api/leads', requireAuth, async (req, res) => {
     const [countRes, dataRes] = await Promise.all([
       pool.query(`SELECT COUNT(*)::int AS total FROM leads l ${where}`, vals),
       pool.query(`SELECT l.id, l.fantasia, l.razao, l.setor, l.porte, l.cidade, l.uf,
-        l.decisor, l.cargo, l.score, l.tem_email, l.tem_telefone, l.status, l.busca_id, l.contato_validado
+        l.decisor, l.cargo, l.score, l.tem_email, l.tem_telefone, l.status, l.busca_id, l.contato_validado, l.contato_pendente
         FROM leads l ${where} ORDER BY l.score DESC, l.id
         LIMIT $${vals.length+1} OFFSET $${vals.length+2}`,
         [...vals, perPage, (page-1)*perPage]),
