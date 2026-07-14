@@ -699,6 +699,7 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
   const [selected, setSelected] = useState([]);
   const [loading, setLoading] = useState(false);
   const [exportIds, setExportIds] = useState(null);
+  const [tick, setTick] = useState(0);   // força recarregar a lista após ações em lote
   const debRef = useRef(null);
   const PER_PAGE = 20;
 
@@ -721,7 +722,7 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
       .then(d => { setLeads(d.leads || []); setTotal(d.total || 0); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [debouncedQ, filterStatus, emailOnly, page, refreshKey]);
+  }, [debouncedQ, filterStatus, emailOnly, page, refreshKey, tick]);
 
   const allSel = leads.length > 0 && leads.every(l => selected.includes(l.id));
   const toggleSel = (id) => setSelected(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id]);
@@ -735,7 +736,7 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
       body: JSON.stringify({ ids: selected, acao })
     });
     setSelected([]);
-    setPage(p => p); // trigger refresh via useEffect
+    setTick(t => t + 1); // recarrega a lista de fato (setPage no mesmo valor era no-op)
   };
 
   // Exclusão definitiva (com confirmação): remove os leads da base. Diferente de
@@ -744,7 +745,7 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
     if (!selected.length) return;
     const ok = window.confirm(
       `Excluir definitivamente ${selected.length} empresa${selected.length !== 1 ? 's' : ''} da lista de leads?\n\n` +
-      `Esta ação não pode ser desfeita. (As empresas que ainda não foram enviadas ao CRM poderão reaparecer em buscas futuras; as já enviadas ao CRM não voltam.)`
+      `Esta ação não pode ser desfeita. As empresas excluídas ficam bloqueadas e NÃO reaparecem em buscas futuras.`
     );
     if (!ok) return;
     batchAction('excluir');

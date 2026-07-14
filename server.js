@@ -892,14 +892,14 @@ app.post('/api/leads/acoes', requireAuth, requireEditor, async (req, res) => {
       return res.json({ ok: true, enfileirados: idsInt.length });
     }
 
-    // Exclusão definitiva dos leads selecionados. Libera a empresa (qualificada
-    // mas ainda NÃO enviada ao CRM) de volta pra 'coletado', pra poder ser
-    // reavaliada por buscas futuras; as que já foram ao CRM seguem travadas
-    // (não queremos que voltem e virem lead duplicado).
+    // Exclusão definitiva dos leads selecionados. Marca a empresa como
+    // 'descarte_duro' (estado travado) pra ela NÃO reaparecer: sem isso, uma
+    // busca ativa re-descobriria a empresa e recriaria o lead na hora — dando a
+    // impressão de que a exclusão "não pegou". Depois apaga os leads.
     if (acao === 'excluir') {
       await pool.query(
-        `UPDATE empresas SET estado_global='coletado'
-         WHERE cnpj IN (SELECT cnpj FROM leads WHERE id = ANY($1::int[])) AND estado_global='qualificado'`,
+        `UPDATE empresas SET estado_global='descarte_duro'
+         WHERE cnpj IN (SELECT cnpj FROM leads WHERE id = ANY($1::int[]))`,
         [idsInt]);
       const { rowCount } = await pool.query(`DELETE FROM leads WHERE id = ANY($1::int[])`, [idsInt]);
       return res.json({ ok: true, excluidos: rowCount });
