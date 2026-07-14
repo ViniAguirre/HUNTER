@@ -74,13 +74,17 @@ module.exports = async function descoberta(job, pool, queues) {
     const cnpjs = perfilamento.parseCnpjs(criterios);
     const counters = { novos: 0, pulados: 0, enfileirados: 0, total: cnpjs.length };
     for (const cnpj of cnpjs) {
-      // Import é um pedido EXPLÍCITO por este CNPJ: se a empresa foi excluída
-      // antes (descarte_duro), destrava pra reprocessar — o lead antigo já não
-      // existe, então não gera duplicata. 'qualificado'/'em_crm' seguem travados
-      // (ainda têm lead ativo; nesse caso use "Re-enriquecer" pra atualizar).
+      // Import é um pedido EXPLÍCITO por este CNPJ. Regra à prova de estado:
+      //  • Se JÁ existe um lead vivo pra este CNPJ (qualquer busca), não duplica —
+      //    pula (pra atualizar dados desse lead, use "Re-enriquecer").
+      //  • Se NÃO existe lead (foi excluído, ou é empresa nova/órfã), destrava a
+      //    empresa de QUALQUER estado travado (descarte_duro/em_crm/qualificado)
+      //    e reprocessa com busca de contato fresca.
+      const { rows: [temLead] } = await pool.query(`SELECT 1 FROM leads WHERE cnpj=$1 LIMIT 1`, [cnpj]);
+      if (temLead) { counters.pulados++; continue; }
       await pool.query(
         `UPDATE empresas SET estado_global='coletado', contatos_verificados='[]'::jsonb
-         WHERE cnpj=$1 AND estado_global='descarte_duro'`, [cnpj]);
+         WHERE cnpj=$1 AND estado_global <> 'coletado'`, [cnpj]);
       let { rows: [emp] } = await pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [cnpj]);
       if (!emp) {
         // Consulta o cadastro no endpoint aberto (grátis). Se bater no limite de
