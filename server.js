@@ -1476,6 +1476,30 @@ app.post('/api/admin/limpar-demo', requireAuth, requireMaster, async (req, res) 
   } finally { client.release(); }
 });
 
+// Diagnóstico ao vivo (master): versão/boot do worker + estado de CNPJs.
+// Uso: /api/admin/motor?cnpjs=07851438000122,21675387000156
+app.get('/api/admin/motor', requireAuth, requireMaster, async (req, res) => {
+  try {
+    let worker = null;
+    try { const { rows:[s] } = await pool.query(`SELECT worker_boot, worker_versao FROM motor_status WHERE id=1`); worker = s || null; }
+    catch { worker = null; }   // tabela ainda não criada (worker nunca subiu com a versão nova)
+    let cnpjs = [];
+    if (req.query.cnpjs) {
+      const list = String(req.query.cnpjs).split(/[^\d]+/).map(x => x.replace(/\D/g,'')).filter(x => x.length === 14);
+      if (list.length) {
+        const { rows } = await pool.query(
+          `SELECT e.cnpj, e.estado_global, e.razao, e.fantasia,
+             (SELECT COUNT(*)::int FROM leads l WHERE l.cnpj = e.cnpj) AS leads
+           FROM empresas e WHERE e.cnpj = ANY($1::text[])`, [list]);
+        const achados = new Set(rows.map(r => r.cnpj));
+        cnpjs = rows;
+        for (const c of list) if (!achados.has(c)) cnpjs.push({ cnpj: c, estado_global: '(não está na base)', leads: 0 });
+      }
+    }
+    res.json({ worker, agora: new Date().toISOString(), cnpjs });
+  } catch (e) { console.error('[admin/motor]', e.message); res.status(500).json({ erro: 'erro interno' }); }
+});
+
 // Contagem da base operacional inteira (pra tela de manutenção).
 app.get('/api/admin/base', requireAuth, requireMaster, async (req, res) => {
   try {

@@ -89,6 +89,20 @@ async function runScheduler() {
   }
 }
 
+// Marca a versão + hora de boot do worker (pra confirmar, sem adivinhação, se o
+// deploy pegou a imagem nova). Bump WORKER_VERSAO a cada mudança relevante aqui.
+const WORKER_VERSAO = 'import-destrava-2026-07-14';
+async function registrarBoot() {
+  try {
+    await pool.query(`CREATE TABLE IF NOT EXISTS motor_status (id int PRIMARY KEY, worker_boot timestamptz, worker_versao text)`);
+    await pool.query(
+      `INSERT INTO motor_status (id, worker_boot, worker_versao) VALUES (1, now(), $1)
+       ON CONFLICT (id) DO UPDATE SET worker_boot=now(), worker_versao=EXCLUDED.worker_versao`, [WORKER_VERSAO]);
+    console.log(`[worker] versão ${WORKER_VERSAO} — boot registrado`);
+  } catch (e) { console.error('[worker] registrarBoot:', e.message); }
+}
+registrarBoot();
+
 setInterval(runScheduler, 60_000);
 runScheduler();
 
