@@ -143,16 +143,27 @@ async function scrapeSite(site) {
 
 // ── Fallback GRÁTIS: acha o site oficial via busca web sem chave (DuckDuckGo) ──
 const UA_NAV = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36';
-// Domínios que NÃO são o site da empresa (redes sociais, diretórios, agregadores).
+// Domínios que NÃO são o site da empresa (redes sociais, diretórios, agregadores
+// de CNPJ que só repetem os dados da Receita). Se um desses for pescado como
+// "site da empresa", o resumo vira firmografia reciclada — inútil pro SWOT.
 // Checagem por HOSTNAME (não substring) pra não pegar "fisiox.com" por causa de "x.com".
 const HOSTS_BLOQ = ['duckduckgo.com', 'facebook.com', 'instagram.com', 'linkedin.com', 'twitter.com',
-  'x.com', 'youtube.com', 'wikipedia.org', 'google.com', 'google.com.br', 'bing.com', 'guiamais.com.br',
-  'apontador.com.br', 'econodata.com.br', 'casadosdados.com.br', 'cnpja.com', 'cnpj.biz', 'jusbrasil.com.br',
+  'x.com', 'youtube.com', 'tiktok.com', 'wikipedia.org', 'google.com', 'google.com.br', 'bing.com',
+  'guiamais.com.br', 'apontador.com.br', 'econodata.com.br', 'casadosdados.com.br', 'jusbrasil.com.br',
   'reclameaqui.com.br', 'indeed.com', 'glassdoor.com', 'mercadolivre.com.br', 'olx.com.br', 'tripadvisor.com',
-  'tripadvisor.com.br', 'ifood.com.br', 'yelp.com', 'telelistas.net', 'solutudo.com.br'];
+  'tripadvisor.com.br', 'ifood.com.br', 'yelp.com', 'telelistas.net', 'solutudo.com.br',
+  // Agregadores/diretórios de CNPJ (repetem a Receita, não são a empresa):
+  'diariocidade.com', 'escavador.com', 'receitaws.com.br', 'consultasocio.com', 'informecadastral.com.br',
+  'quandoconstou.com.br', 'listamais.com.br', 'econodata.com', 'empresascnpj.com', 'cnpj.biz', 'cnpja.com',
+  'cnpj.info', 'cnpjs.rocks', 'consultasocios.com.br', 'guiaempresas.com.br', 'boaspraticas.com.br',
+  'dadosempresas.com.br', 'empresascnpj.com.br', 'consultapublica.com.br', 'buscacnpj.info'];
 function hostBloqueado(u) {
   let host; try { host = new URL(u).hostname.replace(/^www\./, ''); } catch { return true; }
-  return HOSTS_BLOQ.some(d => host === d || host.endsWith('.' + d));
+  if (HOSTS_BLOQ.some(d => host === d || host.endsWith('.' + d))) return true;
+  // Heurística: domínio com "cnpj" no nome é quase sempre agregador de cadastro,
+  // nunca o site comercial da empresa. Barra a classe inteira sem precisar listar.
+  if (/cnpj/i.test(host)) return true;
+  return false;
 }
 
 async function buscarDDG(termo) {

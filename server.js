@@ -1017,11 +1017,14 @@ app.get('/api/alertas', requireAuth, async (req, res) => {
 
     const { rows: [cfg] } = await pool.query(`SELECT parada_min FROM config WHERE id=1`);
     const paradaMin = cfg?.parada_min || 30;
+    // Só alerta busca ATIVA que ficou de fato parada além da carência. Usa o
+    // sinal de vida mais recente (heartbeat, última atividade OU criação) — assim
+    // uma busca recém-criada, ainda sem heartbeat, NÃO dispara alerta na hora.
     const { rows: paradas } = await pool.query(
       `SELECT nome, ultimo_heartbeat FROM buscas
        WHERE status='Ativa' AND ritmo > 0
-         AND (ultimo_heartbeat IS NULL OR ultimo_heartbeat < now() - ($1 || ' minutes')::interval)
-       ORDER BY ultimo_heartbeat NULLS FIRST LIMIT 5`, [paradaMin]
+         AND COALESCE(ultimo_heartbeat, ultima_ativ, criado_em) < now() - ($1 || ' minutes')::interval
+       ORDER BY COALESCE(ultimo_heartbeat, ultima_ativ, criado_em) NULLS FIRST LIMIT 5`, [paradaMin]
     );
     for (const b of paradas) {
       alertas.push({ tipo: 'aviso', titulo: `Busca "${b.nome}" sem atividade`, detalhe: `sem heartbeat há mais de ${paradaMin} min`, quando: b.ultimo_heartbeat ? new Date(b.ultimo_heartbeat).toISOString() : null });
