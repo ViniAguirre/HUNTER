@@ -398,23 +398,47 @@ function ThemeToggle({
     d: "M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"
   })));
 }
-function ContactIcons({
-  email,
-  phone
+const TEL_PATH = 'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.6A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.3 1.8.6 2.6a2 2 0 0 1-.5 2.1L8 9.6a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.5c.8.3 1.7.5 2.6.6a2 2 0 0 1 1.7 2z';
+const MAIL_PATH = 'M3 5h18v14H3zM3 7l9 6 9-6';
+
+// Ícones de contato na lista: VERDE quando o enriquecimento achou o dado,
+// VERMELHO quando não. Clicar abre só aquele contato (telefone OU e-mail) num
+// balãozinho, sem abrir o painel inteiro do lead.
+function ContactCell({
+  emailVal,
+  phoneVal
 }) {
-  const ok = (has, path, title) => /*#__PURE__*/React.createElement("svg", {
-    key: title,
-    title: title,
-    width: 15,
-    height: 15,
+  const [pop, setPop] = useState(null); // { tipo, val, x, y }
+  useEffect(() => {
+    if (!pop) return;
+    const fechar = () => setPop(null);
+    document.addEventListener('click', fechar);
+    return () => document.removeEventListener('click', fechar);
+  }, [pop]);
+  const abrir = (e, tipo, val) => {
+    e.stopPropagation(); // não abre o painel do lead
+    const r = e.currentTarget.getBoundingClientRect();
+    setPop(p => p && p.tipo === tipo ? null : {
+      tipo,
+      val: val || null,
+      x: r.left,
+      y: r.bottom + 6
+    });
+  };
+  const icone = (tipo, val, path, label) => /*#__PURE__*/React.createElement("svg", {
+    key: tipo,
+    onClick: e => abrir(e, tipo, val),
+    title: label,
+    width: 16,
+    height: 16,
     viewBox: "0 0 24 24",
     fill: "none",
-    stroke: has ? C.green : 'var(--faint)',
+    stroke: val ? C.green : C.red,
     strokeWidth: 1.8,
     strokeLinecap: "round",
     strokeLinejoin: "round",
     style: {
-      opacity: has ? 1 : .4
+      cursor: 'pointer'
     }
   }, /*#__PURE__*/React.createElement("path", {
     d: path
@@ -422,10 +446,45 @@ function ContactIcons({
   return /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
-      gap: 6,
+      gap: 8,
       alignItems: 'center'
+    },
+    onClick: e => e.stopPropagation()
+  }, icone('email', emailVal, MAIL_PATH, 'E-mail'), icone('telefone', phoneVal, TEL_PATH, 'Telefone'), pop && /*#__PURE__*/React.createElement("div", {
+    onClick: e => e.stopPropagation(),
+    style: {
+      position: 'fixed',
+      left: pop.x,
+      top: pop.y,
+      zIndex: 80,
+      background: 'var(--panel)',
+      border: '1px solid var(--border)',
+      borderRadius: 9,
+      padding: '8px 11px',
+      boxShadow: '0 8px 24px rgba(0,0,0,.28)',
+      fontSize: 12.5,
+      whiteSpace: 'nowrap'
     }
-  }, ok(email, 'M3 5h18v14H3zM3 7l9 6 9-6', 'E-mail'), ok(phone, 'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.6A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.3 1.8.6 2.6a2 2 0 0 1-.5 2.1L8 9.6a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.5c.8.3 1.7.5 2.6.6a2 2 0 0 1 1.7 2z', 'Telefone'));
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10,
+      color: 'var(--faint)',
+      marginBottom: 3,
+      textTransform: 'uppercase',
+      letterSpacing: '.05em'
+    }
+  }, pop.tipo === 'email' ? 'E-mail' : 'Telefone'), pop.val ? /*#__PURE__*/React.createElement("a", {
+    href: (pop.tipo === 'email' ? 'mailto:' : 'tel:') + pop.val,
+    style: {
+      color: 'var(--text)',
+      textDecoration: 'none',
+      fontWeight: 500
+    }
+  }, pop.val) : /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: C.red
+    }
+  }, "N\xE3o encontrado no enriquecimento")));
 }
 
 // ── API helpers ───────────────────────────────────────────────────────────────
@@ -2003,8 +2062,6 @@ function Leads({
     }
   }, "Nenhum lead encontrado."), !loading && leads.map(l => {
     const sel = selected.includes(l.id);
-    const email = hasEmail(l.contatos);
-    const phone = hasPhone(l.contatos);
     return /*#__PURE__*/React.createElement("div", {
       key: l.id,
       onClick: () => onOpenLead(l.id),
@@ -2094,9 +2151,9 @@ function Leads({
       }
     }, l.cargo)), /*#__PURE__*/React.createElement(ScoreBar, {
       score: l.score
-    }), /*#__PURE__*/React.createElement(ContactIcons, {
-      email: email,
-      phone: phone
+    }), /*#__PURE__*/React.createElement(ContactCell, {
+      emailVal: l.email_valor,
+      phoneVal: l.telefone_valor
     }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
       style: badgeStyle(statusColors[l.status] || C.gray)
     }, l.status)));

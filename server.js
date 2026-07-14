@@ -796,13 +796,26 @@ app.get('/api/leads', requireAuth, async (req, res) => {
     const [countRes, dataRes] = await Promise.all([
       pool.query(`SELECT COUNT(*)::int AS total FROM leads l ${where}`, vals),
       pool.query(`SELECT l.id, l.fantasia, l.razao, l.setor, l.porte, l.cidade, l.uf,
-        l.decisor, l.cargo, l.score, l.tem_email, l.tem_telefone, l.status, l.busca_id
+        l.decisor, l.cargo, l.score, l.tem_email, l.tem_telefone, l.status, l.busca_id, l.contato_validado
         FROM leads l ${where} ORDER BY l.score DESC, l.id
         LIMIT $${vals.length+1} OFFSET $${vals.length+2}`,
         [...vals, perPage, (page-1)*perPage]),
     ]);
     const total = countRes.rows[0].total;
-    res.json({ leads: dataRes.rows, total, page, per_page: perPage, pages: Math.ceil(total/perPage) || 1 });
+    // Expõe o telefone/e-mail REAIS do enriquecimento (contato_validado) pra a
+    // lista pintar os ícones (verde=achou, vermelho=não) e mostrar o valor no
+    // clique. Não vaza a fonte/provedor — só o valor comercial.
+    const leads = dataRes.rows.map(l => {
+      const cv = l.contato_validado || {};
+      const email = cv.email || null;
+      const telefone = cv.telefone || cv.whatsapp || null;
+      const { contato_validado, ...rest } = l;
+      return { ...rest,
+        email_valor: email, telefone_valor: telefone,
+        tem_email: !!email || !!l.tem_email,
+        tem_telefone: !!telefone || !!l.tem_telefone };
+    });
+    res.json({ leads, total, page, per_page: perPage, pages: Math.ceil(total/perPage) || 1 });
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
