@@ -1565,6 +1565,93 @@ function ExportModal({
     }
   }, loading ? 'Gerando…' : 'Gerar e baixar'))));
 }
+
+// ── Impressão / PDF de lead(s) ────────────────────────────────────────────────
+// Gera uma folha limpa (mesma info do painel) e abre o diálogo de impressão do
+// navegador (permite "Salvar como PDF"). Serve pra 1 lead ou vários (1 por
+// página). Sem dependência, sem servidor.
+function escHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;'
+  })[c]);
+}
+function secaoLeadHtml(l) {
+  const esc = escHtml;
+  const cv = l.contato_validado || {};
+  const sw = l.swot || {};
+  const status = l.status || '';
+  const listaHtml = arr => Array.isArray(arr) && arr.length ? '<ul>' + arr.map(x => `<li>${esc(x)}</li>`).join('') + '</ul>' : '<p class="vazio">—</p>';
+  const linha = (k, v) => `<tr><th>${esc(k)}</th><td>${esc(v || '—')}</td></tr>`;
+  const quad = (titulo, arr) => `<div class="q"><h4>${esc(titulo)}</h4>${listaHtml(arr)}</div>`;
+  return `<section class="lead">
+  <h1>${esc(l.fantasia || l.razao)}</h1>
+  <p class="sub">${esc(l.razao)}</p>
+  <p class="cnpj">CNPJ ${esc(l.cnpj)}</p>
+  <span class="score">Score ${esc(l.score)} / 100 · ${esc(status)}</span>
+
+  <h3>Dados cadastrais · Receita Federal</h3>
+  <table>
+    ${linha('CNAE principal', l.cnae)}${linha('Setor', l.setor)}${linha('Porte', l.porte)}
+    ${linha('Situação', l.situacao)}${linha('Abertura', l.abertura)}${linha('Capital social', l.capital)}
+    ${linha('Cidade/UF', [l.cidade, l.uf].filter(Boolean).join('/'))}${linha('Natureza jurídica', l.natureza_juridica)}
+    ${linha('Optante Simples', l.opcao_simples == null ? '' : l.opcao_simples ? 'Sim' : 'Não')}${linha('Endereço', l.endereco)}
+  </table>
+
+  <h3>Decisor</h3>
+  <table>${linha('Nome', l.decisor)}${linha('Cargo', l.cargo)}</table>
+
+  <h3>Contato comercial validado</h3>
+  <table>
+    ${linha('Telefone', cv.telefone)}${linha('WhatsApp', cv.whatsapp)}${linha('E-mail', cv.email)}${linha('Site', cv.website)}
+  </table>
+  ${cv.resumo_site ? `<div class="callout"><b>Sobre a empresa (site):</b><br>${esc(cv.resumo_site)}</div>` : ''}
+
+  ${sw.resumo || sw.swot ? `<h3>Análise SWOT · briefing</h3>
+    ${sw.resumo ? `<p>${esc(sw.resumo)}</p>` : ''}
+    ${Array.isArray(sw.dores_provaveis) && sw.dores_provaveis.length ? `<div class="q"><h4>Dores prováveis</h4>${listaHtml(sw.dores_provaveis)}</div>` : ''}
+    <div class="swot" style="margin-top:12px">
+      ${quad('Forças', sw.swot?.forcas)}${quad('Fraquezas', sw.swot?.fraquezas)}
+      ${quad('Oportunidades', sw.swot?.oportunidades)}${quad('Ameaças', sw.swot?.ameacas)}
+    </div>
+    ${sw.sinal_comercial || sw.gancho ? `<div class="callout" style="margin-top:12px"><b>Sinal comercial:</b> ${esc(sw.sinal_comercial || sw.gancho)}</div>` : ''}
+  ` : ''}
+  <div class="rod">Gerado pelo Hunter em ${esc(new Date().toLocaleString('pt-BR'))}</div>
+</section>`;
+}
+function abrirImpressaoLeads(leads) {
+  const lista = (Array.isArray(leads) ? leads : [leads]).filter(Boolean);
+  if (!lista.length) return;
+  const titulo = lista.length === 1 ? escHtml(lista[0].fantasia || lista[0].razao || lista[0].cnpj) + ' — Hunter' : `${lista.length} empresas — Hunter`;
+  const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<title>${titulo}</title>
+<style>
+  *{box-sizing:border-box} body{font:14px/1.5 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#111;margin:32px;max-width:760px}
+  h1{font-size:22px;margin:0 0 2px} .sub{color:#555;margin:0 0 2px} .cnpj{color:#777;font-size:12px;font-family:ui-monospace,monospace}
+  .score{display:inline-block;margin-top:8px;padding:3px 10px;border:1px solid #bbb;border-radius:20px;font-size:12px}
+  h3{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#666;border-bottom:1px solid #ddd;padding-bottom:5px;margin:26px 0 10px}
+  table{width:100%;border-collapse:collapse} th,td{text-align:left;padding:5px 8px;vertical-align:top;font-size:13px}
+  th{color:#666;font-weight:600;width:38%} tr:nth-child(even){background:#f6f6f6}
+  .swot{display:grid;grid-template-columns:1fr 1fr;gap:12px} .q{border:1px solid #e2e2e2;border-radius:8px;padding:10px 12px}
+  .q h4{margin:0 0 6px;font-size:12px} ul{margin:0;padding-left:18px} li{margin:2px 0} .vazio{color:#999;margin:0}
+  .callout{background:#f2f7ff;border:1px solid #cfe0f7;border-radius:8px;padding:10px 12px;margin-top:8px}
+  .rod{margin-top:30px;color:#999;font-size:11px;border-top:1px solid #eee;padding-top:8px}
+  .lead + .lead{page-break-before:always}
+  @media print{body{margin:12mm}}
+</style></head><body>
+${lista.map(secaoLeadHtml).join('\n')}
+  <script>window.onload=function(){window.print()}<\/script>
+</body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) {
+    window.alert('Permita pop-ups para gerar o PDF/impressão.');
+    return;
+  }
+  w.document.write(html);
+  w.document.close();
+}
 function Leads({
   refreshKey,
   onOpenLead,
@@ -1623,6 +1710,22 @@ function Leads({
     });
     setSelected([]);
     setPage(p => p); // trigger refresh via useEffect
+  };
+
+  // PDF em lote: busca o detalhe completo de cada lead selecionado e gera uma
+  // folha com todos (1 empresa por página), mesma info do PDF individual.
+  const [gerandoPdf, setGerandoPdf] = useState(false);
+  const gerarPdfLote = async () => {
+    if (!selected.length || gerandoPdf) return;
+    setGerandoPdf(true);
+    try {
+      const detalhes = await Promise.all(selected.map(id => fetch('/api/leads/' + id, {
+        credentials: 'same-origin'
+      }).then(r => r.ok ? r.json() : null).catch(() => null)));
+      abrirImpressaoLeads(detalhes.filter(Boolean));
+    } finally {
+      setGerandoPdf(false);
+    }
   };
   const totalPages = Math.ceil(total / PER_PAGE);
   const selBtnStyle = variant => ({
@@ -1796,6 +1899,15 @@ function Leads({
     onClick: () => setExportIds(selected),
     style: selBtnStyle('normal')
   }, "Exportar CSV"), /*#__PURE__*/React.createElement("button", {
+    onClick: gerarPdfLote,
+    disabled: gerandoPdf,
+    style: selBtnStyle('normal')
+  }, /*#__PURE__*/React.createElement(Svg, {
+    d: "M6 9V2h12v7M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2M6 14h12v8H6z",
+    w: 14,
+    h: 14,
+    sw: 1.7
+  }), gerandoPdf ? 'Gerando…' : 'Gerar PDF'), /*#__PURE__*/React.createElement("button", {
     onClick: () => batchAction('aprovar'),
     style: selBtnStyle('normal')
   }, "Aprovar"), /*#__PURE__*/React.createElement("button", {
@@ -6386,6 +6498,9 @@ function LeadDetailPanel({
     k: 'CNAE principal',
     v: l.cnae
   }, {
+    k: 'Setor',
+    v: l.setor
+  }, {
     k: 'Porte',
     v: l.porte
   }, {
@@ -6399,81 +6514,24 @@ function LeadDetailPanel({
     k: 'Capital social',
     v: l.capital
   }, {
+    k: 'Cidade/UF',
+    v: [l.cidade, l.uf].filter(Boolean).join('/')
+  }, {
+    k: 'Natureza jurídica',
+    v: l.natureza_juridica
+  }, {
+    k: 'Optante Simples',
+    v: l.opcao_simples == null ? null : l.opcao_simples ? 'Sim' : 'Não'
+  }, {
     k: 'Endereço',
     v: l.endereco
   }];
 
-  // Gera uma folha limpa do lead numa nova janela e abre o diálogo de impressão
-  // (o navegador permite "Salvar como PDF"). Sem dependência, sem servidor.
-  const imprimirLead = () => {
-    const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;'
-    })[c]);
-    const cv = l.contato_validado || {};
-    const sw = l.swot || {};
-    const listaHtml = arr => Array.isArray(arr) && arr.length ? '<ul>' + arr.map(x => `<li>${esc(x)}</li>`).join('') + '</ul>' : '<p class="vazio">—</p>';
-    const linha = (k, v) => `<tr><th>${esc(k)}</th><td>${esc(v || '—')}</td></tr>`;
-    const quad = (titulo, arr) => `<div class="q"><h4>${esc(titulo)}</h4>${listaHtml(arr)}</div>`;
-    const html = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
-<title>${esc(l.fantasia || l.razao || l.cnpj)} — Hunter</title>
-<style>
-  *{box-sizing:border-box} body{font:14px/1.5 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#111;margin:32px;max-width:760px}
-  h1{font-size:22px;margin:0 0 2px} .sub{color:#555;margin:0 0 2px} .cnpj{color:#777;font-size:12px;font-family:ui-monospace,monospace}
-  .score{display:inline-block;margin-top:8px;padding:3px 10px;border:1px solid #bbb;border-radius:20px;font-size:12px}
-  h3{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:#666;border-bottom:1px solid #ddd;padding-bottom:5px;margin:26px 0 10px}
-  table{width:100%;border-collapse:collapse} th,td{text-align:left;padding:5px 8px;vertical-align:top;font-size:13px}
-  th{color:#666;font-weight:600;width:38%} tr:nth-child(even){background:#f6f6f6}
-  .swot{display:grid;grid-template-columns:1fr 1fr;gap:12px} .q{border:1px solid #e2e2e2;border-radius:8px;padding:10px 12px}
-  .q h4{margin:0 0 6px;font-size:12px} ul{margin:0;padding-left:18px} li{margin:2px 0} .vazio{color:#999;margin:0}
-  .callout{background:#f2f7ff;border:1px solid #cfe0f7;border-radius:8px;padding:10px 12px;margin-top:8px}
-  .rod{margin-top:30px;color:#999;font-size:11px;border-top:1px solid #eee;padding-top:8px}
-  @media print{body{margin:12mm}}
-</style></head><body>
-  <h1>${esc(l.fantasia || l.razao)}</h1>
-  <p class="sub">${esc(l.razao)}</p>
-  <p class="cnpj">CNPJ ${esc(l.cnpj)}</p>
-  <span class="score">Score ${esc(l.score)} / 100 · ${esc(status)}</span>
-
-  <h3>Dados cadastrais · Receita Federal</h3>
-  <table>
-    ${linha('CNAE principal', l.cnae)}${linha('Setor', l.setor)}${linha('Porte', l.porte)}
-    ${linha('Situação', l.situacao)}${linha('Abertura', l.abertura)}${linha('Capital social', l.capital)}
-    ${linha('Cidade/UF', [l.cidade, l.uf].filter(Boolean).join('/'))}${linha('Endereço', l.endereco)}
-  </table>
-
-  <h3>Decisor</h3>
-  <table>${linha('Nome', l.decisor)}${linha('Cargo', l.cargo)}</table>
-
-  <h3>Contato comercial validado</h3>
-  <table>
-    ${linha('Telefone', cv.telefone)}${linha('WhatsApp', cv.whatsapp)}${linha('E-mail', cv.email)}${linha('Site', cv.website)}
-  </table>
-  ${cv.resumo_site ? `<div class="callout"><b>Sobre a empresa (site):</b><br>${esc(cv.resumo_site)}</div>` : ''}
-
-  ${sw.resumo || sw.swot ? `<h3>Análise SWOT · briefing</h3>
-    ${sw.resumo ? `<p>${esc(sw.resumo)}</p>` : ''}
-    ${Array.isArray(sw.dores_provaveis) && sw.dores_provaveis.length ? `<div class="q"><h4>Dores prováveis</h4>${listaHtml(sw.dores_provaveis)}</div>` : ''}
-    <div class="swot" style="margin-top:12px">
-      ${quad('Forças', sw.swot?.forcas)}${quad('Fraquezas', sw.swot?.fraquezas)}
-      ${quad('Oportunidades', sw.swot?.oportunidades)}${quad('Ameaças', sw.swot?.ameacas)}
-    </div>
-    ${sw.sinal_comercial || sw.gancho ? `<div class="callout" style="margin-top:12px"><b>Sinal comercial:</b> ${esc(sw.sinal_comercial || sw.gancho)}</div>` : ''}
-  ` : ''}
-
-  <div class="rod">Gerado pelo Hunter em ${esc(new Date().toLocaleString('pt-BR'))}</div>
-  <script>window.onload=function(){window.print()}<\/script>
-</body></html>`;
-    const w = window.open('', '_blank');
-    if (!w) {
-      window.alert('Permita pop-ups para gerar o PDF/impressão.');
-      return;
-    }
-    w.document.write(html);
-    w.document.close();
-  };
+  // Abre a folha de impressão/PDF deste lead (usa o gerador compartilhado).
+  const imprimirLead = () => abrirImpressaoLeads([{
+    ...l,
+    status
+  }]);
   return /*#__PURE__*/React.createElement("div", {
     style: {
       position: 'fixed',

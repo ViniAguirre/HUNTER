@@ -20,13 +20,18 @@ async function buscar(query, { apiKey, max = 30 } = {}) {
   if (!apiKey || !query) return [];
   try {
     const { data } = await axios.post(ENDPOINT, {
-      api_key: apiKey,
+      api_key: apiKey,   // compat com versão antiga da API
       query,
       search_depth: 'basic',
       max_results: Math.min(Math.max(max, 1), 50),
       include_answer: false,
       include_raw_content: false,
-    }, { timeout: 12000, headers: { 'Content-Type': 'application/json' } });
+    }, { timeout: 12000, headers: {
+      'Content-Type': 'application/json',
+      // A API atual da Tavily autentica por header Bearer. Sem isso a chamada
+      // falha (401) e o motor cai no DuckDuckGo grátis sem avisar.
+      Authorization: `Bearer ${apiKey}`,
+    } });
 
     const results = Array.isArray(data?.results) ? data.results : [];
     const out = [];
