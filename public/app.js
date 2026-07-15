@@ -3162,6 +3162,45 @@ function foundedFromPreset(k) {
       return {};
   }
 }
+
+// Reverte os filtros de abertura/capital pra a chave do preset na duplicação.
+// Prefere a chave salva (abertura_preset/capital_preset); senão, aproxima.
+function capitalInicial(p) {
+  if (p?.capital_preset) return p.capital_preset;
+  const gte = p?.equity_gte ?? null,
+    lte = p?.equity_lte ?? null;
+  if (gte == null && lte == null) return 'qualquer';
+  const m = CAPITAL_OPCOES.find(o => (o.gte ?? null) === gte && (o.lte ?? null) === lte);
+  return m ? m.k : 'qualquer';
+}
+function aberturaInicial(p) {
+  if (p?.abertura_preset) return p.abertura_preset;
+  const gte = p?.founded_gte,
+    lte = p?.founded_lte;
+  if (!gte && !lte) return 'qualquer';
+  // Aproxima pela distância em meses (datas foram calculadas na criação).
+  const mesesAte = iso => {
+    try {
+      return Math.round((Date.now() - new Date(iso).getTime()) / (30.44 * 864e5));
+    } catch {
+      return null;
+    }
+  };
+  if (lte && !gte) return '+5a'; // só limite superior antigo = "mais de 5 anos"
+  const m = mesesAte(gte);
+  if (m == null) return 'qualquer';
+  const alvo = [['6m', 6], ['1a', 12], ['2a', 24], ['5a', 60]];
+  let melhor = 'qualquer',
+    dif = Infinity;
+  for (const [k, mm] of alvo) {
+    const d = Math.abs(mm - m);
+    if (d < dif) {
+      dif = d;
+      melhor = k;
+    }
+  }
+  return melhor;
+}
 function NovaBusca({
   onSalvar,
   inicial
@@ -3189,8 +3228,8 @@ function NovaBusca({
   const [municSel, setMunicSel] = useState(Array.isArray(iniP.municipios_rotulos) ? iniP.municipios_rotulos : []);
   const [municData, setMunicData] = useState([]);
   const [municFoco, setMunicFoco] = useState(false);
-  const [abertura, setAbertura] = useState('qualquer');
-  const [capital, setCapital] = useState('qualquer');
+  const [abertura, setAbertura] = useState(aberturaInicial(iniP));
+  const [capital, setCapital] = useState(capitalInicial(iniP));
   const [crmAuto, setCrmAuto] = useState(!!inicial?.crm_auto);
   const [listaCnpj, setListaCnpj] = useState(Array.isArray(iniCrit.cnpjs) ? iniCrit.cnpjs.join('\n') : '');
   const [uploadMsg, setUploadMsg] = useState(null); // feedback do upload de arquivo
@@ -3455,6 +3494,9 @@ function NovaBusca({
           founded_lte: fnd.lte || null,
           equity_gte: cap.gte ?? null,
           equity_lte: cap.lte ?? null,
+          abertura_preset: abertura,
+          capital_preset: capital,
+          // guarda a chave pra duplicação reverter certinho
           proposta_valor: propostaValor
         },
         proposta_valor: propostaValor
