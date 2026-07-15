@@ -2684,7 +2684,8 @@ function PerfilMedio({
 function BuscaDetail({
   buscaId,
   onBack,
-  onOpenLead
+  onOpenLead,
+  onDuplicar
 }) {
   const [data, setData] = useState(null);
   const [toggling, setToggling] = useState(false);
@@ -2726,7 +2727,23 @@ function BuscaDetail({
   const b = data.busca || data;
   const leads = data.leads || [];
   const criterios = b.criterios || {};
-  const tags = Array.isArray(criterios.chips) && criterios.chips.length ? criterios.chips : Object.entries(criterios).filter(([k]) => !['params', 'cnaes_rotulos', 'texto', 'query'].includes(k)).flatMap(([k, v]) => Array.isArray(v) ? v.map(x => k + ': ' + x) : typeof v === 'object' ? [] : [k + ': ' + v]).filter(Boolean);
+  const tags = Array.isArray(criterios.chips) && criterios.chips.length ? criterios.chips : Object.entries(criterios).filter(([k]) => !['params', 'cnaes_rotulos', 'texto', 'query', 'proposta_valor'].includes(k)).flatMap(([k, v]) => Array.isArray(v) ? v.map(x => k + ': ' + x) : typeof v === 'object' ? [] : [k + ': ' + v]).filter(Boolean);
+  const proposta = criterios.params?.proposta_valor || criterios.proposta_valor || '';
+  const rodarDeNovo = async () => {
+    setToggling(true);
+    await fetch('/api/buscas/' + buscaId, {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        status: 'Ativa'
+      })
+    }).catch(() => {});
+    setToggling(false);
+    carregar();
+  };
   return /*#__PURE__*/React.createElement("div", {
     style: {
       maxWidth: 1180
@@ -2795,7 +2812,12 @@ function BuscaDetail({
       border: '1px solid var(--border)',
       color: 'var(--dim)'
     }
-  }, tag)))), (b.status === 'Ativa' || b.status === 'Pausada') && /*#__PURE__*/React.createElement("button", {
+  }, tag)))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8
+    }
+  }, (b.status === 'Ativa' || b.status === 'Pausada') && /*#__PURE__*/React.createElement("button", {
     onClick: toggleStatus,
     disabled: toggling,
     style: {
@@ -2810,14 +2832,81 @@ function BuscaDetail({
       cursor: 'pointer',
       opacity: toggling ? .6 : 1
     }
-  }, toggling ? '…' : b.status === 'Ativa' ? 'Pausar' : 'Retomar')), /*#__PURE__*/React.createElement("div", {
+  }, toggling ? '…' : b.status === 'Ativa' ? 'Pausar' : 'Retomar'), (b.status === 'Esgotada' || b.status === 'Encerrada') && /*#__PURE__*/React.createElement("button", {
+    onClick: rodarDeNovo,
+    disabled: toggling,
+    style: {
+      height: 38,
+      padding: '0 15px',
+      borderRadius: 9,
+      border: '1px solid var(--border)',
+      background: 'transparent',
+      color: 'var(--text)',
+      fontSize: 13,
+      fontFamily: 'inherit',
+      cursor: 'pointer',
+      opacity: toggling ? .6 : 1,
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 7
+    }
+  }, /*#__PURE__*/React.createElement(Svg, {
+    d: "M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16",
+    w: 14,
+    h: 14,
+    sw: 1.7
+  }), toggling ? '…' : 'Rodar de novo'), onDuplicar && /*#__PURE__*/React.createElement("button", {
+    onClick: () => onDuplicar(b),
+    style: {
+      height: 38,
+      padding: '0 15px',
+      borderRadius: 9,
+      border: '1px solid var(--border)',
+      background: 'transparent',
+      color: 'var(--dim)',
+      fontSize: 13,
+      fontFamily: 'inherit',
+      cursor: 'pointer',
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 7
+    }
+  }, /*#__PURE__*/React.createElement(Svg, {
+    d: "M9 9h11a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-9a2 2 0 0 1-2-2v-2M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1",
+    w: 14,
+    h: 14,
+    sw: 1.7
+  }), "Duplicar"))), proposta && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'var(--panel)',
+      border: '1px solid var(--border)',
+      borderRadius: 12,
+      padding: '12px 16px',
+      marginBottom: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10.5,
+      fontWeight: 600,
+      letterSpacing: '.06em',
+      color: 'var(--faint)',
+      textTransform: 'uppercase',
+      marginBottom: 5
+    }
+  }, "O que se vende (alimenta o SWOT)"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      color: 'var(--text)',
+      lineHeight: 1.5
+    }
+  }, proposta)), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
-      gridTemplateColumns: 'repeat(4,1fr)',
+      gridTemplateColumns: 'repeat(6,1fr)',
       gap: 12,
       marginBottom: 18
     }
-  }, [['Encontrados', fmtNum(b.enc), 'var(--text)'], ['Qualificados', fmtNum(b.qual), C.green], ['Fora do perfil', fmtNum(b.fora), C.amber], ['Enviados ao CRM', fmtNum(b.crm), C.cyan]].map(([label, val, col]) => /*#__PURE__*/React.createElement("div", {
+  }, [['Encontrados', fmtNum(b.enc), 'var(--text)'], ['Segmentadas (perfil)', fmtNum((b.qual || 0) + (b.sem_contato || 0)), C.blue], ['Qualificados', fmtNum(b.qual), C.green], ['Sem contato', fmtNum(b.sem_contato), C.red], ['Fora do perfil', fmtNum(b.fora), C.amber], ['Enviados ao CRM', fmtNum(b.crm), C.cyan]].map(([label, val, col]) => /*#__PURE__*/React.createElement("div", {
     key: label,
     style: {
       background: 'var(--panel)',
@@ -3074,27 +3163,36 @@ function foundedFromPreset(k) {
   }
 }
 function NovaBusca({
-  onSalvar
+  onSalvar,
+  inicial
 }) {
-  const [tipo, setTipo] = useState('icp');
-  const [corte, setCorte] = useState(60);
+  // Duplicação: pré-preenche a partir de uma busca existente (só os critérios;
+  // data de abertura/capital voltam pro padrão e podem ser reajustados).
+  const iniCrit = inicial?.criterios || {};
+  const iniP = iniCrit.params || {};
+  const iniProposta = iniP.proposta_valor || iniCrit.proposta_valor || '';
+  const [tipo, setTipo] = useState(inicial?.tipo || 'icp');
+  const [corte, setCorte] = useState(inicial?.corte_score ?? 60);
   const [saving, setSaving] = useState(false);
-  const [ufs, setUfs] = useState([]);
-  const [portes, setPortes] = useState([]);
+  const [ufs, setUfs] = useState(Array.isArray(iniP.ufs) ? iniP.ufs : []);
+  const [portes, setPortes] = useState(Array.isArray(iniP.portes) ? iniP.portes : []);
   const [cnaeBusca, setCnaeBusca] = useState('');
-  const [cnaeSel, setCnaeSel] = useState([]);
-  const [kwText, setKwText] = useState(''); // palavra-chave no nome/fantasia (CNPJá names.in)
-  const [modoDesc, setModoDesc] = useState('cnpja'); // cnpja | web (descoberta)
+  const [cnaeSel, setCnaeSel] = useState(Array.isArray(iniP.cnaes_rotulos) ? iniP.cnaes_rotulos : Array.isArray(iniP.cnaes) ? iniP.cnaes.map(c => ({
+    c: String(c),
+    d: fmtCnae(c)
+  })) : []);
+  const [kwText, setKwText] = useState(Array.isArray(iniP.keywords) ? iniP.keywords.join(', ') : '');
+  const [modoDesc, setModoDesc] = useState(iniP.modo_descoberta || 'cnpja'); // cnpja | web (descoberta)
   const [cnaeData, setCnaeData] = useState([]);
   const [cnaeFoco, setCnaeFoco] = useState(false);
   const [municBusca, setMunicBusca] = useState('');
-  const [municSel, setMunicSel] = useState([]);
+  const [municSel, setMunicSel] = useState(Array.isArray(iniP.municipios_rotulos) ? iniP.municipios_rotulos : []);
   const [municData, setMunicData] = useState([]);
   const [municFoco, setMunicFoco] = useState(false);
   const [abertura, setAbertura] = useState('qualquer');
   const [capital, setCapital] = useState('qualquer');
-  const [crmAuto, setCrmAuto] = useState(false);
-  const [listaCnpj, setListaCnpj] = useState('');
+  const [crmAuto, setCrmAuto] = useState(!!inicial?.crm_auto);
+  const [listaCnpj, setListaCnpj] = useState(Array.isArray(iniCrit.cnpjs) ? iniCrit.cnpjs.join('\n') : '');
   const [uploadMsg, setUploadMsg] = useState(null); // feedback do upload de arquivo
   const arquivoRef = useRef();
   const [iaCarregando, setIaCarregando] = useState(false);
@@ -3978,6 +4076,7 @@ function NovaBusca({
     }
   }, "(alimenta o agente SWOT)")), /*#__PURE__*/React.createElement("textarea", {
     ref: criteriosRef,
+    defaultValue: iniProposta,
     placeholder: "Ex: software de gest\xE3o de agenda para cl\xEDnicas, que reduz faltas e lota hor\xE1rios ociosos",
     style: {
       width: '100%',
@@ -4135,6 +4234,7 @@ function NovaBusca({
       }
     }, "(alimenta o agente SWOT)")), /*#__PURE__*/React.createElement("textarea", {
       ref: propostaRef,
+      defaultValue: iniProposta,
       placeholder: "Ex: software de gest\xE3o de agenda para cl\xEDnicas, que reduz faltas e lota hor\xE1rios ociosos",
       style: {
         width: '100%',
@@ -4209,6 +4309,7 @@ function NovaBusca({
     }
   }, "Nome da busca"), /*#__PURE__*/React.createElement("input", {
     ref: nomeRef,
+    defaultValue: inicial?.nome ? inicial.nome + ' (cópia)' : '',
     placeholder: "Ex: Ag\xEAncias de marketing \u2014 Sul",
     style: {
       width: '100%',
@@ -7771,6 +7872,7 @@ function App() {
   const [user, setUser] = useState(null);
   const [leadsRefreshKey, setLeadsRefreshKey] = useState(0);
   const [decisao, setDecisao] = useState(null); // leads aguardando decisão manual
+  const [duplicarDe, setDuplicarDe] = useState(null); // busca a duplicar (pré-preenche Nova busca)
 
   useEffect(() => {
     fetch('/api/auth/me', {
@@ -7789,6 +7891,12 @@ function App() {
     setScreen(s);
     setOpenLeadId(null);
     setCrmIds(null);
+    if (s !== 'nova') setDuplicarDe(null);
+  };
+  const duplicarBusca = b => {
+    setDuplicarDe(b);
+    setScreen('nova');
+    setOpenLeadId(null);
   };
   // Persiste o tema escolhido: só muda quando o usuário clica (sobrevive ao reload).
   const toggleTheme = () => setTheme(t => {
@@ -7857,10 +7965,13 @@ function App() {
         return /*#__PURE__*/React.createElement(BuscaDetail, {
           buscaId: buscaDetailId,
           onBack: () => setScreen('buscas'),
-          onOpenLead: setOpenLeadId
+          onOpenLead: setOpenLeadId,
+          onDuplicar: duplicarBusca
         });
       case 'nova':
         return /*#__PURE__*/React.createElement(NovaBusca, {
+          key: duplicarDe ? 'dup-' + duplicarDe.id : 'nova',
+          inicial: duplicarDe,
           onSalvar: () => navTo('buscas')
         });
       case 'integracoes':

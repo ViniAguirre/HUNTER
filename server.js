@@ -749,6 +749,7 @@ app.get('/api/buscas/:id', requireAuth, async (req, res) => {
       health: computeHealth(b),
       // aliases que o front do detalhe consome
       enc: b.encontrados, qual: b.qualificados, crm: b.enviados, fora: b.fora_perfil,
+      sem_contato: b.sem_contato || 0,
       universo_est: b.universo_varrido || 0,
       producao: prodRow.rows.map(r => r.n),
       leads: leadsRow.rows,
