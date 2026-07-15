@@ -71,7 +71,7 @@ function computeHealth(b) {
 }
 
 function buildLeadsFilter(query) {
-  const { q, status, uf, busca_id, email_only } = query;
+  const { q, status, uf, busca_id, email_only, local, score_min } = query;
   const conditions = [];
   const vals = [];
   if (q && q.trim()) {
@@ -81,10 +81,18 @@ function buildLeadsFilter(query) {
   }
   if (status) { vals.push(status); conditions.push(`l.status = $${vals.length}`); }
   if (uf) { vals.push(uf); conditions.push(`l.uf = $${vals.length}`); }
+  // Local: casa cidade OU UF (ex.: "Goiânia", "GO", "São Paulo").
+  if (local && String(local).trim()) {
+    vals.push(`%${String(local).trim()}%`);
+    const n = vals.length;
+    conditions.push(`(l.cidade ILIKE $${n} OR l.uf ILIKE $${n})`);
+  }
   if (busca_id) {
     const bid = parseInt(busca_id, 10);
     if (!isNaN(bid)) { vals.push(bid); conditions.push(`l.busca_id = $${vals.length}`); }
   }
+  const sMin = parseInt(score_min, 10);
+  if (!isNaN(sMin) && sMin > 0) { vals.push(sMin); conditions.push(`l.score >= $${vals.length}`); }
   if (email_only === 'true' || email_only === '1') conditions.push('l.tem_email = true');
   return { conditions, vals };
 }

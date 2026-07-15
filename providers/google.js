@@ -106,11 +106,28 @@ function siteDaEmpresa(nome, cidade, host) {
 // lista telefônica…) — mesmo que cite a empresa, não é o site dela.
 const DIRETORIO_FRASES = ['guia mais completo', 'lista telefonica', 'encontre empresas', 'encontre prestadores',
   'prestadores de servicos', 'consulte cnpj', 'quadros societarios', 'inteligencia de mercado',
-  'cadastre sua empresa', 'cadastre seu negocio', 'todos os negocios', 'anuncie gratis', 'guia comercial',
-  'guia de empresas', 'histórico de empresas', 'historico de empresas'].map(semAcento);
+  'cadastre sua empresa', 'cadastre seu negocio', 'todos os negocios', 'anuncie gratis', 'anuncie sua empresa',
+  'guia comercial', 'guia de empresas', 'historico de empresas',
+  // guias/diretórios de ramo (ex.: "O Maior Guia de Veterinários do Brasil"):
+  'maior guia', 'guia de ', 'guia dos ', 'guia das ', 'guia do ', 'diretorio', 'classificados',
+  'catalogo de empresas', 'lista de empresas', 'encontre os melhores', 'encontre o melhor',
+  'as melhores empresas', 'melhores profissionais', 'cadastre-se gratis'].map(semAcento);
 function pareceDiretorio(txt) {
   const t = semAcento(String(txt || '').toLowerCase());
   return DIRETORIO_FRASES.some(f => t.includes(f));
+}
+
+// Domínios que são só um TERMO GENÉRICO do ramo (veterinarios.biz,
+// purificadores.com…): diretório do setor, não a empresa. Bloqueia quando o
+// label do domínio é uma única palavra genérica de segmento/profissão.
+const LABELS_GENERICOS = new Set(['veterinarios', 'veterinaria', 'veterinarias', 'purificadores', 'filtros',
+  'refrigeracao', 'advogados', 'advocacia', 'dentistas', 'odontologia', 'medicos', 'clinicas', 'clinica',
+  'restaurantes', 'hoteis', 'pousadas', 'contadores', 'contabilidade', 'imobiliarias', 'farmacias',
+  'petshop', 'petshops', 'mecanicas', 'eletricistas', 'encanadores', 'empresas', 'negocios', 'profissionais',
+  'servicos', 'guia', 'guias', 'lista', 'catalogo', 'diretorio']);
+function dominioGenerico(host) {
+  const label = semAcento(String(host || '').toLowerCase()).replace(/^www\./, '').split('.')[0];
+  return LABELS_GENERICOS.has(label);
 }
 
 // Links internos (mesmo domínio) cujo texto ou caminho batem com as palavras.
@@ -290,7 +307,10 @@ async function buscarContatoGratis(nome, cidade, uf, opts = {}) {
   // Só considera resultados cujo DOMÍNIO parece ser da própria empresa — descarta
   // diretórios/agregadores que citam a empresa mas não são ela. Varre até 3
   // candidatos (o site real às vezes não é o 1º resultado).
-  const candidatos = r.filter(x => siteDaEmpresa(nome, cidade, hostDe(x.site))).slice(0, 3);
+  const candidatos = r.filter(x => {
+    const h = hostDe(x.site);
+    return !dominioGenerico(h) && siteDaEmpresa(nome, cidade, h);
+  }).slice(0, 3);
   for (const cand of candidatos) {
     const s = await scrapeSite(cand.site);
     const resumo = s.resumo || cand.conteudo || null;

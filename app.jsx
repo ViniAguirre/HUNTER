@@ -730,12 +730,26 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
   const [debouncedQ, setDebouncedQ] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
   const [emailOnly, setEmailOnly] = useState(false);
+  const [filterBusca, setFilterBusca] = useState('');
+  const [filterLocal, setFilterLocal] = useState('');
+  const [debouncedLocal, setDebouncedLocal] = useState('');
+  const [filterScore, setFilterScore] = useState('');
+  const [buscasOpts, setBuscasOpts] = useState([]);
   const [selected, setSelected] = useState([]);
   const [loading, setLoading] = useState(false);
   const [exportIds, setExportIds] = useState(null);
   const [tick, setTick] = useState(0);   // força recarregar a lista após ações em lote
   const debRef = useRef(null);
+  const locRef = useRef(null);
   const PER_PAGE = 20;
+
+  // Lista de buscas pra o filtro (mantém todas, aprovadas ou não).
+  useEffect(() => {
+    fetch('/api/buscas', { credentials:'same-origin' })
+      .then(r => r.json())
+      .then(d => setBuscasOpts(Array.isArray(d) ? d : (d.buscas || [])))
+      .catch(() => {});
+  }, []);
 
   const handleQ = (e) => {
     const v = e.target.value;
@@ -744,19 +758,29 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
     debRef.current = setTimeout(() => { setDebouncedQ(v); setPage(1); }, 400);
   };
 
+  const handleLocal = (e) => {
+    const v = e.target.value;
+    setFilterLocal(v);
+    clearTimeout(locRef.current);
+    locRef.current = setTimeout(() => { setDebouncedLocal(v); setPage(1); }, 400);
+  };
+
   useEffect(() => {
     setLoading(true);
     const params = new URLSearchParams();
     if (debouncedQ) params.set('q', debouncedQ);
     if (filterStatus) params.set('status', filterStatus);
     if (emailOnly) params.set('email_only', 'true');
+    if (filterBusca) params.set('busca_id', filterBusca);
+    if (debouncedLocal) params.set('local', debouncedLocal);
+    if (filterScore) params.set('score_min', filterScore);
     params.set('page', page);
     fetch('/api/leads?' + params, { credentials:'same-origin' })
       .then(r => r.json())
       .then(d => { setLeads(d.leads || []); setTotal(d.total || 0); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [debouncedQ, filterStatus, emailOnly, page, refreshKey, tick]);
+  }, [debouncedQ, filterStatus, emailOnly, filterBusca, debouncedLocal, filterScore, page, refreshKey, tick]);
 
   const allSel = leads.length > 0 && leads.every(l => selected.includes(l.id));
   const toggleSel = (id) => setSelected(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id]);
@@ -838,6 +862,13 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
             style={{ width:'100%', height:38, borderRadius:9, border:'1px solid var(--border)',
               background:'var(--panel)', color:'var(--text)', padding:'0 12px 0 34px', fontSize:13, fontFamily:'inherit' }}/>
         </div>
+        <select value={filterBusca} onChange={e => { setFilterBusca(e.target.value); setPage(1); }}
+          style={{ height:38, padding:'0 10px', borderRadius:9, border:'1px solid var(--border)', maxWidth:220,
+            background:'var(--panel)', color: filterBusca ? 'var(--text)' : 'var(--dim)',
+            fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>
+          <option value="">Todas as buscas</option>
+          {buscasOpts.map(b => <option key={b.id} value={b.id}>{b.nome}</option>)}
+        </select>
         <select value={filterStatus} onChange={e => { setFilterStatus(e.target.value); setPage(1); }}
           style={{ height:38, padding:'0 10px', borderRadius:9, border:'1px solid var(--border)',
             background:'var(--panel)', color: filterStatus ? 'var(--text)' : 'var(--dim)',
@@ -848,6 +879,19 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
           <option value="Incompleto">Incompleto</option>
           <option value="Enviado">Enviado</option>
           <option value="Descartado">Descartado</option>
+        </select>
+        <input value={filterLocal} onChange={handleLocal} placeholder="Local (cidade/UF)"
+          style={{ height:38, width:150, borderRadius:9, border:'1px solid var(--border)',
+            background:'var(--panel)', color:'var(--text)', padding:'0 12px', fontSize:12.5, fontFamily:'inherit' }}/>
+        <select value={filterScore} onChange={e => { setFilterScore(e.target.value); setPage(1); }}
+          style={{ height:38, padding:'0 10px', borderRadius:9, border:'1px solid var(--border)',
+            background:'var(--panel)', color: filterScore ? 'var(--text)' : 'var(--dim)',
+            fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>
+          <option value="">Score</option>
+          <option value="90">≥ 90</option>
+          <option value="75">≥ 75</option>
+          <option value="60">≥ 60</option>
+          <option value="40">≥ 40</option>
         </select>
         <div style={{ flex:1 }}/>
         <button onClick={() => { setEmailOnly(e => !e); setPage(1); }}
