@@ -117,17 +117,14 @@ function pareceDiretorio(txt) {
   return DIRETORIO_FRASES.some(f => t.includes(f));
 }
 
-// Domínios que são só um TERMO GENÉRICO do ramo (veterinarios.biz,
-// purificadores.com…): diretório do setor, não a empresa. Bloqueia quando o
-// label do domínio é uma única palavra genérica de segmento/profissão.
-const LABELS_GENERICOS = new Set(['veterinarios', 'veterinaria', 'veterinarias', 'purificadores', 'filtros',
-  'refrigeracao', 'advogados', 'advocacia', 'dentistas', 'odontologia', 'medicos', 'clinicas', 'clinica',
-  'restaurantes', 'hoteis', 'pousadas', 'contadores', 'contabilidade', 'imobiliarias', 'farmacias',
-  'petshop', 'petshops', 'mecanicas', 'eletricistas', 'encanadores', 'empresas', 'negocios', 'profissionais',
-  'servicos', 'guia', 'guias', 'lista', 'catalogo', 'diretorio']);
-function dominioGenerico(host) {
-  const label = semAcento(String(host || '').toLowerCase()).replace(/^www\./, '').split('.')[0];
-  return LABELS_GENERICOS.has(label);
+// Quantos telefones DISTINTOS a página lista. Sinal niche-agnóstico de
+// diretório: um site de EMPRESA tem 1–3 telefones; um catálogo lista dezenas
+// (uma empresa por linha). Não depende de bloquear domínio por palavra — assim
+// uma empresa real com domínio genérico (ex.: purificadoresdeagua.com) passa.
+function contarTelefones(html) {
+  const txt = String(html || '').replace(/<[^>]+>/g, ' ');
+  const achados = txt.match(/\(\d{2}\)\s?9?\d{4}[-\s]?\d{4}/g) || [];
+  return new Set(achados.map(x => x.replace(/\D/g, ''))).size;
 }
 
 // Links internos (mesmo domínio) cujo texto ou caminho batem com as palavras.
@@ -206,7 +203,8 @@ async function scrapeSite(site) {
   const uniq = [];
   for (const p of partes) if (p && !uniq.some(u => u.includes(p) || p.includes(u))) uniq.push(p);
   const resumo = (uniq.join(' ').slice(0, 600).trim()) || null;
-  return { email, telefone, cnpj, resumo, resumo_fonte: fonte, paginas_lidas: lidas.size };
+  return { email, telefone, cnpj, resumo, resumo_fonte: fonte, paginas_lidas: lidas.size,
+    qtd_telefones: contarTelefones(home) };
 }
 
 // ── Fallback GRÁTIS: acha o site oficial via busca web sem chave (DuckDuckGo) ──
@@ -307,15 +305,14 @@ async function buscarContatoGratis(nome, cidade, uf, opts = {}) {
   // Só considera resultados cujo DOMÍNIO parece ser da própria empresa — descarta
   // diretórios/agregadores que citam a empresa mas não são ela. Varre até 3
   // candidatos (o site real às vezes não é o 1º resultado).
-  const candidatos = r.filter(x => {
-    const h = hostDe(x.site);
-    return !dominioGenerico(h) && siteDaEmpresa(nome, cidade, h);
-  }).slice(0, 3);
+  const candidatos = r.filter(x => siteDaEmpresa(nome, cidade, hostDe(x.site))).slice(0, 3);
   for (const cand of candidatos) {
     const s = await scrapeSite(cand.site);
     const resumo = s.resumo || cand.conteudo || null;
-    // Reforço: se a página se descreve como diretório/consulta de CNPJ, pula.
-    if (pareceDiretorio(resumo) || pareceDiretorio(cand.titulo)) continue;
+    // Pula se a página se descreve como diretório (guia/lista/consulta CNPJ) OU
+    // se lista MUITOS negócios (muitos telefones distintos) — um catálogo, não a
+    // empresa. Ambos são niche-agnósticos: valem pra qualquer segmento.
+    if (pareceDiretorio(resumo) || pareceDiretorio(cand.titulo) || (s.qtd_telefones || 0) >= 10) continue;
     return {
       encontrado: true,
       telefone: s.telefone || null,
