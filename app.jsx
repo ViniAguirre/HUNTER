@@ -161,9 +161,12 @@ const MAIL_PATH = 'M3 5h18v14H3zM3 7l9 6 9-6';
 
 // Ícones de contato na lista: VERDE quando o enriquecimento achou o dado,
 // VERMELHO quando não. Clicar abre só aquele contato (telefone OU e-mail) num
-// balãozinho, sem abrir o painel inteiro do lead.
-function ContactCell({ emailVal, phoneVal }) {
-  const [pop, setPop] = useState(null);   // { tipo, val, x, y }
+// balãozinho — e permite EDITAR/INCLUIR o dado ali mesmo (qualificação manual),
+// sem abrir o painel inteiro do lead.
+function ContactCell({ leadId, emailVal, phoneVal, onSaved }) {
+  const [pop, setPop] = useState(null);   // { tipo, x, y }
+  const [val, setVal] = useState('');
+  const [saving, setSaving] = useState(false);
   useEffect(() => {
     if (!pop) return;
     const fechar = () => setPop(null);
@@ -171,34 +174,65 @@ function ContactCell({ emailVal, phoneVal }) {
     return () => document.removeEventListener('click', fechar);
   }, [pop]);
 
-  const abrir = (e, tipo, val) => {
+  const abrir = (e, tipo, atual) => {
     e.stopPropagation();   // não abre o painel do lead
     const r = e.currentTarget.getBoundingClientRect();
-    setPop(p => (p && p.tipo === tipo) ? null : { tipo, val: val || null, x: r.left, y: r.bottom + 6 });
+    setVal(atual || '');
+    setPop(p => (p && p.tipo === tipo) ? null : {
+      tipo, y: r.bottom + 6,
+      x: Math.max(8, Math.min(r.left, (typeof window !== 'undefined' ? window.innerWidth : 1200) - 268)),
+    });
   };
-  const icone = (tipo, val, path, label) => (
-    <svg key={tipo} onClick={e => abrir(e, tipo, val)} title={label}
+  const salvar = async (e) => {
+    e.stopPropagation();
+    if (!leadId) return;
+    setSaving(true);
+    try {
+      const body = pop.tipo === 'email' ? { email: val.trim() } : { telefone: val.trim() };
+      await fetch(`/api/leads/${leadId}/contato`, {
+        method:'PATCH', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify(body)
+      });
+      onSaved && onSaved();
+      setPop(null);
+    } catch (_) {} finally { setSaving(false); }
+  };
+  const icone = (tipo, v, path, label) => (
+    <svg key={tipo} onClick={e => abrir(e, tipo, v)} title={label}
       width={16} height={16} viewBox="0 0 24 24" fill="none"
-      stroke={val ? C.green : C.red} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"
+      stroke={v ? C.green : C.red} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round"
       style={{ cursor:'pointer' }}>
       <path d={path}/>
     </svg>
   );
+  const atualVal = pop ? (pop.tipo === 'email' ? emailVal : phoneVal) : null;
   return (
     <div style={{ display:'flex', gap:8, alignItems:'center' }} onClick={e => e.stopPropagation()}>
       {icone('email', emailVal, MAIL_PATH, 'E-mail')}
       {icone('telefone', phoneVal, TEL_PATH, 'Telefone')}
       {pop && (
-        <div onClick={e => e.stopPropagation()} style={{ position:'fixed', left:pop.x, top:pop.y, zIndex:80,
-          background:'var(--panel)', border:'1px solid var(--border)', borderRadius:9, padding:'8px 11px',
-          boxShadow:'0 8px 24px rgba(0,0,0,.28)', fontSize:12.5, whiteSpace:'nowrap' }}>
-          <div style={{ fontSize:10, color:'var(--faint)', marginBottom:3, textTransform:'uppercase', letterSpacing:'.05em' }}>
+        <div onClick={e => e.stopPropagation()} style={{ position:'fixed', left:pop.x, top:pop.y, zIndex:80, width:252,
+          background:'var(--panel)', border:'1px solid var(--border)', borderRadius:10, padding:'10px 12px',
+          boxShadow:'0 8px 24px rgba(0,0,0,.28)' }}>
+          <div style={{ fontSize:10, color:'var(--faint)', marginBottom:5, textTransform:'uppercase', letterSpacing:'.05em' }}>
             {pop.tipo === 'email' ? 'E-mail' : 'Telefone'}
           </div>
-          {pop.val
-            ? <a href={(pop.tipo === 'email' ? 'mailto:' : 'tel:') + pop.val}
-                style={{ color:'var(--text)', textDecoration:'none', fontWeight:500 }}>{pop.val}</a>
-            : <span style={{ color:C.red }}>Não encontrado no enriquecimento</span>}
+          {atualVal
+            ? <a href={(pop.tipo === 'email' ? 'mailto:' : 'tel:') + atualVal} onClick={e => e.stopPropagation()}
+                style={{ color:'var(--text)', textDecoration:'none', fontWeight:500, fontSize:12.5, wordBreak:'break-all' }}>{atualVal}</a>
+            : <span style={{ color:C.red, fontSize:12 }}>Não encontrado — inclua abaixo</span>}
+          <div style={{ display:'flex', gap:6, marginTop:8 }}>
+            <input value={val} autoFocus onChange={e => setVal(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') salvar(e); }}
+              placeholder={pop.tipo === 'email' ? 'contato@empresa.com.br' : '(11) 99999-9999'}
+              style={{ flex:1, minWidth:0, height:32, borderRadius:8, border:'1px solid var(--border)',
+                background:'var(--panel2)', color:'var(--text)', padding:'0 9px', fontSize:12.5, fontFamily:'inherit' }}/>
+            <button onClick={salvar} disabled={saving}
+              style={{ height:32, padding:'0 12px', borderRadius:8, border:'none', background:'var(--gold)',
+                color:'#0E1936', fontWeight:600, fontSize:12, fontFamily:'inherit', cursor:'pointer', whiteSpace:'nowrap' }}>
+              {saving ? '…' : 'Salvar'}
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -977,7 +1011,7 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
                 <div style={{ fontSize:11, color:'var(--faint)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{l.cargo}</div>
               </div>
               <ScoreBar score={l.score}/>
-              <ContactCell emailVal={l.email_valor} phoneVal={l.telefone_valor}/>
+              <ContactCell leadId={l.id} emailVal={l.email_valor} phoneVal={l.telefone_valor} onSaved={() => setTick(t => t + 1)}/>
               <div style={{ display:'flex', flexDirection:'column', gap:4, alignItems:'flex-start' }}>
                 <span style={badgeStyle(statusColors[l.status]||C.gray)}>{l.status}</span>
                 {l.contato_pendente && (
