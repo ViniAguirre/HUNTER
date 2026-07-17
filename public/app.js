@@ -613,7 +613,7 @@ const NAV_MAIN = [{
   icon: 'M4 4h7v7H4zM13 4h7v7h-7zM13 13h7v7h-7zM4 13h7v7H4z'
 }, {
   key: 'buscas',
-  label: 'Buscas',
+  label: 'Radares',
   icon: 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-4.3-4.3'
 }, {
   key: 'leads',
@@ -996,9 +996,9 @@ function Sidebar({
 const TITLES = {
   dashboard: ['Dashboard', 'Visão geral da operação'],
   leads: ['Leads', 'Curadoria e envio de leads qualificados'],
-  buscas: ['Buscas', 'Gerencie suas torneiras de leads'],
-  buscaDetail: ['Detalhe da busca', 'Produção e leads desta busca'],
-  nova: ['Nova busca', 'Configure uma nova torneira de leads'],
+  buscas: ['Radares', 'Gerencie seus radares de leads'],
+  buscaDetail: ['Detalhe do Radar', 'Produção e leads deste radar'],
+  nova: ['Criar Radar', 'Configure um novo radar de leads'],
   integracoes: ['Integrações', 'Conexões com APIs e CRM'],
   usuarios: ['Usuários', 'Permissões e acessos'],
   config: ['Configurações', 'Parâmetros gerais do sistema'],
@@ -1221,7 +1221,7 @@ function Topbar({
     w: 16,
     h: 16,
     sw: 2
-  }), "Nova busca"), /*#__PURE__*/React.createElement(ThemeToggle, {
+  }), "Criar Radar"), /*#__PURE__*/React.createElement(ThemeToggle, {
     theme: theme,
     onToggle: onTheme
   }), /*#__PURE__*/React.createElement(SinoAlertas, null), /*#__PURE__*/React.createElement("div", {
@@ -1274,7 +1274,7 @@ function Dashboard({
   const verificados = qual + fora; // passaram pela segmentação (Score 1)
   const taxaQ = verificados ? Math.round(qual / verificados * 100) : 0;
   const metrics = [{
-    label: 'Buscas ativas',
+    label: 'Radares ativos',
     value: fmtNum(metricas.buscasAtivas),
     icon: 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-4.3-4.3',
     iColor: C.blue,
@@ -1386,7 +1386,7 @@ function Dashboard({
       fontWeight: 600,
       margin: 0
     }
-  }, "Buscas ativas"), /*#__PURE__*/React.createElement("a", {
+  }, "Radares ativos"), /*#__PURE__*/React.createElement("a", {
     onClick: () => onOpenBusca(null),
     style: {
       fontSize: 12,
@@ -1400,7 +1400,7 @@ function Dashboard({
       fontSize: 13,
       color: 'var(--faint)'
     }
-  }, "Nenhuma busca ativa."), buscasAtivas.map(b => /*#__PURE__*/React.createElement("div", {
+  }, "Nenhum radar ativo."), buscasAtivas.map(b => /*#__PURE__*/React.createElement("div", {
     key: b.id,
     onClick: () => onOpenBusca(b.id),
     className: "row-hover",
@@ -2012,7 +2012,7 @@ function Leads({
     }
   }, /*#__PURE__*/React.createElement("option", {
     value: ""
-  }, "Todas as buscas"), buscasOpts.map(b => /*#__PURE__*/React.createElement("option", {
+  }, "Todos os radares"), buscasOpts.map(b => /*#__PURE__*/React.createElement("option", {
     key: b.id,
     value: b.id
   }, b.nome))), /*#__PURE__*/React.createElement("select", {
@@ -2441,7 +2441,7 @@ function Buscas({
   useEffect(carregar, []);
   const excluir = async (e, b) => {
     e.stopPropagation();
-    if (!window.confirm(`Excluir a busca "${b.nome}"?\nOs leads dela serão removidos. As empresas continuam no histórico global.`)) return;
+    if (!window.confirm(`Excluir o radar "${b.nome}"?\nOs leads dele serão removidos. As empresas continuam no histórico global.`)) return;
     const r = await fetch('/api/buscas/' + b.id, {
       method: 'DELETE',
       credentials: 'same-origin'
@@ -2531,7 +2531,7 @@ function Buscas({
       fontSize: 13,
       color: 'var(--faint)'
     }
-  }, "Nenhuma busca encontrada."), buscas && buscas.map(b => /*#__PURE__*/React.createElement("div", {
+  }, "Nenhum radar encontrado."), buscas && buscas.map(b => /*#__PURE__*/React.createElement("div", {
     key: b.id,
     onClick: () => onOpen(b.id),
     className: "row-hover",
@@ -2584,7 +2584,7 @@ function Buscas({
     }
   }, timeAgo(b.ultima_ativ)), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("button", {
     onClick: e => excluir(e, b),
-    title: "Excluir busca",
+    title: "Excluir radar",
     style: {
       width: 30,
       height: 30,
@@ -2840,7 +2840,7 @@ function BuscaDetail({
       marginBottom: 14,
       padding: 0
     }
-  }, "\u2039 Voltar para buscas"), /*#__PURE__*/React.createElement("div", {
+  }, "\u2039 Voltar para radares"), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'flex-start',
@@ -3107,7 +3107,7 @@ function BuscaDetail({
       fontWeight: 600,
       margin: 0
     }
-  }, "Leads desta busca")), leads.length === 0 && /*#__PURE__*/React.createElement("div", {
+  }, "Leads deste radar")), leads.length === 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '22px 18px',
       fontSize: 13,
@@ -3524,7 +3524,7 @@ function NovaBusca({
   const salvar = async () => {
     const nome = nomeRef.current?.value?.trim();
     if (!nome) {
-      alert('Informe o nome da busca.');
+      alert('Informe o nome do radar.');
       return;
     }
     if (tipo === 'lookalike' && cnpjsParsed.length < MIN_LOOKALIKE) {
@@ -3540,7 +3540,7 @@ function NovaBusca({
       return;
     }
     if (tipo === 'icp' && modoDesc === 'cnpja' && cnaeSel.length === 0 && keywords.length === 0 && municSel.length === 0) {
-      const ok = window.confirm('Nenhuma atividade, palavra-chave ou município.\n\nA busca vai trazer empresas de TODOS os ramos' + (ufs.length ? ' da(s) UF(s) escolhida(s)' : ' do Brasil') + '. Para mirar o alvo, escolha uma atividade OU use a "palavra-chave no nome" (ex.: purificador, filtro).\n\nContinuar mesmo assim?');
+      const ok = window.confirm('Nenhuma atividade, palavra-chave ou município.\n\nO radar vai trazer empresas de TODOS os ramos' + (ufs.length ? ' da(s) UF(s) escolhida(s)' : ' do Brasil') + '. Para mirar o alvo, escolha uma atividade OU use a "palavra-chave no nome" (ex.: purificador, filtro).\n\nContinuar mesmo assim?');
       if (!ok) return;
     }
     setSaving(true);
@@ -3597,7 +3597,7 @@ function NovaBusca({
       });
       if (!r.ok) {
         const d = await r.json().catch(() => ({}));
-        throw new Error(d.erro || 'Erro ao criar busca.');
+        throw new Error(d.erro || 'Erro ao criar radar.');
       }
       onSalvar();
     } catch (e) {
@@ -4401,7 +4401,7 @@ function NovaBusca({
       fontSize: 12.5,
       lineHeight: 1.5
     }
-  }, /*#__PURE__*/React.createElement("b", null, "Crit\xE9rio muito amplo."), " Sem atividade, palavra-chave ou munic\xEDpio, a busca varre ", ufs.length ? `todas as empresas de ${ufs.join('/')}` : 'o Brasil inteiro', " \u2014 isso traz nicho errado e ", /*#__PURE__*/React.createElement("b", null, "consome muito cr\xE9dito"), ". Escolha ao menos uma atividade, palavra-chave ou munic\xEDpio.")), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("b", null, "Crit\xE9rio muito amplo."), " Sem atividade, palavra-chave ou munic\xEDpio, o radar varre ", ufs.length ? `todas as empresas de ${ufs.join('/')}` : 'o Brasil inteiro', " \u2014 isso traz nicho errado e ", /*#__PURE__*/React.createElement("b", null, "consome muito cr\xE9dito"), ". Escolha ao menos uma atividade, palavra-chave ou munic\xEDpio.")), /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'var(--panel)',
       border: '1px solid var(--border)',
@@ -4426,7 +4426,7 @@ function NovaBusca({
       color: 'var(--dim)',
       marginBottom: 7
     }
-  }, "Nome da busca"), /*#__PURE__*/React.createElement("input", {
+  }, "Nome do Radar"), /*#__PURE__*/React.createElement("input", {
     ref: nomeRef,
     defaultValue: inicial?.nome ? inicial.nome + ' (cópia)' : '',
     placeholder: "Ex: Ag\xEAncias de marketing \u2014 Sul",
@@ -4490,7 +4490,7 @@ function NovaBusca({
       marginTop: 8,
       lineHeight: 1.4
     }
-  }, "O volume \xE9 controlado por um teto di\xE1rio geral (em Configura\xE7\xF5es), n\xE3o por busca \u2014 o Hunter faz v\xE1rias camadas de garimpo e qualifica\xE7\xE3o, ent\xE3o o limite di\xE1rio j\xE1 basta.")), /*#__PURE__*/React.createElement("div", {
+  }, "O volume \xE9 controlado por um teto di\xE1rio geral (em Configura\xE7\xF5es), n\xE3o por radar \u2014 o Hunter faz v\xE1rias camadas de garimpo e qualifica\xE7\xE3o, ent\xE3o o limite di\xE1rio j\xE1 basta.")), /*#__PURE__*/React.createElement("div", {
     style: {
       gridColumn: '1 / -1',
       borderTop: '1px solid var(--border)',
@@ -4562,7 +4562,7 @@ function NovaBusca({
     w: 16,
     h: 16,
     sw: 2
-  }), saving ? 'Criando…' : 'Ligar busca')));
+  }), saving ? 'Criando radar…' : 'Criar Radar')));
 }
 
 // ── Integrações ───────────────────────────────────────────────────────────────
@@ -5760,7 +5760,7 @@ function Config() {
   }, []);
   const limparTudo = async () => {
     const total = (base?.buscas || 0) + (base?.leads || 0);
-    if (!window.confirm(`ATENÇÃO: isso apaga TODA a base operacional — ${base?.buscas || 0} busca(s), ${base?.leads || 0} lead(s) e ` + `${base?.empresas || 0} empresa(s) do cache. Mantém usuários, integrações e configurações. NÃO dá pra desfazer.\n\n` + `Digite OK na próxima janela para confirmar.`)) return;
+    if (!window.confirm(`ATENÇÃO: isso apaga TODA a base operacional — ${base?.buscas || 0} radar(es), ${base?.leads || 0} lead(s) e ` + `${base?.empresas || 0} empresa(s) do cache. Mantém usuários, integrações e configurações. NÃO dá pra desfazer.\n\n` + `Digite OK na próxima janela para confirmar.`)) return;
     const conf = window.prompt('Para confirmar a exclusão total, digite: APAGAR TUDO');
     if (conf !== 'APAGAR TUDO') {
       setMsg({
@@ -5794,7 +5794,7 @@ function Config() {
     }
   };
   const limparDemo = async () => {
-    if (!window.confirm(`Isso vai remover as buscas de demonstração e ${demo?.leads || 0} lead(s) que elas geraram ` + `(inclui os leads-exemplo e o que as buscas demo descobriram com critério amplo). ` + `As empresas ficam no cache. Não dá pra desfazer. Continuar?`)) return;
+    if (!window.confirm(`Isso vai remover os radares de demonstração e ${demo?.leads || 0} lead(s) que eles geraram ` + `(inclui os leads-exemplo e o que os radares demo descobriram com critério amplo). ` + `As empresas ficam no cache. Não dá pra desfazer. Continuar?`)) return;
     setLimpandoDemo(true);
     try {
       const r = await fetch('/api/admin/limpar-demo', {
@@ -5805,7 +5805,7 @@ function Config() {
       if (!r.ok) throw new Error(d.erro || 'Falha ao limpar.');
       setMsg({
         ok: true,
-        txt: `Removidas ${d.buscas_removidas} busca(s) e ${d.leads_removidos} lead(s) de demonstração.`
+        txt: `Removidos ${d.buscas_removidas} radar(es) e ${d.leads_removidos} lead(s) de demonstração.`
       });
       carregarDemo();
     } catch (e) {
@@ -5946,7 +5946,7 @@ function Config() {
       color: 'var(--faint)',
       margin: '0 0 18px'
     }
-  }, "Valores iniciais aplicados a novas buscas e ao motor."), /*#__PURE__*/React.createElement("div", {
+  }, "Valores iniciais aplicados a novos radares e ao motor."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
       gridTemplateColumns: '1fr 1fr 1fr',
@@ -5959,7 +5959,7 @@ function Config() {
       marginTop: 12,
       lineHeight: 1.5
     }
-  }, "O ", /*#__PURE__*/React.createElement("b", null, "limite di\xE1rio"), " \xE9 o teto de leads novos que o motor capta por dia somando todas as buscas \u2014 protege o or\xE7amento. Ao atingi-lo, a capta\xE7\xE3o pausa e retoma no dia seguinte. O motor tamb\xE9m divide esse n\xFAmero por 24h e respeita uma cota por hora, pra n\xE3o gastar o dia inteiro logo na primeira hora se a busca ficar ligada direto \u2014 a capta\xE7\xE3o fica espalhada ao longo do dia. 0 = sem teto."), /*#__PURE__*/React.createElement("div", {
+  }, "O ", /*#__PURE__*/React.createElement("b", null, "limite di\xE1rio"), " \xE9 o teto de leads novos que o motor capta por dia somando todos os radares \u2014 protege o or\xE7amento. Ao atingi-lo, a capta\xE7\xE3o pausa e retoma no dia seguinte. O motor tamb\xE9m divide esse n\xFAmero por 24h e respeita uma cota por hora, pra n\xE3o gastar o dia inteiro logo na primeira hora se o radar ficar ligado direto \u2014 a capta\xE7\xE3o fica espalhada ao longo do dia. 0 = sem teto."), /*#__PURE__*/React.createElement("div", {
     style: {
       borderTop: '1px solid var(--border)',
       marginTop: 16,
@@ -5976,7 +5976,7 @@ function Config() {
     style: {
       color: 'var(--faint)'
     }
-  }, "(cada busca pode trocar)")), /*#__PURE__*/React.createElement("div", {
+  }, "(cada radar pode trocar)")), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 8
@@ -6140,7 +6140,7 @@ function Config() {
       marginTop: 10,
       lineHeight: 1.4
     }
-  }, "Vale para todas as buscas. Cada busca tamb\xE9m pode for\xE7ar o envio autom\xE1tico na sua pr\xF3pria configura\xE7\xE3o.")), /*#__PURE__*/React.createElement("div", {
+  }, "Vale para todos os radares. Cada radar tamb\xE9m pode for\xE7ar o envio autom\xE1tico na sua pr\xF3pria configura\xE7\xE3o.")), /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'var(--panel)',
       border: '1px solid var(--border)',
@@ -6199,13 +6199,13 @@ function Config() {
       fontSize: 13.5,
       fontWeight: 500
     }
-  }, cfg.crm_lookalike_auto ? 'Busca "Semelhantes — clientes do CRM" ativa' : 'Aprendizado automático desativado'), /*#__PURE__*/React.createElement("div", {
+  }, cfg.crm_lookalike_auto ? 'Radar "Semelhantes — clientes do CRM" ativo' : 'Aprendizado automático desativado'), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 12,
       color: 'var(--faint)',
       marginTop: 2
     }
-  }, cfg.crm_lookalike_auto ? 'A cada conversão recebida, o Hunter cria/atualiza uma busca lookalike com esses clientes.' : 'As conversões são guardadas, mas não geram busca automática.'))), /*#__PURE__*/React.createElement("label", {
+  }, cfg.crm_lookalike_auto ? 'A cada conversão recebida, o Hunter cria/atualiza um radar lookalike com esses clientes.' : 'As conversões são guardadas, mas não geram radar automático.'))), /*#__PURE__*/React.createElement("label", {
     style: {
       display: 'block',
       fontSize: 12,
@@ -6314,7 +6314,7 @@ function Config() {
       color: 'var(--faint)',
       lineHeight: 1.4
     }
-  }, "clientes j\xE1 na lista de semelhantes", sementes?.busca ? ` · busca ${sementes.busca.status}` : '', ".", sementes?.total > 0 && sementes?.ultimas?.[0] && ` Último: ${String(sementes.ultimas[0].cnpj).replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5')}.`)), /*#__PURE__*/React.createElement("div", {
+  }, "clientes j\xE1 na lista de semelhantes", sementes?.busca ? ` · radar ${sementes.busca.status}` : '', ".", sementes?.total > 0 && sementes?.ultimas?.[0] && ` Último: ${String(sementes.ultimas[0].cnpj).replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5')}.`)), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: 'var(--faint)',
@@ -6340,7 +6340,7 @@ function Config() {
       color: 'var(--faint)',
       margin: '0 0 18px'
     }
-  }, "Quando considerar uma busca parada, e para quem avisar."), /*#__PURE__*/React.createElement("div", {
+  }, "Quando considerar um radar parado, e para quem avisar."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
       gridTemplateColumns: '1fr 1fr',
@@ -6382,11 +6382,11 @@ function Config() {
     style: {
       color: 'var(--text)'
     }
-  }, demo.buscas, " busca(s)"), " de demonstra\xE7\xE3o e", ' ', /*#__PURE__*/React.createElement("b", {
+  }, demo.buscas, " radar(es)"), " de demonstra\xE7\xE3o e", ' ', /*#__PURE__*/React.createElement("b", {
     style: {
       color: 'var(--text)'
     }
-  }, demo.leads, " lead(s)"), " gerados por elas (dados de exemplo do primeiro boot + o que essas buscas descobriram com crit\xE9rio amplo). Remova para o painel refletir s\xF3 o seu trabalho real. As empresas ficam no cache (gr\xE1tis)."), /*#__PURE__*/React.createElement("button", {
+  }, demo.leads, " lead(s)"), " gerados por eles (dados de exemplo do primeiro boot + o que esses radares descobriram com crit\xE9rio amplo). Remova para o painel refletir s\xF3 o seu trabalho real. As empresas ficam no cache (gr\xE1tis)."), /*#__PURE__*/React.createElement("button", {
     onClick: limparDemo,
     disabled: limpandoDemo,
     style: {
@@ -6427,7 +6427,7 @@ function Config() {
     style: {
       color: 'var(--text)'
     }
-  }, "toda"), " a base operacional: ", fmtNum(base.buscas), " busca(s),", ' ', fmtNum(base.leads), " lead(s) e ", fmtNum(base.empresas), " empresa(s) do cache. Usu\xE1rios, integra\xE7\xF5es (chaves) e configura\xE7\xF5es s\xE3o mantidos. Use para come\xE7ar do zero. ", /*#__PURE__*/React.createElement("b", null, "Irrevers\xEDvel.")), /*#__PURE__*/React.createElement("button", {
+  }, "toda"), " a base operacional: ", fmtNum(base.buscas), " radar(es),", ' ', fmtNum(base.leads), " lead(s) e ", fmtNum(base.empresas), " empresa(s) do cache. Usu\xE1rios, integra\xE7\xF5es (chaves) e configura\xE7\xF5es s\xE3o mantidos. Use para come\xE7ar do zero. ", /*#__PURE__*/React.createElement("b", null, "Irrevers\xEDvel.")), /*#__PURE__*/React.createElement("button", {
     onClick: limparTudo,
     disabled: limpandoTudo,
     style: {
@@ -6696,7 +6696,7 @@ function Monitor() {
     style: {
       color: 'var(--faint)'
     }
-  }, "Buscas ativas"), /*#__PURE__*/React.createElement("span", {
+  }, "Radares ativos"), /*#__PURE__*/React.createElement("span", {
     style: {
       fontWeight: 600
     }

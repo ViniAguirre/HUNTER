@@ -273,7 +273,7 @@ const healthColors = { green:C.green, amber:C.amber, red:C.red, gray:C.gray };
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 const NAV_MAIN = [
   { key:'dashboard', label:'Dashboard', icon:'M4 4h7v7H4zM13 4h7v7h-7zM13 13h7v7h-7zM4 13h7v7H4z' },
-  { key:'buscas', label:'Buscas', icon:'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-4.3-4.3' },
+  { key:'buscas', label:'Radares', icon:'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-4.3-4.3' },
   { key:'leads', label:'Leads', icon:'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM12 3v3M12 18v3M3 12h3M18 12h3' },
 ];
 // acesso: 'master' → só o login MASTER da Hunter (dados sigilosos: quais APIs
@@ -410,9 +410,9 @@ function Sidebar({ screen, onNav, onLogout, user }) {
 const TITLES = {
   dashboard: ['Dashboard', 'Visão geral da operação'],
   leads: ['Leads', 'Curadoria e envio de leads qualificados'],
-  buscas: ['Buscas', 'Gerencie suas torneiras de leads'],
-  buscaDetail: ['Detalhe da busca', 'Produção e leads desta busca'],
-  nova: ['Nova busca', 'Configure uma nova torneira de leads'],
+  buscas: ['Radares', 'Gerencie seus radares de leads'],
+  buscaDetail: ['Detalhe do Radar', 'Produção e leads deste radar'],
+  nova: ['Criar Radar', 'Configure um novo radar de leads'],
   integracoes: ['Integrações', 'Conexões com APIs e CRM'],
   usuarios: ['Usuários', 'Permissões e acessos'],
   config: ['Configurações', 'Parâmetros gerais do sistema'],
@@ -492,7 +492,7 @@ function Topbar({ screen, theme, onTheme, onNova, user }) {
           borderRadius:9, border:'none', background:'var(--gold)', color:'#0E1936', fontWeight:600,
           fontSize:13, fontFamily:'inherit', cursor:'pointer' }}>
           <Svg d="M12 5v14M5 12h14" color="#0E1936" w={16} h={16} sw={2}/>
-          Nova busca
+          Criar Radar
         </button>
         <ThemeToggle theme={theme} onToggle={onTheme}/>
         <SinoAlertas/>
@@ -530,7 +530,7 @@ function Dashboard({ onOpenBusca }) {
   const taxaQ = verificados ? Math.round(qual / verificados * 100) : 0;
 
   const metrics = [
-    { label:'Buscas ativas', value:fmtNum(metricas.buscasAtivas), icon:'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-4.3-4.3', iColor:C.blue, trend:'em produção', tColor:'var(--dim)' },
+    { label:'Radares ativos', value:fmtNum(metricas.buscasAtivas), icon:'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-4.3-4.3', iColor:C.blue, trend:'em produção', tColor:'var(--dim)' },
     { label:'Empresas encontradas', value:fmtNum(metricas.empresasEncontradas), icon:'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 3v3M12 18v3M3 12h3M18 12h3', iColor:C.gold, trend:`${fmtNum(verificados)} verificadas`, tColor:'var(--dim)' },
     { label:'Leads qualificados', value:fmtNum(metricas.leadsQualificados), icon:'M20 6L9 17l-5-5', iColor:C.green, trend:`${taxaQ}% aproveit. · ${fmtNum(fora)} fora do perfil`, tColor:'var(--dim)' },
     { label:'Enviados ao CRM', value:fmtNum(metricas.leadsCRM), icon:'M5 12h14M13 5l7 7-7 7', iColor:C.cyan, trend:'total enviado', tColor:'var(--dim)' },
@@ -559,11 +559,11 @@ function Dashboard({ onOpenBusca }) {
       <div style={{ display:'grid', gridTemplateColumns:'1.55fr 1fr', gap:16 }}>
         <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:'6px 6px 8px' }}>
           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'14px 16px 12px' }}>
-            <h3 style={{ fontSize:14, fontWeight:600, margin:0 }}>Buscas ativas</h3>
+            <h3 style={{ fontSize:14, fontWeight:600, margin:0 }}>Radares ativos</h3>
             <a onClick={() => onOpenBusca(null)} style={{ fontSize:12, color:C.blue, cursor:'pointer', textDecoration:'none' }}>Ver todas</a>
           </div>
           {buscasAtivas.length === 0 && (
-            <div style={{ padding:'20px 16px', fontSize:13, color:'var(--faint)' }}>Nenhuma busca ativa.</div>
+            <div style={{ padding:'20px 16px', fontSize:13, color:'var(--faint)' }}>Nenhum radar ativo.</div>
           )}
           {buscasAtivas.map(b => (
             <div key={b.id} onClick={() => onOpenBusca(b.id)} className="row-hover"
@@ -900,7 +900,7 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
           style={{ height:38, padding:'0 10px', borderRadius:9, border:'1px solid var(--border)', maxWidth:220,
             background:'var(--panel)', color: filterBusca ? 'var(--text)' : 'var(--dim)',
             fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>
-          <option value="">Todas as buscas</option>
+          <option value="">Todos os radares</option>
           {buscasOpts.map(b => <option key={b.id} value={b.id}>{b.nome}</option>)}
         </select>
         <select value={filterStatus} onChange={e => { setFilterStatus(e.target.value); setPage(1); }}
@@ -1055,7 +1055,7 @@ function Buscas({ onOpen }) {
 
   const excluir = async (e, b) => {
     e.stopPropagation();
-    if (!window.confirm(`Excluir a busca "${b.nome}"?\nOs leads dela serão removidos. As empresas continuam no histórico global.`)) return;
+    if (!window.confirm(`Excluir o radar "${b.nome}"?\nOs leads dele serão removidos. As empresas continuam no histórico global.`)) return;
     const r = await fetch('/api/buscas/' + b.id, { method:'DELETE', credentials:'same-origin' });
     if (!r.ok) { const d = await r.json().catch(()=>({})); window.alert(d.erro || 'Erro ao excluir.'); return; }
     carregar();
@@ -1085,7 +1085,7 @@ function Buscas({ onOpen }) {
           <div style={{ padding:'22px 18px', fontSize:13, color:'var(--faint)' }}>Carregando…</div>
         )}
         {buscas && buscas.length === 0 && (
-          <div style={{ padding:'22px 18px', fontSize:13, color:'var(--faint)' }}>Nenhuma busca encontrada.</div>
+          <div style={{ padding:'22px 18px', fontSize:13, color:'var(--faint)' }}>Nenhum radar encontrado.</div>
         )}
         {buscas && buscas.map(b => (
           <div key={b.id} onClick={() => onOpen(b.id)} className="row-hover"
@@ -1100,7 +1100,7 @@ function Buscas({ onOpen }) {
             <div style={{ fontSize:13, color:C.cyan }}>{fmtNum(b.enviados ?? b.crm)}</div>
             <div style={{ fontSize:12, color:'var(--faint)' }}>{timeAgo(b.ultima_ativ)}</div>
             <div>
-              <button onClick={(e) => excluir(e, b)} title="Excluir busca"
+              <button onClick={(e) => excluir(e, b)} title="Excluir radar"
                 style={{ width:30, height:30, borderRadius:8, border:'1px solid var(--border)', background:'transparent',
                   color:'var(--dim)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
                 <SvgMulti w={15} h={15} sw={1.7}><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6M10 11v6M14 11v6"/></SvgMulti>
@@ -1231,7 +1231,7 @@ function BuscaDetail({ buscaId, onBack, onOpenLead, onDuplicar }) {
     <div style={{ maxWidth:1180 }}>
       <button onClick={onBack} style={{ display:'flex', alignItems:'center', gap:6, background:'none',
         border:'none', color:'var(--dim)', fontSize:12.5, fontFamily:'inherit', cursor:'pointer',
-        marginBottom:14, padding:0 }}>‹ Voltar para buscas</button>
+        marginBottom:14, padding:0 }}>‹ Voltar para radares</button>
 
       <div style={{ display:'flex', alignItems:'flex-start', gap:14, marginBottom:20 }}>
         <div style={{ marginTop:4 }}><StatusDot color={healthColors[b.health]||C.gray} pulse={b.health==='green'}/></div>
@@ -1330,7 +1330,7 @@ function BuscaDetail({ buscaId, onBack, onOpenLead, onDuplicar }) {
 
       <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden' }}>
         <div style={{ padding:'15px 18px', borderBottom:'1px solid var(--border)' }}>
-          <h3 style={{ fontSize:14, fontWeight:600, margin:0 }}>Leads desta busca</h3>
+          <h3 style={{ fontSize:14, fontWeight:600, margin:0 }}>Leads deste radar</h3>
         </div>
         {leads.length === 0 && (
           <div style={{ padding:'22px 18px', fontSize:13, color:'var(--faint)' }}>Nenhum lead ainda.</div>
@@ -1591,7 +1591,7 @@ function NovaBusca({ onSalvar, inicial }) {
 
   const salvar = async () => {
     const nome = nomeRef.current?.value?.trim();
-    if (!nome) { alert('Informe o nome da busca.'); return; }
+    if (!nome) { alert('Informe o nome do radar.'); return; }
     if (tipo === 'lookalike' && cnpjsParsed.length < MIN_LOOKALIKE) {
       alert(`Poucos CNPJs válidos (${cnpjsParsed.length}). ` +
         `Para o sistema traçar um perfil médio confiável, envie ao menos ${MIN_LOOKALIKE} (recomendado 15+).`);
@@ -1607,7 +1607,7 @@ function NovaBusca({ onSalvar, inicial }) {
     }
     if (tipo === 'icp' && modoDesc === 'cnpja' && cnaeSel.length === 0 && keywords.length === 0 && municSel.length === 0) {
       const ok = window.confirm(
-        'Nenhuma atividade, palavra-chave ou município.\n\nA busca vai trazer empresas de TODOS os ramos' +
+        'Nenhuma atividade, palavra-chave ou município.\n\nO radar vai trazer empresas de TODOS os ramos' +
         (ufs.length ? ' da(s) UF(s) escolhida(s)' : ' do Brasil') +
         '. Para mirar o alvo, escolha uma atividade OU use a "palavra-chave no nome" (ex.: purificador, filtro).\n\nContinuar mesmo assim?'
       );
@@ -1650,7 +1650,7 @@ function NovaBusca({ onSalvar, inicial }) {
         headers:{ 'Content-Type':'application/json' },
         body: JSON.stringify({ nome, tipo, corte_score: corte, crm_auto: crmAuto, criterios })
       });
-      if (!r.ok) { const d = await r.json().catch(()=>({})); throw new Error(d.erro || 'Erro ao criar busca.'); }
+      if (!r.ok) { const d = await r.json().catch(()=>({})); throw new Error(d.erro || 'Erro ao criar radar.'); }
       onSalvar();
     } catch (e) {
       alert(e.message);
@@ -1993,7 +1993,7 @@ function NovaBusca({ onSalvar, inicial }) {
           <Svg d="M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"
             color="#FBBF24" w={20} h={20} sw={1.7} extra={{ flexShrink:0, marginTop:1 }}/>
           <div style={{ fontSize:12.5, lineHeight:1.5 }}>
-            <b>Critério muito amplo.</b> Sem atividade, palavra-chave ou município, a busca varre {ufs.length ? `todas as empresas de ${ufs.join('/')}` : 'o Brasil inteiro'} —
+            <b>Critério muito amplo.</b> Sem atividade, palavra-chave ou município, o radar varre {ufs.length ? `todas as empresas de ${ufs.join('/')}` : 'o Brasil inteiro'} —
             isso traz nicho errado e <b>consome muito crédito</b>. Escolha ao menos uma atividade, palavra-chave ou município.
           </div>
         </div>
@@ -2002,7 +2002,7 @@ function NovaBusca({ onSalvar, inicial }) {
       <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:20, marginBottom:18 }}>
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'18px 22px' }}>
           <div style={{ gridColumn:'1 / -1' }}>
-            <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>Nome da busca</label>
+            <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>Nome do Radar</label>
             <input ref={nomeRef} defaultValue={inicial?.nome ? inicial.nome + ' (cópia)' : ''} placeholder="Ex: Agências de marketing — Sul"
               style={{ width:'100%', height:40, borderRadius:9, border:'1px solid var(--border)',
                 background:'var(--panel2)', color:'var(--text)', padding:'0 12px', fontSize:13, fontFamily:'inherit' }}/>
@@ -2018,7 +2018,7 @@ function NovaBusca({ onSalvar, inicial }) {
               <span>permissivo</span><span>rigoroso</span>
             </div>
             <div style={{ fontSize:11, color:'var(--faint)', marginTop:8, lineHeight:1.4 }}>
-              O volume é controlado por um teto diário geral (em Configurações), não por busca — o Hunter faz várias
+              O volume é controlado por um teto diário geral (em Configurações), não por radar — o Hunter faz várias
               camadas de garimpo e qualificação, então o limite diário já basta.
             </div>
           </div>
@@ -2051,7 +2051,7 @@ function NovaBusca({ onSalvar, inicial }) {
             border:'none', background:'var(--gold)', color:'#0E1936', fontWeight:600, fontSize:14,
             fontFamily:'inherit', cursor:'pointer', opacity:saving?.6:1 }}>
           <Svg d="M5 12h14M13 5l7 7-7 7" color="#0E1936" w={16} h={16} sw={2}/>
-          {saving ? 'Criando…' : 'Ligar busca'}
+          {saving ? 'Criando radar…' : 'Criar Radar'}
         </button>
       </div>
     </div>
@@ -2611,7 +2611,7 @@ function Config() {
   const limparTudo = async () => {
     const total = (base?.buscas || 0) + (base?.leads || 0);
     if (!window.confirm(
-      `ATENÇÃO: isso apaga TODA a base operacional — ${base?.buscas || 0} busca(s), ${base?.leads || 0} lead(s) e ` +
+      `ATENÇÃO: isso apaga TODA a base operacional — ${base?.buscas || 0} radar(es), ${base?.leads || 0} lead(s) e ` +
       `${base?.empresas || 0} empresa(s) do cache. Mantém usuários, integrações e configurações. NÃO dá pra desfazer.\n\n` +
       `Digite OK na próxima janela para confirmar.`
     )) return;
@@ -2630,8 +2630,8 @@ function Config() {
 
   const limparDemo = async () => {
     if (!window.confirm(
-      `Isso vai remover as buscas de demonstração e ${demo?.leads || 0} lead(s) que elas geraram ` +
-      `(inclui os leads-exemplo e o que as buscas demo descobriram com critério amplo). ` +
+      `Isso vai remover os radares de demonstração e ${demo?.leads || 0} lead(s) que eles geraram ` +
+      `(inclui os leads-exemplo e o que os radares demo descobriram com critério amplo). ` +
       `As empresas ficam no cache. Não dá pra desfazer. Continuar?`
     )) return;
     setLimpandoDemo(true);
@@ -2639,7 +2639,7 @@ function Config() {
       const r = await fetch('/api/admin/limpar-demo', { method:'POST', credentials:'same-origin' });
       const d = await r.json();
       if (!r.ok) throw new Error(d.erro || 'Falha ao limpar.');
-      setMsg({ ok:true, txt:`Removidas ${d.buscas_removidas} busca(s) e ${d.leads_removidos} lead(s) de demonstração.` });
+      setMsg({ ok:true, txt:`Removidos ${d.buscas_removidas} radar(es) e ${d.leads_removidos} lead(s) de demonstração.` });
       carregarDemo();
     } catch (e) { setMsg({ ok:false, txt:e.message }); }
     finally { setLimpandoDemo(false); }
@@ -2697,20 +2697,20 @@ function Config() {
     <div style={{ maxWidth:720, display:'flex', flexDirection:'column', gap:16 }}>
       <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:22 }}>
         <h3 style={{ fontSize:14, fontWeight:600, margin:'0 0 4px' }}>Parâmetros padrão</h3>
-        <p style={{ fontSize:12.5, color:'var(--faint)', margin:'0 0 18px' }}>Valores iniciais aplicados a novas buscas e ao motor.</p>
+        <p style={{ fontSize:12.5, color:'var(--faint)', margin:'0 0 18px' }}>Valores iniciais aplicados a novos radares e ao motor.</p>
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:16 }}>
           {numField('Limite diário de leads', 'limite_diario', 'leads/dia')}
           {numField('Corte de score', 'corte_padrao', 'pts')}
           {numField('TTL de cache', 'ttl_cache_dias', 'dias')}
         </div>
         <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:12, lineHeight:1.5 }}>
-          O <b>limite diário</b> é o teto de leads novos que o motor capta por dia somando todas as buscas — protege o
+          O <b>limite diário</b> é o teto de leads novos que o motor capta por dia somando todos os radares — protege o
           orçamento. Ao atingi-lo, a captação pausa e retoma no dia seguinte. O motor também divide esse número por 24h
-          e respeita uma cota por hora, pra não gastar o dia inteiro logo na primeira hora se a busca ficar ligada
+          e respeita uma cota por hora, pra não gastar o dia inteiro logo na primeira hora se o radar ficar ligado
           direto — a captação fica espalhada ao longo do dia. 0 = sem teto.
         </div>
         <div style={{ borderTop:'1px solid var(--border)', marginTop:16, paddingTop:16 }}>
-          <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:9 }}>Modo de descoberta padrão <span style={{ color:'var(--faint)' }}>(cada busca pode trocar)</span></label>
+          <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:9 }}>Modo de descoberta padrão <span style={{ color:'var(--faint)' }}>(cada radar pode trocar)</span></label>
           <div style={{ display:'flex', gap:8 }}>
             {[['cnpja','Por CNPJ','econômico'],['web','Pela internet','pega nichos, mais caro']].map(([k,t,d]) => {
               const on = (cfg.descoberta_modo_padrao || 'cnpja') === k;
@@ -2783,7 +2783,7 @@ function Config() {
           </div>
         </div>
         <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:10, lineHeight:1.4 }}>
-          Vale para todas as buscas. Cada busca também pode forçar o envio automático na sua própria configuração.
+          Vale para todos os radares. Cada radar também pode forçar o envio automático na sua própria configuração.
         </div>
       </div>
 
@@ -2806,12 +2806,12 @@ function Config() {
           </div>
           <div>
             <div style={{ fontSize:13.5, fontWeight:500 }}>
-              {cfg.crm_lookalike_auto ? 'Busca "Semelhantes — clientes do CRM" ativa' : 'Aprendizado automático desativado'}
+              {cfg.crm_lookalike_auto ? 'Radar "Semelhantes — clientes do CRM" ativo' : 'Aprendizado automático desativado'}
             </div>
             <div style={{ fontSize:12, color:'var(--faint)', marginTop:2 }}>
               {cfg.crm_lookalike_auto
-                ? 'A cada conversão recebida, o Hunter cria/atualiza uma busca lookalike com esses clientes.'
-                : 'As conversões são guardadas, mas não geram busca automática.'}
+                ? 'A cada conversão recebida, o Hunter cria/atualiza um radar lookalike com esses clientes.'
+                : 'As conversões são guardadas, mas não geram radar automático.'}
             </div>
           </div>
         </div>
@@ -2851,7 +2851,7 @@ function Config() {
             {sementes?.total ?? 0}
           </span>
           <div style={{ fontSize:12, color:'var(--faint)', lineHeight:1.4 }}>
-            clientes já na lista de semelhantes{sementes?.busca ? ` · busca ${sementes.busca.status}` : ''}.
+            clientes já na lista de semelhantes{sementes?.busca ? ` · radar ${sementes.busca.status}` : ''}.
             {sementes?.total > 0 && sementes?.ultimas?.[0] && ` Último: ${String(sementes.ultimas[0].cnpj).replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5')}.`}
           </div>
         </div>
@@ -2864,7 +2864,7 @@ function Config() {
 
       <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:22 }}>
         <h3 style={{ fontSize:14, fontWeight:600, margin:'0 0 4px' }}>Alertas</h3>
-        <p style={{ fontSize:12.5, color:'var(--faint)', margin:'0 0 18px' }}>Quando considerar uma busca parada, e para quem avisar.</p>
+        <p style={{ fontSize:12.5, color:'var(--faint)', margin:'0 0 18px' }}>Quando considerar um radar parado, e para quem avisar.</p>
         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
           {numField('Parada considerada após', 'parada_min', 'min')}
           <div>
@@ -2879,9 +2879,9 @@ function Config() {
         <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:22 }}>
           <h3 style={{ fontSize:14, fontWeight:600, margin:'0 0 4px' }}>Manutenção — dados de demonstração</h3>
           <p style={{ fontSize:12.5, color:'var(--faint)', margin:'0 0 16px', lineHeight:1.5 }}>
-            Detectei <b style={{ color:'var(--text)' }}>{demo.buscas} busca(s)</b> de demonstração e
-            {' '}<b style={{ color:'var(--text)' }}>{demo.leads} lead(s)</b> gerados por elas (dados de exemplo do primeiro
-            boot + o que essas buscas descobriram com critério amplo). Remova para o painel refletir só o seu trabalho real.
+            Detectei <b style={{ color:'var(--text)' }}>{demo.buscas} radar(es)</b> de demonstração e
+            {' '}<b style={{ color:'var(--text)' }}>{demo.leads} lead(s)</b> gerados por eles (dados de exemplo do primeiro
+            boot + o que esses radares descobriram com critério amplo). Remova para o painel refletir só o seu trabalho real.
             As empresas ficam no cache (grátis).
           </p>
           <button onClick={limparDemo} disabled={limpandoDemo}
@@ -2897,7 +2897,7 @@ function Config() {
         <div style={{ background:'var(--panel)', border:'1px solid color-mix(in srgb, '+C.red+' 40%, var(--border))', borderRadius:14, padding:22 }}>
           <h3 style={{ fontSize:14, fontWeight:600, margin:'0 0 4px', color:C.red }}>Zona de perigo — apagar tudo</h3>
           <p style={{ fontSize:12.5, color:'var(--faint)', margin:'0 0 16px', lineHeight:1.5 }}>
-            Remove <b style={{ color:'var(--text)' }}>toda</b> a base operacional: {fmtNum(base.buscas)} busca(s),
+            Remove <b style={{ color:'var(--text)' }}>toda</b> a base operacional: {fmtNum(base.buscas)} radar(es),
             {' '}{fmtNum(base.leads)} lead(s) e {fmtNum(base.empresas)} empresa(s) do cache. Usuários, integrações
             (chaves) e configurações são mantidos. Use para começar do zero. <b>Irreversível.</b>
           </p>
@@ -3012,7 +3012,7 @@ function Monitor() {
           <h3 style={{ fontSize:14, fontWeight:600, margin:'0 0 12px' }}>Resumo do motor</h3>
           <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
             <div style={{ display:'flex', justifyContent:'space-between', fontSize:12.5 }}>
-              <span style={{ color:'var(--faint)' }}>Buscas ativas</span>
+              <span style={{ color:'var(--faint)' }}>Radares ativos</span>
               <span style={{ fontWeight:600 }}>{data.buscas_ativas}</span>
             </div>
             <div style={{ display:'flex', justifyContent:'space-between', fontSize:12.5 }}>
