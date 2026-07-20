@@ -3,7 +3,7 @@ FROM node:20-alpine
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm install --omit=dev
-COPY server.js worker.js ./
+COPY server.js worker.js tenant.js ./
 COPY jobs ./jobs
 COPY providers ./providers
 COPY public ./public
