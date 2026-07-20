@@ -404,6 +404,14 @@ async function processarOffice(pool, queues, busca_id, office, counters) {
     counters.novos++;
   }
 
+  // Registra que ESTE tenant descobriu o CNPJ (estado 'coletado', sem rebaixar
+  // estados superiores). É o que faz "empresas encontradas" contar por cliente
+  // mesmo com o cadastro `empresas` sendo global.
+  await pool.query(
+    `INSERT INTO empresa_tenant_estado (cnpj, estado_global) VALUES ($1, 'coletado')
+     ON CONFLICT (cnpj, tenant_id) DO NOTHING`, [office.cnpj]
+  );
+
   await queues.enriquecimento.add('enriquecimento',
     { cnpj: office.cnpj, busca_id },
     { removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 3, backoff: { type: 'exponential', delay: 5000 } }

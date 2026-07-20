@@ -6,7 +6,7 @@
  */
 const { Worker, Queue } = require('bullmq');
 const { Pool } = require('pg');
-const { TENANT_ID, ligarTenantNoPool, migrarSingletonParaTenant } = require('./tenant');
+const { TENANT_ID, ligarTenantNoPool, exigirRlsEnforcavel, migrarSingletonParaTenant } = require('./tenant');
 
 const REDIS_OPTS = {
   host: process.env.REDIS_HOST || 'hunter-redis',
@@ -46,19 +46,24 @@ const validacaoFn = require('./jobs/validacao');
 const swotFn = require('./jobs/swot');
 const crmFn = require('./jobs/crm');
 
-const workers = {
-  descoberta: new Worker('hunter-descoberta', job => descobertaFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 2 }),
-  enriquecimento: new Worker('hunter-enriquecimento', job => enriquecimentoFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 5 }),
-  filtroContador: new Worker('hunter-filtro_contador', job => filtroContadorFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 10 }),
-  score1: new Worker('hunter-score1', job => score1Fn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 10 }),
-  validacao: new Worker('hunter-validacao', job => validacaoFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 4 }),
-  swot: new Worker('hunter-swot', job => swotFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 3 }),
-  crm: new Worker('hunter-crm', job => crmFn(job, pool), { connection: REDIS_OPTS, concurrency: 5 }),
-};
+// Preenchido só DEPOIS da trava anti-superuser passar (ver boot() no fim) —
+// nenhum job é consumido antes de confirmar que o RLS vale pro usuário do banco.
+const workers = {};
 
-for (const [nome, w] of Object.entries(workers)) {
-  w.on('completed', job => console.log(`[${nome}] job ${job.id} ok`));
-  w.on('failed', (job, err) => console.error(`[${nome}] job ${job?.id} falhou: ${err.message}`));
+function iniciarWorkers() {
+  Object.assign(workers, {
+    descoberta: new Worker('hunter-descoberta', job => descobertaFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 2 }),
+    enriquecimento: new Worker('hunter-enriquecimento', job => enriquecimentoFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 5 }),
+    filtroContador: new Worker('hunter-filtro_contador', job => filtroContadorFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 10 }),
+    score1: new Worker('hunter-score1', job => score1Fn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 10 }),
+    validacao: new Worker('hunter-validacao', job => validacaoFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 4 }),
+    swot: new Worker('hunter-swot', job => swotFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 3 }),
+    crm: new Worker('hunter-crm', job => crmFn(job, pool), { connection: REDIS_OPTS, concurrency: 5 }),
+  });
+  for (const [nome, w] of Object.entries(workers)) {
+    w.on('completed', job => console.log(`[${nome}] job ${job.id} ok`));
+    w.on('failed', (job, err) => console.error(`[${nome}] job ${job?.id} falhou: ${err.message}`));
+  }
 }
 
 // ── scheduler: respeita o ritmo (leads/h) de cada busca Ativa ───────────────
@@ -95,7 +100,7 @@ async function runScheduler() {
 // deploy pegou a imagem nova). Bump WORKER_VERSAO a cada mudança relevante aqui.
 // motor_status agora é 1 linha POR TENANT (ver tenant.js) — cada worker (de
 // cada cliente) só enxerga/atualiza a própria linha.
-const WORKER_VERSAO = 'multi-tenant-2026-07-20a';
+const WORKER_VERSAO = 'multi-tenant-rls-2026-07-20b';
 async function registrarBoot() {
   try {
     await pool.query(`CREATE TABLE IF NOT EXISTS motor_status (worker_boot timestamptz, worker_versao text)`);
@@ -107,10 +112,22 @@ async function registrarBoot() {
     console.log(`[worker] tenant=${TENANT_ID} versão ${WORKER_VERSAO} — boot registrado`);
   } catch (e) { console.error('[worker] registrarBoot:', e.message); }
 }
-registrarBoot();
 
-setInterval(runScheduler, 60_000);
-runScheduler();
+// Boot em ordem: PRIMEIRO a trava anti-superuser (se o usuário do banco ignora
+// RLS, sai na hora — o Swarm reinicia e re-tenta até o role ser corrigido, sem
+// nunca consumir job com risco de vazamento entre tenants), só depois filas e
+// scheduler começam.
+(async () => {
+  try { await exigirRlsEnforcavel(pool); } catch (e) {
+    console.error('[worker] não deu pra verificar o role do banco:', e.message);
+    process.exit(1);
+  }
+  await registrarBoot();
+  iniciarWorkers();
+  setInterval(runScheduler, 60_000);
+  runScheduler();
+  console.log(`[worker] Hunter Motor iniciado (tenant=${TENANT_ID}) — aguardando jobs.`);
+})();
 
 async function shutdown() {
   console.log('[worker] desligando…');
@@ -120,5 +137,3 @@ async function shutdown() {
 }
 process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
-
-console.log('[worker] Hunter Motor iniciado — aguardando jobs.');

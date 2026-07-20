@@ -13,7 +13,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
 const { Pool } = require('pg');
-const { TENANT_ID, ligarTenantNoPool, tenantizarTabela, migrarSingletonParaTenant } = require('./tenant');
+const { TENANT_ID, TENANT_LEGADO, ligarTenantNoPool, exigirRlsEnforcavel, tenantizarTabela, migrarSingletonParaTenant } = require('./tenant');
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'troque-este-segredo';
@@ -202,6 +202,11 @@ async function init() {
     }
   }
 
+  // Multi-tenant só é seguro se o RLS valer pro usuário do app — superuser
+  // ignora RLS e vazaria os dados de um cliente pro outro. Checa ANTES de
+  // qualquer migração e recusa subir se o usuário for privilegiado demais.
+  await exigirRlsEnforcavel(pool);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS usuarios (
       id            SERIAL PRIMARY KEY,
@@ -317,22 +322,26 @@ async function init() {
     CREATE INDEX IF NOT EXISTS idx_ete_tenant ON empresa_tenant_estado(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_ete_estado ON empresa_tenant_estado(estado_global);
   `);
-  await tenantizarTabela(pool, 'empresa_tenant_estado');
   // Migração única: bancos de antes do multi-tenant tinham estado_global DENTRO
   // de `empresas` (só existia o cliente Antídoto). Copia esse histórico pra cá
-  // ANTES de derrubar a coluna antiga — só roda pro tenant original (um cliente
-  // novo, como a GK, começa com a base zerada, sem herdar estado de ninguém).
+  // ANTES de derrubar a coluna antiga — SEMPRE pro TENANT_LEGADO, não importa
+  // qual stack rode esta migração primeiro (o dono do histórico pré-migração é
+  // sempre a instalação original; condicionar ao TENANT_ID da sessão fez a GK
+  // dropar a coluna sem copiar quando subiu antes do Antídoto). A cópia roda
+  // ANTES do tenantizarTabela de propósito: o RLS, uma vez ligado, barraria
+  // (WITH CHECK) inserir linhas de outro tenant a partir desta sessão.
   const { rows: [colAntiga] } = await pool.query(
     `SELECT 1 FROM information_schema.columns WHERE table_name='empresas' AND column_name='estado_global'`
   );
-  if (colAntiga && TENANT_ID === 'antidoto') {
+  if (colAntiga) {
     await pool.query(
       `INSERT INTO empresa_tenant_estado (cnpj, tenant_id, estado_global)
        SELECT cnpj, $1, estado_global FROM empresas
-       ON CONFLICT (cnpj, tenant_id) DO NOTHING`, [TENANT_ID]);
-    console.log('[init] estado_global migrado de empresas -> empresa_tenant_estado (tenant antidoto).');
+       ON CONFLICT (cnpj, tenant_id) DO NOTHING`, [TENANT_LEGADO]);
+    console.log(`[init] estado_global migrado de empresas -> empresa_tenant_estado (tenant ${TENANT_LEGADO}).`);
   }
   await pool.query(`ALTER TABLE empresas DROP COLUMN IF EXISTS estado_global`);
+  await tenantizarTabela(pool, 'empresa_tenant_estado');
 
   // integracoes: chaves dos providers de verificação/CRM, plugáveis e em cascata.
   // Suporta N providers (não é fixo) — cada um com ordem e on/off. A key é
@@ -733,9 +742,10 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
     const [metricasRes, buscasRes, atividadeRes] = await Promise.all([
       pool.query(`SELECT
         (SELECT COUNT(*)::int FROM buscas WHERE status='Ativa') AS buscas_ativas,
-        -- Empresas encontradas = todo o universo já descoberto (dedupado por CNPJ),
-        -- independente de ter virado lead ou não.
-        (SELECT COUNT(*)::int FROM empresas) AS empresas_total,
+        -- Empresas encontradas = universo descoberto POR ESTE CLIENTE (dedupado
+        -- por CNPJ). Conta na empresa_tenant_estado (escopada por RLS) e não na
+        -- tabela empresas, que é o cadastro global compartilhado entre clientes.
+        (SELECT COUNT(*)::int FROM empresa_tenant_estado) AS empresas_total,
         -- Leads só existem se qualificaram no Score 1 — leads = qualificados.
         (SELECT COUNT(*)::int FROM leads) AS qualificados,
         -- Verificadas mas fora do perfil = reprovadas na segmentação (nunca viraram lead).
