@@ -15,7 +15,7 @@ module.exports = async function enriquecimento(job, pool, queues) {
 
   const [{ rows: [empresa] }, { rows: [cfg] }] = await Promise.all([
     pool.query(`SELECT cnpj, atualizado_em FROM empresas WHERE cnpj=$1`, [cnpj]),
-    pool.query(`SELECT ttl_cache_dias FROM config WHERE id=1`),
+    pool.query(`SELECT ttl_cache_dias FROM config`),
   ]);
   const ttlDias = cfg?.ttl_cache_dias || 30;
 

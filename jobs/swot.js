@@ -12,7 +12,7 @@ module.exports = async function swot(job, pool, queues) {
   const { cnpj, busca_id, lead_id } = job.data;
 
   const { rows: [busca] } = await pool.query(`SELECT criterios, crm_auto FROM buscas WHERE id=$1`, [busca_id]);
-  const { rows: [cfg] } = await pool.query(`SELECT crm_auto_global FROM config WHERE id=1`);
+  const { rows: [cfg] } = await pool.query(`SELECT crm_auto_global FROM config`);
   const crmAuto = !!(busca?.crm_auto || cfg?.crm_auto_global);
 
   // Integrações de IA ativas em ordem de preferência (OpenRouter antes de

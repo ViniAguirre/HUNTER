@@ -6,6 +6,7 @@
  */
 const { Worker, Queue } = require('bullmq');
 const { Pool } = require('pg');
+const { TENANT_ID, ligarTenantNoPool, migrarSingletonParaTenant } = require('./tenant');
 
 const REDIS_OPTS = {
   host: process.env.REDIS_HOST || 'hunter-redis',
@@ -25,6 +26,7 @@ const pool = new Pool({
   database: process.env.PGDATABASE,
   ssl: process.env.PGSSL === 'true' ? { rejectUnauthorized: false } : false,
 });
+ligarTenantNoPool(pool);
 
 const queues = {
   descoberta: new Queue('hunter-descoberta', { connection: REDIS_OPTS }),
@@ -91,14 +93,18 @@ async function runScheduler() {
 
 // Marca a versão + hora de boot do worker (pra confirmar, sem adivinhação, se o
 // deploy pegou a imagem nova). Bump WORKER_VERSAO a cada mudança relevante aqui.
-const WORKER_VERSAO = 'catalogo-conteudo-2026-07-14e';
+// motor_status agora é 1 linha POR TENANT (ver tenant.js) — cada worker (de
+// cada cliente) só enxerga/atualiza a própria linha.
+const WORKER_VERSAO = 'multi-tenant-2026-07-20a';
 async function registrarBoot() {
   try {
-    await pool.query(`CREATE TABLE IF NOT EXISTS motor_status (id int PRIMARY KEY, worker_boot timestamptz, worker_versao text)`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS motor_status (worker_boot timestamptz, worker_versao text)`);
+    await migrarSingletonParaTenant(pool, 'motor_status');
     await pool.query(
-      `INSERT INTO motor_status (id, worker_boot, worker_versao) VALUES (1, now(), $1)
-       ON CONFLICT (id) DO UPDATE SET worker_boot=now(), worker_versao=EXCLUDED.worker_versao`, [WORKER_VERSAO]);
-    console.log(`[worker] versão ${WORKER_VERSAO} — boot registrado`);
+      `INSERT INTO motor_status (tenant_id, worker_boot, worker_versao) VALUES ($1, now(), $2)
+       ON CONFLICT (tenant_id) DO UPDATE SET worker_boot=now(), worker_versao=EXCLUDED.worker_versao`,
+      [TENANT_ID, WORKER_VERSAO]);
+    console.log(`[worker] tenant=${TENANT_ID} versão ${WORKER_VERSAO} — boot registrado`);
   } catch (e) { console.error('[worker] registrarBoot:', e.message); }
 }
 registrarBoot();

@@ -82,9 +82,15 @@ module.exports = async function descoberta(job, pool, queues) {
       //    e reprocessa com busca de contato fresca.
       const { rows: [temLead] } = await pool.query(`SELECT 1 FROM leads WHERE cnpj=$1 LIMIT 1`, [cnpj]);
       if (temLead) { counters.pulados++; continue; }
+      const { rows: [estadoAtual] } = await pool.query(
+        `SELECT estado_global FROM empresa_tenant_estado WHERE cnpj=$1`, [cnpj]);
+      if (estadoAtual && estadoAtual.estado_global !== 'coletado') {
+        await pool.query(`UPDATE empresas SET contatos_verificados='[]'::jsonb WHERE cnpj=$1`, [cnpj]);
+      }
       await pool.query(
-        `UPDATE empresas SET estado_global='coletado', contatos_verificados='[]'::jsonb
-         WHERE cnpj=$1 AND estado_global <> 'coletado'`, [cnpj]);
+        `INSERT INTO empresa_tenant_estado (cnpj, estado_global) VALUES ($1, 'coletado')
+         ON CONFLICT (cnpj, tenant_id) DO UPDATE SET estado_global='coletado', atualizado_em=now()
+         WHERE empresa_tenant_estado.estado_global <> 'coletado'`, [cnpj]);
       let { rows: [emp] } = await pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [cnpj]);
       if (!emp) {
         // Consulta o cadastro no endpoint aberto (grátis). Se bater no limite de
@@ -142,7 +148,7 @@ module.exports = async function descoberta(job, pool, queues) {
 // (config.limite_diario). Usado como saída rápida aqui; o Score 1 refaz esta
 // mesma consulta na hora exata de criar o lead (checagem precisa).
 async function orcamentoHoje(pool) {
-  const { rows: [cfg] } = await pool.query(`SELECT limite_diario FROM config WHERE id=1`);
+  const { rows: [cfg] } = await pool.query(`SELECT limite_diario FROM config`);
   const limite = cfg?.limite_diario ?? 350;
   if (!limite) return Number.MAX_SAFE_INTEGER;   // 0 = sem teto
   const { rows: [{ n }] } = await pool.query(
@@ -153,7 +159,7 @@ async function orcamentoHoje(pool) {
 
 // Cota da HORA atual (limite diário / 24, arredondado pra cima) — ver score1.js.
 async function orcamentoHora(pool) {
-  const { rows: [cfg] } = await pool.query(`SELECT limite_diario FROM config WHERE id=1`);
+  const { rows: [cfg] } = await pool.query(`SELECT limite_diario FROM config`);
   const limite = cfg?.limite_diario ?? 350;
   if (!limite) return Number.MAX_SAFE_INTEGER;
   const porHora = Math.max(1, Math.ceil(limite / 24));
@@ -166,7 +172,7 @@ async function orcamentoHora(pool) {
 const semAcentoLower = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 
 async function modoPadrao(pool) {
-  try { const { rows: [c] } = await pool.query(`SELECT descoberta_modo_padrao FROM config WHERE id=1`); return c?.descoberta_modo_padrao || 'cnpja'; }
+  try { const { rows: [c] } = await pool.query(`SELECT descoberta_modo_padrao FROM config`); return c?.descoberta_modo_padrao || 'cnpja'; }
   catch { return 'cnpja'; }
 }
 
@@ -201,7 +207,7 @@ async function descobrirWebFirst(pool, queues, busca_id, criterios, cnpjaKey) {
   // que o modo Por CNPJ (que é ~1 crédito por 100 empresas). Teto diário próprio
   // + interruptor, pra não gastar sem controle enquanto o custo real não é medido.
   const { rows: [cfgWeb] } = await pool.query(
-    `SELECT web_paid_lookup_ativo, web_paid_lookup_limite FROM config WHERE id=1`
+    `SELECT web_paid_lookup_ativo, web_paid_lookup_limite FROM config`
   );
   const pagoAtivo = cfgWeb?.web_paid_lookup_ativo ?? true;
   const pagoLimite = cfgWeb?.web_paid_lookup_limite ?? 30;
@@ -265,7 +271,7 @@ async function contadorHoje(pool, chave) {
 async function incrementarContador(pool, chave) {
   await pool.query(
     `INSERT INTO contadores (chave, dia, valor) VALUES ($1, CURRENT_DATE, 1)
-     ON CONFLICT (chave, dia) DO UPDATE SET valor = contadores.valor + 1`, [chave]
+     ON CONFLICT (tenant_id, chave, dia) DO UPDATE SET valor = contadores.valor + 1`, [chave]
   );
 }
 
@@ -280,7 +286,7 @@ async function contadorHora(pool, chave) {
 async function incrementarContadorHora(pool, chave) {
   await pool.query(
     `INSERT INTO contadores_hora (chave, dia, hora, valor) VALUES ($1, CURRENT_DATE, EXTRACT(HOUR FROM now()), 1)
-     ON CONFLICT (chave, dia, hora) DO UPDATE SET valor = contadores_hora.valor + 1`, [chave]
+     ON CONFLICT (tenant_id, chave, dia, hora) DO UPDATE SET valor = contadores_hora.valor + 1`, [chave]
   );
 }
 
@@ -383,11 +389,16 @@ async function processarOffice(pool, queues, busca_id, office, counters) {
   if (!office.cnpj || office.cnpj.length !== 14) return;
   if (office.situacao && !/ativa/i.test(office.situacao)) { counters.pulados++; return; }
 
-  const { rows: [existente] } = await pool.query(
-    `SELECT estado_global FROM empresas WHERE cnpj=$1`, [office.cnpj]
+  // Trava é POR TENANT (empresa_tenant_estado); o cadastro em si (empresas) é
+  // global e compartilhado — por isso são duas checagens separadas.
+  const { rows: [travaTenant] } = await pool.query(
+    `SELECT estado_global FROM empresa_tenant_estado WHERE cnpj=$1`, [office.cnpj]
   );
-  if (existente && TRAVADOS.includes(existente.estado_global)) { counters.pulados++; return; }
+  if (travaTenant && TRAVADOS.includes(travaTenant.estado_global)) { counters.pulados++; return; }
 
+  const { rows: [existente] } = await pool.query(
+    `SELECT 1 FROM empresas WHERE cnpj=$1`, [office.cnpj]
+  );
   if (!existente) {
     await upsertEmpresa(pool, office);
     counters.novos++;

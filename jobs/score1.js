@@ -97,7 +97,9 @@ module.exports = async function score1(job, pool, queues) {
   // Trava o CNPJ pra sempre: nenhuma outra busca (nem esta, de novo) volta a
   // criar lead pra ele. Só sobe o estado (nunca rebaixa de em_crm pra qualificado).
   await pool.query(
-    `UPDATE empresas SET estado_global='qualificado' WHERE cnpj=$1 AND estado_global='coletado'`, [cnpj]
+    `INSERT INTO empresa_tenant_estado (cnpj, estado_global) VALUES ($1, 'qualificado')
+     ON CONFLICT (cnpj, tenant_id) DO UPDATE SET estado_global='qualificado', atualizado_em=now()
+     WHERE empresa_tenant_estado.estado_global='coletado'`, [cnpj]
   );
 
   // Passou no corte → validação de contato do decisor (que depois chama o
@@ -115,7 +117,7 @@ module.exports = async function score1(job, pool, queues) {
 
 // Mesma checagem usada pela descoberta (saída rápida); aqui é a fonte da verdade.
 async function orcamentoHoje(pool) {
-  const { rows: [cfg] } = await pool.query(`SELECT limite_diario FROM config WHERE id=1`);
+  const { rows: [cfg] } = await pool.query(`SELECT limite_diario FROM config`);
   const limite = cfg?.limite_diario ?? 350;
   if (!limite) return Number.MAX_SAFE_INTEGER;
   const { rows: [{ n }] } = await pool.query(
@@ -129,7 +131,7 @@ async function orcamentoHoje(pool) {
 // se a busca ficar ligada 24h. O teto diário acima continua valendo por cima
 // disso — o menor dos dois é quem trava.
 async function orcamentoHora(pool) {
-  const { rows: [cfg] } = await pool.query(`SELECT limite_diario FROM config WHERE id=1`);
+  const { rows: [cfg] } = await pool.query(`SELECT limite_diario FROM config`);
   const limite = cfg?.limite_diario ?? 350;
   if (!limite) return Number.MAX_SAFE_INTEGER;
   const porHora = Math.max(1, Math.ceil(limite / 24));

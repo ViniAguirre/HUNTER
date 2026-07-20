@@ -69,7 +69,10 @@ module.exports = async function crm(job, pool) {
   );
   // Trava definitiva: uma vez no CRM, nenhuma busca (nem outra, nem esta de
   // novo) volta a criar lead pra esse CNPJ.
-  await pool.query(`UPDATE empresas SET estado_global='em_crm' WHERE cnpj=$1`, [lead.cnpj]);
+  await pool.query(
+    `INSERT INTO empresa_tenant_estado (cnpj, estado_global) VALUES ($1, 'em_crm')
+     ON CONFLICT (cnpj, tenant_id) DO UPDATE SET estado_global='em_crm', atualizado_em=now()`, [lead.cnpj]
+  );
 
   return { ok: true, lead_id, provedor: ig.provedor };
 };

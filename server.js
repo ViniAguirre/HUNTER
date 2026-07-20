@@ -13,6 +13,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
 const { Pool } = require('pg');
+const { TENANT_ID, ligarTenantNoPool, tenantizarTabela, migrarSingletonParaTenant } = require('./tenant');
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'troque-este-segredo';
@@ -36,6 +37,7 @@ const pool = new Pool({
   database: process.env.PGDATABASE,
   ssl: process.env.PGSSL === 'true' ? { rejectUnauthorized: false } : false,
 });
+ligarTenantNoPool(pool);
 
 // Conexão com o Redis do motor (opcional — só pra leitura de stats das filas).
 let monitorQueues = null;
@@ -290,16 +292,47 @@ async function init() {
       contatos_verificados JSONB NOT NULL DEFAULT '[]',
       contato_receita      JSONB NOT NULL DEFAULT '[]',
       flag_contador        BOOLEAN NOT NULL DEFAULT false,
-      estado_global        TEXT NOT NULL DEFAULT 'coletado'
-                             CHECK (estado_global IN ('coletado','qualificado','em_crm','descarte_duro')),
       origem_descoberta    TEXT,
       primeira_coleta      TIMESTAMPTZ NOT NULL DEFAULT now(),
       atualizado_em        TIMESTAMPTZ NOT NULL DEFAULT now()
     );
-    CREATE INDEX IF NOT EXISTS idx_empresas_estado ON empresas(estado_global);
     CREATE INDEX IF NOT EXISTS idx_empresas_uf     ON empresas(uf);
     CREATE INDEX IF NOT EXISTS idx_empresas_cnae   ON empresas(cnae);
   `);
+  // `empresas` é a memória cadastral/de contato — GLOBAL, compartilhada entre
+  // todos os clientes (reusa o cadastro grátis da Receita e o contato já
+  // achado, sem gastar de novo). Mas o estado de qualificação (travado ou não
+  // num CRM) é POR CLIENTE: um CNPJ já enviado ao CRM do cliente A não pode
+  // travar o mesmo CNPJ pro cliente B — por isso vira tabela própria, com
+  // tenant_id na chave.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS empresa_tenant_estado (
+      cnpj          TEXT NOT NULL REFERENCES empresas(cnpj) ON DELETE CASCADE,
+      tenant_id     TEXT NOT NULL DEFAULT current_setting('app.tenant_id', true),
+      estado_global TEXT NOT NULL DEFAULT 'coletado'
+                     CHECK (estado_global IN ('coletado','qualificado','em_crm','descarte_duro')),
+      atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (cnpj, tenant_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ete_tenant ON empresa_tenant_estado(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_ete_estado ON empresa_tenant_estado(estado_global);
+  `);
+  await tenantizarTabela(pool, 'empresa_tenant_estado');
+  // Migração única: bancos de antes do multi-tenant tinham estado_global DENTRO
+  // de `empresas` (só existia o cliente Antídoto). Copia esse histórico pra cá
+  // ANTES de derrubar a coluna antiga — só roda pro tenant original (um cliente
+  // novo, como a GK, começa com a base zerada, sem herdar estado de ninguém).
+  const { rows: [colAntiga] } = await pool.query(
+    `SELECT 1 FROM information_schema.columns WHERE table_name='empresas' AND column_name='estado_global'`
+  );
+  if (colAntiga && TENANT_ID === 'antidoto') {
+    await pool.query(
+      `INSERT INTO empresa_tenant_estado (cnpj, tenant_id, estado_global)
+       SELECT cnpj, $1, estado_global FROM empresas
+       ON CONFLICT (cnpj, tenant_id) DO NOTHING`, [TENANT_ID]);
+    console.log('[init] estado_global migrado de empresas -> empresa_tenant_estado (tenant antidoto).');
+  }
+  await pool.query(`ALTER TABLE empresas DROP COLUMN IF EXISTS estado_global`);
 
   // integracoes: chaves dos providers de verificação/CRM, plugáveis e em cascata.
   // Suporta N providers (não é fixo) — cada um com ordem e on/off. A key é
@@ -351,7 +384,6 @@ async function init() {
       alerta_email    TEXT,
       crm_auto_global BOOLEAN NOT NULL DEFAULT false
     );
-    INSERT INTO config (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
   `);
 
   // Loop de feedback do CRM → lista de semelhantes (lookalike auto-alimentada).
@@ -425,6 +457,62 @@ async function init() {
       CHECK (categoria IN ('descoberta','contato','validacao_email','validacao_tel','crm','ia','busca_web'));
   `);
 
+  // ── Multi-tenant: registro de clientes + isolamento por tenant_id (RLS) ──────
+  // Cada stack (Antídoto, GK, ...) sobe com um TENANT_ID fixo (ver tenant.js) e
+  // se auto-registra aqui. `clientes` não tem RLS — cada deploy só liga pro
+  // próprio banco e nunca precisa enxergar linha de outro cliente aqui.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS clientes (
+      id        TEXT PRIMARY KEY,
+      nome      TEXT NOT NULL,
+      criado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(
+    `INSERT INTO clientes (id, nome) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING`, [TENANT_ID]
+  );
+
+  for (const t of ['usuarios', 'buscas', 'leads', 'integracoes', 'sementes', 'contadores', 'contadores_hora']) {
+    await tenantizarTabela(pool, t);
+  }
+
+  // usuarios.email era UNIQUE global — dois clientes não podiam ter o mesmo
+  // e-mail cadastrado. Agora só precisa ser único DENTRO do tenant.
+  await pool.query(`
+    ALTER TABLE usuarios DROP CONSTRAINT IF EXISTS usuarios_email_key;
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_usuarios_tenant_email ON usuarios(tenant_id, lower(email));
+  `);
+  // integracoes (categoria, provedor) era UNIQUE global — cada cliente precisa
+  // da própria chave por provedor.
+  await pool.query(`
+    ALTER TABLE integracoes DROP CONSTRAINT IF EXISTS integracoes_categoria_provedor_key;
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_integracoes_tenant_cat_prov ON integracoes(tenant_id, categoria, provedor);
+  `);
+  // sementes (lista, cnpj) era UNIQUE global — idem.
+  await pool.query(`
+    ALTER TABLE sementes DROP CONSTRAINT IF EXISTS sementes_lista_cnpj_key;
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_sementes_tenant_lista_cnpj ON sementes(tenant_id, lista, cnpj);
+  `);
+  // contadores / contadores_hora: a PK precisa incluir tenant_id — cada cliente
+  // tem teto diário/horário PRÓPRIO (senão um cliente estoura a cota do outro).
+  await pool.query(`
+    ALTER TABLE contadores DROP CONSTRAINT IF EXISTS contadores_pkey;
+    ALTER TABLE contadores ADD PRIMARY KEY (tenant_id, chave, dia);
+  `);
+  await pool.query(`
+    ALTER TABLE contadores_hora DROP CONSTRAINT IF EXISTS contadores_hora_pkey;
+    ALTER TABLE contadores_hora ADD PRIMARY KEY (tenant_id, chave, dia, hora);
+  `);
+
+  // config e motor_status eram singleton global (id=1) — viram 1 linha por
+  // tenant, com a PK sendo o próprio tenant_id.
+  await migrarSingletonParaTenant(pool, 'config');
+  await pool.query(
+    `INSERT INTO config (tenant_id) VALUES (current_setting('app.tenant_id', true)) ON CONFLICT (tenant_id) DO NOTHING`
+  );
+  await pool.query(`CREATE TABLE IF NOT EXISTS motor_status (worker_boot timestamptz, worker_versao text)`);
+  await migrarSingletonParaTenant(pool, 'motor_status');
+
   // Garante a linha do provider de descoberta (CNPJá) pra tela de Integrações
   // ter o que mostrar mesmo antes da chave ser cadastrada.
   await pool.query(`
@@ -435,7 +523,7 @@ async function init() {
            ('ia', 'openai', false, 60),
            ('crm', 'gk', false, 35),
            ('crm', 'webhook', false, 40)
-    ON CONFLICT (categoria, provedor) DO NOTHING
+    ON CONFLICT (tenant_id, categoria, provedor) DO NOTHING
   `);
 
   // Seed de demonstração: só roda se explicitamente pedido (SEED_DEMO=true).
@@ -1014,8 +1102,9 @@ app.post('/api/leads/acoes', requireAuth, requireEditor, async (req, res) => {
     // impressão de que a exclusão "não pegou". Depois apaga os leads.
     if (acao === 'excluir') {
       await pool.query(
-        `UPDATE empresas SET estado_global='descarte_duro'
-         WHERE cnpj IN (SELECT cnpj FROM leads WHERE id = ANY($1::int[]))`,
+        `INSERT INTO empresa_tenant_estado (cnpj, estado_global)
+         SELECT cnpj, 'descarte_duro' FROM leads WHERE id = ANY($1::int[])
+         ON CONFLICT (cnpj, tenant_id) DO UPDATE SET estado_global='descarte_duro', atualizado_em=now()`,
         [idsInt]);
       const { rowCount } = await pool.query(`DELETE FROM leads WHERE id = ANY($1::int[])`, [idsInt]);
       return res.json({ ok: true, excluidos: rowCount });
@@ -1144,7 +1233,7 @@ app.get('/api/alertas', requireAuth, async (req, res) => {
       }
     }
 
-    const { rows: [cfg] } = await pool.query(`SELECT parada_min FROM config WHERE id=1`);
+    const { rows: [cfg] } = await pool.query(`SELECT parada_min FROM config`);
     const paradaMin = cfg?.parada_min || 30;
     // Só alerta busca ATIVA que ficou de fato parada além da carência. Usa o
     // sinal de vida mais recente (heartbeat, última atividade OU criação) — assim
@@ -1201,7 +1290,7 @@ app.post('/api/integracoes', requireAuth, requireMaster, async (req, res) => {
     const { rows: [row] } = await pool.query(`
       INSERT INTO integracoes (categoria, provedor, key_cifrada, config, ativo, ordem)
       VALUES ($1,$2,$3,COALESCE($4::jsonb,'{}'::jsonb),$5,$6)
-      ON CONFLICT (categoria, provedor) DO UPDATE SET
+      ON CONFLICT (tenant_id, categoria, provedor) DO UPDATE SET
         key_cifrada = COALESCE(NULLIF($3,''), integracoes.key_cifrada),
         config = COALESCE($4::jsonb, integracoes.config),
         ativo = $5, ordem = $6
@@ -1251,7 +1340,7 @@ app.post('/api/integracoes/gk/conectar', requireAuth, requireMaster, async (req,
 // ── API: configuração global ────────────────────────────────────────────────────
 app.get('/api/config', requireAuth, requireMaster, async (req, res) => {
   try {
-    const { rows: [c] } = await pool.query(`SELECT * FROM config WHERE id=1`);
+    const { rows: [c] } = await pool.query(`SELECT * FROM config`);
     res.json(c || {});
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
@@ -1279,7 +1368,7 @@ app.patch('/api/config', requireAuth, requireMaster, async (req, res) => {
   }
   if (!sets.length) return res.status(400).json({ erro: 'nada para atualizar' });
   try {
-    const { rows: [c] } = await pool.query(`UPDATE config SET ${sets.join(', ')} WHERE id=1 RETURNING *`, vals);
+    const { rows: [c] } = await pool.query(`UPDATE config SET ${sets.join(', ')} RETURNING *`, vals);
     res.json(c);
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
@@ -1292,7 +1381,7 @@ const webhookLimiter = rateLimit({ windowMs: 60_000, max: 120 });
 app.post('/api/webhooks/crm/conversao', webhookLimiter, async (req, res) => {
   try {
     const { rows:[cfg] } = await pool.query(
-      `SELECT crm_conversao_tags, crm_lookalike_auto, webhook_entrada_secret FROM config WHERE id=1`
+      `SELECT crm_conversao_tags, crm_lookalike_auto, webhook_entrada_secret FROM config`
     );
     const secret = cfg?.webhook_entrada_secret;
     if (!secret) return res.status(503).json({ erro: 'webhook de entrada não configurado' });
@@ -1324,7 +1413,7 @@ app.post('/api/webhooks/crm/conversao', webhookLimiter, async (req, res) => {
 
     await pool.query(
       `INSERT INTO sementes (cnpj, lista, origem, tag) VALUES ($1,'conversoes_crm','crm',$2)
-       ON CONFLICT (lista, cnpj) DO NOTHING`, [cnpj, tag]
+       ON CONFLICT (tenant_id, lista, cnpj) DO NOTHING`, [cnpj, tag]
     );
     const { rows:[{ n }] } = await pool.query(`SELECT COUNT(*)::int n FROM sementes WHERE lista='conversoes_crm'`);
 
@@ -1418,7 +1507,7 @@ async function garantirBuscaLookalikeAuto(total) {
 app.post('/api/webhooks/rotacionar-secret', requireAuth, requireMaster, async (req, res) => {
   try {
     const secret = crypto.randomBytes(24).toString('hex');
-    await pool.query(`UPDATE config SET webhook_entrada_secret=$1 WHERE id=1`, [secret]);
+    await pool.query(`UPDATE config SET webhook_entrada_secret=$1`, [secret]);
     res.json({ secret });
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
@@ -1566,14 +1655,14 @@ app.post('/api/admin/limpar-demo', requireAuth, requireMaster, async (req, res) 
 app.get('/api/admin/motor', requireAuth, requireMaster, async (req, res) => {
   try {
     let worker = null;
-    try { const { rows:[s] } = await pool.query(`SELECT worker_boot, worker_versao FROM motor_status WHERE id=1`); worker = s || null; }
+    try { const { rows:[s] } = await pool.query(`SELECT worker_boot, worker_versao FROM motor_status`); worker = s || null; }
     catch { worker = null; }   // tabela ainda não criada (worker nunca subiu com a versão nova)
     let cnpjs = [];
     if (req.query.cnpjs) {
       const list = String(req.query.cnpjs).split(/[^\d]+/).map(x => x.replace(/\D/g,'')).filter(x => x.length === 14);
       if (list.length) {
         const { rows } = await pool.query(
-          `SELECT e.cnpj, e.estado_global, e.razao, e.fantasia,
+          `SELECT e.cnpj, coalesce(ete.estado_global, '(sem estado neste tenant)') AS estado_global, e.razao, e.fantasia,
              (SELECT COUNT(*)::int FROM leads l WHERE l.cnpj = e.cnpj) AS leads,
              (SELECT jsonb_build_object(
                 'status', l.status, 'pendente', l.contato_pendente,
@@ -1581,7 +1670,9 @@ app.get('/api/admin/motor', requireAuth, requireMaster, async (req, res) => {
                 'email', l.contato_validado->>'email', 'fonte', l.contato_validado->>'fonte',
                 'resumo', left(coalesce(l.contato_validado->>'resumo_site',''), 140))
               FROM leads l WHERE l.cnpj = e.cnpj ORDER BY l.id DESC LIMIT 1) AS contato
-           FROM empresas e WHERE e.cnpj = ANY($1::text[])`, [list]);
+           FROM empresas e
+           LEFT JOIN empresa_tenant_estado ete ON ete.cnpj = e.cnpj
+           WHERE e.cnpj = ANY($1::text[])`, [list]);
         const achados = new Set(rows.map(r => r.cnpj));
         cnpjs = rows;
         for (const c of list) if (!achados.has(c)) cnpjs.push({ cnpj: c, estado_global: '(não está na base)', leads: 0 });
