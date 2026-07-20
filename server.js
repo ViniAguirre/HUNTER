@@ -19,6 +19,15 @@ const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'troque-este-segredo';
 const COOKIE = 'hunter_session';
 const SESSION_HOURS = 8;
+// SameSite do cookie de sessão. Padrão 'lax' (mais seguro contra CSRF). Para
+// embedar o Hunter num iframe de OUTRO domínio (ex.: dentro do CRM do cliente),
+// o navegador só mantém a sessão cross-site com SameSite=None — então esse
+// cliente sobe a stack com COOKIE_SAMESITE=none. 'none' exige Secure (HTTPS),
+// que já é sempre true aqui.
+const COOKIE_SAMESITE = (() => {
+  const v = String(process.env.COOKIE_SAMESITE || 'lax').toLowerCase();
+  return ['lax', 'none', 'strict'].includes(v) ? v : 'lax';
+})();
 const PUBLIC = path.join(__dirname, 'public');
 
 const ADMIN_NAME = process.env.ADMIN_NAME || 'Administrador';
@@ -581,7 +590,7 @@ function setSession(res, user) {
     { expiresIn: `${SESSION_HOURS}h` }
   );
   res.cookie(COOKIE, token, {
-    httpOnly: true, secure: true, sameSite: 'lax',
+    httpOnly: true, secure: true, sameSite: COOKIE_SAMESITE,
     maxAge: SESSION_HOURS * 3600 * 1000,
   });
 }
@@ -645,7 +654,7 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
 });
 
 app.post('/api/auth/logout', (req, res) => {
-  res.clearCookie(COOKIE, { httpOnly: true, secure: true, sameSite: 'lax' });
+  res.clearCookie(COOKIE, { httpOnly: true, secure: true, sameSite: COOKIE_SAMESITE });
   res.json({ ok: true });
 });
 
