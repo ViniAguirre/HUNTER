@@ -490,7 +490,18 @@ async function init() {
     `INSERT INTO clientes (id, nome) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING`, [TENANT_ID]
   );
 
-  for (const t of ['usuarios', 'buscas', 'leads', 'integracoes', 'sementes', 'contadores', 'contadores_hora']) {
+  // Biblioteca de propostas de valor ("o que você vende") — até 5 variações por
+  // cliente, reaproveitadas na criação de radares e usadas pelo agente SWOT.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS propostas_valor (
+      id         SERIAL PRIMARY KEY,
+      rotulo     TEXT,
+      texto      TEXT NOT NULL,
+      criado_em  TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+  `);
+
+  for (const t of ['usuarios', 'buscas', 'leads', 'integracoes', 'sementes', 'contadores', 'contadores_hora', 'propostas_valor']) {
     await tenantizarTabela(pool, t);
   }
 
@@ -784,6 +795,44 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
 });
 
 // ── API: buscas ───────────────────────────────────────────────────────────────
+
+// ── API: propostas de valor (biblioteca "o que você vende", até 5) ────────────
+const MAX_PROPOSTAS = 5;
+
+app.get('/api/propostas', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, rotulo, texto, criado_em FROM propostas_valor ORDER BY criado_em`
+    );
+    res.json(rows);
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+app.post('/api/propostas', requireAuth, requireEditor, async (req, res) => {
+  const texto = String(req.body.texto || '').trim();
+  const rotulo = String(req.body.rotulo || '').trim().slice(0, 60) || null;
+  if (!texto) return res.status(400).json({ erro: 'escreva a proposta de valor' });
+  if (texto.length > 2000) return res.status(400).json({ erro: 'proposta muito longa (máx. 2000 caracteres)' });
+  try {
+    const { rows: [{ n }] } = await pool.query(`SELECT COUNT(*)::int n FROM propostas_valor`);
+    if (n >= MAX_PROPOSTAS) return res.status(409).json({ erro: `limite de ${MAX_PROPOSTAS} variações — exclua uma antes de criar outra` });
+    const { rows: [row] } = await pool.query(
+      `INSERT INTO propostas_valor (rotulo, texto) VALUES ($1,$2) RETURNING id, rotulo, texto, criado_em`,
+      [rotulo, texto]
+    );
+    res.status(201).json(row);
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+app.delete('/api/propostas/:id', requireAuth, requireEditor, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
+  try {
+    const { rowCount } = await pool.query(`DELETE FROM propostas_valor WHERE id=$1`, [id]);
+    if (!rowCount) return res.status(404).json({ erro: 'não encontrada' });
+    res.json({ ok: true });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
 
 app.get('/api/buscas', requireAuth, async (req, res) => {
   try {

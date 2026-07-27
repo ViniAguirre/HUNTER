@@ -3278,6 +3278,317 @@ function aberturaInicial(p) {
   }
   return melhor;
 }
+
+// Biblioteca de propostas de valor: até 5 variações salvas por conta. O usuário
+// escolhe uma na criação do radar (o texto alimenta o agente SWOT), cria novas
+// e exclui pra abrir espaço. `value` = texto selecionado; `onChange(texto)` sobe.
+function PropostaValorPicker({
+  value,
+  onChange,
+  inicial
+}) {
+  const [lista, setLista] = useState(null); // null = carregando
+  const [selId, setSelId] = useState(null);
+  const [criando, setCriando] = useState(false);
+  const [novoTexto, setNovoTexto] = useState('');
+  const [novoRotulo, setNovoRotulo] = useState('');
+  const [erro, setErro] = useState(null);
+  const [salvando, setSalvando] = useState(false);
+  useEffect(() => {
+    fetch('/api/propostas', {
+      credentials: 'same-origin'
+    }).then(r => r.json()).then(rows => {
+      const arr = Array.isArray(rows) ? rows : [];
+      setLista(arr);
+      const alvo = (value || inicial || '').trim();
+      if (alvo) {
+        const match = arr.find(p => (p.texto || '').trim() === alvo);
+        if (match) {
+          setSelId(match.id);
+          if (!value) onChange(match.texto);
+        }
+      }
+      if (arr.length === 0) setCriando(true);
+    }).catch(() => {
+      setLista([]);
+      setCriando(true);
+    });
+  }, []);
+  const selecionar = p => {
+    if (selId === p.id) {
+      setSelId(null);
+      onChange('');
+    } else {
+      setSelId(p.id);
+      onChange(p.texto);
+    }
+  };
+  const criar = async () => {
+    const texto = novoTexto.trim();
+    if (!texto) {
+      setErro('Escreva a proposta.');
+      return;
+    }
+    setSalvando(true);
+    setErro(null);
+    try {
+      const r = await fetch('/api/propostas', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          texto,
+          rotulo: novoRotulo.trim()
+        })
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.erro || 'Erro ao salvar.');
+      setLista(l => [...(l || []), d]);
+      setSelId(d.id);
+      onChange(d.texto);
+      setCriando(false);
+      setNovoTexto('');
+      setNovoRotulo('');
+    } catch (e) {
+      setErro(e.message);
+    } finally {
+      setSalvando(false);
+    }
+  };
+  const excluir = async (p, ev) => {
+    ev.stopPropagation();
+    if (!window.confirm('Excluir esta variação de proposta?')) return;
+    const r = await fetch('/api/propostas/' + p.id, {
+      method: 'DELETE',
+      credentials: 'same-origin'
+    });
+    if (!r.ok) return;
+    setLista(l => (l || []).filter(x => x.id !== p.id));
+    if (selId === p.id) {
+      setSelId(null);
+      onChange('');
+    }
+  };
+  const cheio = (lista || []).length >= 5;
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 7
+    }
+  }, "O que voc\xEA vende \u2014 proposta de valor ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, "(alimenta o agente SWOT \u2014 escolha uma varia\xE7\xE3o)")), lista === null ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: 'var(--faint)'
+    }
+  }, "Carregando\u2026") : /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 8
+    }
+  }, lista.map((p, i) => {
+    const sel = selId === p.id;
+    return /*#__PURE__*/React.createElement("div", {
+      key: p.id,
+      onClick: () => selecionar(p),
+      style: {
+        display: 'flex',
+        gap: 10,
+        alignItems: 'flex-start',
+        padding: '11px 12px',
+        borderRadius: 11,
+        cursor: 'pointer',
+        background: sel ? 'rgba(224,178,86,.10)' : 'var(--panel2)',
+        border: `1px solid ${sel ? C.gold : 'var(--border)'}`
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        width: 15,
+        height: 15,
+        borderRadius: '50%',
+        marginTop: 2,
+        flexShrink: 0,
+        border: `2px solid ${sel ? C.gold : 'var(--border)'}`,
+        background: sel ? C.gold : 'transparent'
+      }
+    }), /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1,
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12.5,
+        fontWeight: 600,
+        marginBottom: 2
+      }
+    }, p.rotulo || 'Variação ' + (i + 1)), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        color: 'var(--dim)',
+        lineHeight: 1.45,
+        overflow: 'hidden',
+        display: '-webkit-box',
+        WebkitLineClamp: 2,
+        WebkitBoxOrient: 'vertical'
+      }
+    }, p.texto)), /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      onClick: ev => excluir(p, ev),
+      title: "Excluir varia\xE7\xE3o",
+      style: {
+        width: 26,
+        height: 26,
+        borderRadius: 7,
+        border: '1px solid var(--border)',
+        background: 'transparent',
+        color: 'var(--faint)',
+        cursor: 'pointer',
+        flexShrink: 0,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center'
+      }
+    }, /*#__PURE__*/React.createElement(Svg, {
+      d: "M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14",
+      w: 13,
+      h: 13,
+      sw: 1.6
+    })));
+  }), criando ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: 12,
+      borderRadius: 11,
+      border: '1px dashed var(--border)',
+      background: 'var(--panel2)'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    value: novoRotulo,
+    onChange: e => setNovoRotulo(e.target.value),
+    placeholder: "R\xF3tulo (opcional) \u2014 ex: Pitch cl\xEDnicas",
+    style: {
+      width: '100%',
+      height: 34,
+      borderRadius: 8,
+      border: '1px solid var(--border)',
+      background: 'var(--panel)',
+      color: 'var(--text)',
+      padding: '0 10px',
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      marginBottom: 8
+    }
+  }), /*#__PURE__*/React.createElement("textarea", {
+    value: novoTexto,
+    onChange: e => setNovoTexto(e.target.value),
+    placeholder: "Ex: software de gest\xE3o de agenda para cl\xEDnicas, que reduz faltas e lota hor\xE1rios ociosos",
+    style: {
+      width: '100%',
+      minHeight: 64,
+      borderRadius: 8,
+      border: '1px solid var(--border)',
+      background: 'var(--panel)',
+      color: 'var(--text)',
+      padding: 10,
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      lineHeight: 1.5,
+      resize: 'vertical'
+    }
+  }), erro && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: '#F59E0B',
+      marginTop: 6
+    }
+  }, erro), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      marginTop: 9
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: criar,
+    disabled: salvando,
+    style: {
+      height: 32,
+      padding: '0 14px',
+      borderRadius: 8,
+      border: 'none',
+      background: C.gold,
+      color: '#0E1936',
+      fontWeight: 600,
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      cursor: salvando ? 'default' : 'pointer',
+      opacity: salvando ? .7 : 1
+    }
+  }, salvando ? 'Salvando…' : 'Salvar variação'), (lista || []).length > 0 && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => {
+      setCriando(false);
+      setErro(null);
+    },
+    style: {
+      height: 32,
+      padding: '0 12px',
+      borderRadius: 8,
+      border: '1px solid var(--border)',
+      background: 'transparent',
+      color: 'var(--dim)',
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, "Cancelar"))) : cheio ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--faint)'
+    }
+  }, "Limite de 5 varia\xE7\xF5es \u2014 exclua uma pra criar outra.") : /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => {
+      setCriando(true);
+      setErro(null);
+    },
+    style: {
+      height: 34,
+      padding: '0 12px',
+      borderRadius: 9,
+      border: '1px dashed var(--border)',
+      background: 'transparent',
+      color: 'var(--text)',
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      cursor: 'pointer',
+      alignSelf: 'flex-start',
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 7
+    }
+  }, /*#__PURE__*/React.createElement(Svg, {
+    d: "M12 5v14M5 12h14",
+    w: 14,
+    h: 14,
+    sw: 1.8
+  }), " Nova varia\xE7\xE3o")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)',
+      marginTop: 8,
+      lineHeight: 1.4
+    }
+  }, "O agente usa a varia\xE7\xE3o escolhida pra analisar cada empresa sob a \xF3tica do que voc\xEA vende e gerar o briefing pro closer. Salve at\xE9 5 e escolha a mais adequada a cada radar."));
+}
 function NovaBusca({
   onSalvar,
   inicial
@@ -3315,8 +3626,7 @@ function NovaBusca({
   const [iaSug, setIaSug] = useState(null); // resultados da IA (ou null)
   const [iaErro, setIaErro] = useState(null);
   const nomeRef = useRef();
-  const criteriosRef = useRef(); // proposta de valor (ICP)
-  const propostaRef = useRef(); // proposta de valor (lista/lookalike)
+  const [propostaSel, setPropostaSel] = useState(iniProposta); // texto da variação de proposta escolhida
 
   // CNPJs válidos (14 dígitos, sem repetição) colados na aba lista/lookalike.
   const cnpjsParsed = useMemo(() => {
@@ -3555,7 +3865,7 @@ function NovaBusca({
       const aberturaLabel = ABERTURA_OPCOES.find(o => o.k === abertura)?.label;
       const capitalLabel = CAPITAL_OPCOES.find(o => o.k === capital)?.label;
       const chips = [...(isWeb ? ['Descoberta: internet'] : []), ...(keywords.length ? [`${isWeb ? 'Busca' : 'Palavra-chave'}: ${keywords.join(', ')}`] : []), ...ufs.map(u => `UF: ${u}`), ...municSel.map(m => `Município: ${m.n}`), ...portes.map(p => `Porte: ${p}`), ...cnaesRot.map(s => `CNAE: ${s.d}`), ...(!isWeb && abertura !== 'qualquer' ? [`Abertura: ${aberturaLabel}`] : []), ...(!isWeb && capital !== 'qualquer' ? [`Capital: ${capitalLabel}`] : [])];
-      const propostaValor = (tipo === 'icp' ? criteriosRef.current?.value : propostaRef.current?.value) || '';
+      const propostaValor = (propostaSel || '').trim();
       const criterios = tipo === 'icp' ? {
         chips,
         params: {
@@ -4182,42 +4492,11 @@ function NovaBusca({
   }, CAPITAL_OPCOES.map(o => /*#__PURE__*/React.createElement("option", {
     key: o.k,
     value: o.k
-  }, o.label))))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
-    style: {
-      display: 'block',
-      fontSize: 12,
-      color: 'var(--dim)',
-      marginBottom: 7
-    }
-  }, "O que voc\xEA vende \u2014 proposta de valor ", /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: 'var(--faint)'
-    }
-  }, "(alimenta o agente SWOT)")), /*#__PURE__*/React.createElement("textarea", {
-    ref: criteriosRef,
-    defaultValue: iniProposta,
-    placeholder: "Ex: software de gest\xE3o de agenda para cl\xEDnicas, que reduz faltas e lota hor\xE1rios ociosos",
-    style: {
-      width: '100%',
-      minHeight: 70,
-      borderRadius: 12,
-      border: '1px solid var(--border)',
-      background: 'var(--panel2)',
-      color: 'var(--text)',
-      padding: 12,
-      fontSize: 13,
-      fontFamily: 'inherit',
-      lineHeight: 1.5,
-      resize: 'vertical'
-    }
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: 'var(--faint)',
-      marginTop: 6,
-      lineHeight: 1.4
-    }
-  }, "Descreva seu produto/servi\xE7o. O agente usa isso pra analisar cada empresa sob a \xF3tica do que voc\xEA vende \u2014 quanto mais claro, mais preciso o briefing."))) : (() => {
+  }, o.label))))), /*#__PURE__*/React.createElement(PropostaValorPicker, {
+    value: propostaSel,
+    onChange: setPropostaSel,
+    inicial: iniProposta
+  })) : (() => {
     const n = cnpjsParsed.length;
     // Importação direta aceita a partir de 1 CNPJ (consulta grátis na Receita);
     // lookalike precisa de amostra pra traçar o perfil médio.
@@ -4340,42 +4619,11 @@ function NovaBusca({
         borderTop: '1px solid var(--border)',
         paddingTop: 16
       }
-    }, /*#__PURE__*/React.createElement("label", {
-      style: {
-        display: 'block',
-        fontSize: 12,
-        color: 'var(--dim)',
-        marginBottom: 7
-      }
-    }, "O que voc\xEA vende \u2014 proposta de valor ", /*#__PURE__*/React.createElement("span", {
-      style: {
-        color: 'var(--faint)'
-      }
-    }, "(alimenta o agente SWOT)")), /*#__PURE__*/React.createElement("textarea", {
-      ref: propostaRef,
-      defaultValue: iniProposta,
-      placeholder: "Ex: software de gest\xE3o de agenda para cl\xEDnicas, que reduz faltas e lota hor\xE1rios ociosos",
-      style: {
-        width: '100%',
-        minHeight: 64,
-        borderRadius: 12,
-        border: '1px solid var(--border)',
-        background: 'var(--panel2)',
-        color: 'var(--text)',
-        padding: 12,
-        fontSize: 13,
-        fontFamily: 'inherit',
-        lineHeight: 1.5,
-        resize: 'vertical'
-      }
-    }), /*#__PURE__*/React.createElement("div", {
-      style: {
-        fontSize: 11,
-        color: 'var(--faint)',
-        marginTop: 6,
-        lineHeight: 1.4
-      }
-    }, "O agente usa isso pra analisar cada empresa sob a \xF3tica do que voc\xEA vende e gerar dados \xFAteis pro closer. Quanto mais claro, mais preciso o briefing.")));
+    }, /*#__PURE__*/React.createElement(PropostaValorPicker, {
+      value: propostaSel,
+      onChange: setPropostaSel,
+      inicial: iniProposta
+    })));
   })(), tipo === 'icp' && modoDesc === 'cnpja' && cnaeSel.length === 0 && keywords.length === 0 && municSel.length === 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
