@@ -275,17 +275,19 @@ const NAV_MAIN = [
   { key:'dashboard', label:'Dashboard', icon:'M4 4h7v7H4zM13 4h7v7h-7zM13 13h7v7h-7zM4 13h7v7H4z' },
   { key:'buscas', label:'Radares', icon:'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-4.3-4.3' },
   { key:'leads', label:'Leads', icon:'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM12 3v3M12 18v3M3 12h3M18 12h3' },
+  { key:'propostas', label:'Propostas', icon:'M9 12h6M9 16h6M9 8h2M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z' },
 ];
 // acesso: 'master' → só o login MASTER da Hunter (dados sigilosos: quais APIs
 // alimentam o produto). 'admin' → admin do cliente (gestão do próprio time).
 const NAV_ADMIN = [
   { key:'integracoes', label:'Integrações', acesso:'master', icon:'M9 17H7A5 5 0 0 1 7 7h2M15 7h2a5 5 0 0 1 0 10h-2M8 12h8' },
   { key:'usuarios', label:'Usuários', acesso:'admin', icon:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8' },
+  { key:'agente', label:'Agente SWOT', acesso:'master', icon:'M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0-3 3 3 3 0 0 0 0 6 3 3 0 0 0 3 3v1a3 3 0 0 0 6 0v-1a3 3 0 0 0 3-3 3 3 0 0 0 0-6 3 3 0 0 0-3-3V5a3 3 0 0 0-3-3zM12 8v4M9 12h6' },
   { key:'config', label:'Configurações', acesso:'master', icon:'M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6' },
   { key:'monitor', label:'Monitoramento', acesso:'master', icon:'M22 12h-4l-3 9L9 3l-3 9H2' },
 ];
 // Telas que exigem MASTER (usado também na guarda de navegação do App).
-const TELAS_MASTER = new Set(['integracoes', 'config', 'monitor']);
+const TELAS_MASTER = new Set(['integracoes', 'config', 'monitor', 'agente']);
 
 function podeVer(it, user) {
   if (it.acesso === 'master') return !!user?.master;
@@ -413,6 +415,8 @@ const TITLES = {
   buscas: ['Radares', 'Gerencie seus radares de leads'],
   buscaDetail: ['Detalhe do Radar', 'Produção e leads deste radar'],
   nova: ['Criar Radar', 'Configure um novo radar de leads'],
+  propostas: ['Propostas', 'Suas propostas de valor (o que você vende)'],
+  agente: ['Agente SWOT', 'Fichamento comercial que personaliza a análise'],
   integracoes: ['Integrações', 'Conexões com APIs e CRM'],
   usuarios: ['Usuários', 'Permissões e acessos'],
   config: ['Configurações', 'Parâmetros gerais do sistema'],
@@ -1415,17 +1419,11 @@ function aberturaInicial(p) {
   return melhor;
 }
 
-// Biblioteca de propostas de valor: até 5 variações salvas por conta. O usuário
-// escolhe uma na criação do radar (o texto alimenta o agente SWOT), cria novas
-// e exclui pra abrir espaço. `value` = texto selecionado; `onChange(texto)` sobe.
-function PropostaValorPicker({ value, onChange, inicial }) {
-  const [lista, setLista] = useState(null);   // null = carregando
-  const [selId, setSelId] = useState(null);
-  const [criando, setCriando] = useState(false);
-  const [novoTexto, setNovoTexto] = useState('');
-  const [novoRotulo, setNovoRotulo] = useState('');
-  const [erro, setErro] = useState(null);
-  const [salvando, setSalvando] = useState(false);
+// Dropdown enxuto pra escolher UMA proposta salva na criação do radar. A gestão
+// (criar/editar/excluir as até 5) vive na tela Propostas. `value` = texto da
+// variação escolhida; `onChange(texto)` sobe pro NovaBusca.
+function PropostaDropdown({ value, onChange, inicial }) {
+  const [lista, setLista] = useState(null);
 
   useEffect(() => {
     fetch('/api/propostas', { credentials:'same-origin' })
@@ -1434,120 +1432,267 @@ function PropostaValorPicker({ value, onChange, inicial }) {
         const arr = Array.isArray(rows) ? rows : [];
         setLista(arr);
         const alvo = (value || inicial || '').trim();
-        if (alvo) {
-          const match = arr.find(p => (p.texto || '').trim() === alvo);
-          if (match) { setSelId(match.id); if (!value) onChange(match.texto); }
+        if (alvo && !value) {
+          const m = arr.find(p => (p.texto || '').trim() === alvo);
+          if (m) onChange(m.texto);
         }
-        if (arr.length === 0) setCriando(true);
       })
-      .catch(() => { setLista([]); setCriando(true); });
+      .catch(() => setLista([]));
   }, []);
 
-  const selecionar = (p) => {
-    if (selId === p.id) { setSelId(null); onChange(''); }
-    else { setSelId(p.id); onChange(p.texto); }
-  };
-
-  const criar = async () => {
-    const texto = novoTexto.trim();
-    if (!texto) { setErro('Escreva a proposta.'); return; }
-    setSalvando(true); setErro(null);
-    try {
-      const r = await fetch('/api/propostas', {
-        method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
-        body: JSON.stringify({ texto, rotulo: novoRotulo.trim() })
-      });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(d.erro || 'Erro ao salvar.');
-      setLista(l => [...(l || []), d]);
-      setSelId(d.id); onChange(d.texto);
-      setCriando(false); setNovoTexto(''); setNovoRotulo('');
-    } catch (e) { setErro(e.message); }
-    finally { setSalvando(false); }
-  };
-
-  const excluir = async (p, ev) => {
-    ev.stopPropagation();
-    if (!window.confirm('Excluir esta variação de proposta?')) return;
-    const r = await fetch('/api/propostas/' + p.id, { method:'DELETE', credentials:'same-origin' });
-    if (!r.ok) return;
-    setLista(l => (l || []).filter(x => x.id !== p.id));
-    if (selId === p.id) { setSelId(null); onChange(''); }
-  };
-
-  const cheio = (lista || []).length >= 5;
+  const arr = lista || [];
+  const alvo = (value || '').trim();
+  const sel = arr.find(p => (p.texto || '').trim() === alvo);
+  const selId = sel ? String(sel.id) : '';
 
   return (
     <div>
       <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>
-        O que você vende — proposta de valor <span style={{ color:'var(--faint)' }}>(alimenta o agente SWOT — escolha uma variação)</span>
+        O que você vende — proposta de valor <span style={{ color:'var(--faint)' }}>(alimenta o agente SWOT)</span>
       </label>
       {lista === null ? (
         <div style={{ fontSize:12.5, color:'var(--faint)' }}>Carregando…</div>
-      ) : (
-        <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
-          {lista.map((p, i) => {
-            const sel = selId === p.id;
-            return (
-              <div key={p.id} onClick={() => selecionar(p)}
-                style={{ display:'flex', gap:10, alignItems:'flex-start', padding:'11px 12px', borderRadius:11,
-                  cursor:'pointer', background: sel ? 'rgba(224,178,86,.10)' : 'var(--panel2)',
-                  border:`1px solid ${sel ? C.gold : 'var(--border)'}` }}>
-                <div style={{ width:15, height:15, borderRadius:'50%', marginTop:2, flexShrink:0,
-                  border:`2px solid ${sel ? C.gold : 'var(--border)'}`, background: sel ? C.gold : 'transparent' }}/>
-                <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ fontSize:12.5, fontWeight:600, marginBottom:2 }}>{p.rotulo || ('Variação ' + (i + 1))}</div>
-                  <div style={{ fontSize:12, color:'var(--dim)', lineHeight:1.45, overflow:'hidden',
-                    display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical' }}>{p.texto}</div>
-                </div>
-                <button type="button" onClick={(ev) => excluir(p, ev)} title="Excluir variação"
-                  style={{ width:26, height:26, borderRadius:7, border:'1px solid var(--border)', background:'transparent',
-                    color:'var(--faint)', cursor:'pointer', flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center' }}>
-                  <Svg d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" w={13} h={13} sw={1.6}/>
-                </button>
-              </div>
-            );
-          })}
-          {criando ? (
-            <div style={{ padding:12, borderRadius:11, border:'1px dashed var(--border)', background:'var(--panel2)' }}>
-              <input value={novoRotulo} onChange={e => setNovoRotulo(e.target.value)}
-                placeholder="Rótulo (opcional) — ex: Pitch clínicas"
-                style={{ width:'100%', height:34, borderRadius:8, border:'1px solid var(--border)',
-                  background:'var(--panel)', color:'var(--text)', padding:'0 10px', fontSize:12.5, fontFamily:'inherit', marginBottom:8 }}/>
-              <textarea value={novoTexto} onChange={e => setNovoTexto(e.target.value)}
-                placeholder="Ex: software de gestão de agenda para clínicas, que reduz faltas e lota horários ociosos"
-                style={{ width:'100%', minHeight:64, borderRadius:8, border:'1px solid var(--border)',
-                  background:'var(--panel)', color:'var(--text)', padding:10, fontSize:12.5, fontFamily:'inherit', lineHeight:1.5, resize:'vertical' }}/>
-              {erro && <div style={{ fontSize:11.5, color:'#F59E0B', marginTop:6 }}>{erro}</div>}
-              <div style={{ display:'flex', gap:8, marginTop:9 }}>
-                <button type="button" onClick={criar} disabled={salvando}
-                  style={{ height:32, padding:'0 14px', borderRadius:8, border:'none', background:C.gold, color:'#0E1936',
-                    fontWeight:600, fontSize:12.5, fontFamily:'inherit', cursor: salvando ? 'default' : 'pointer', opacity: salvando ? .7 : 1 }}>
-                  {salvando ? 'Salvando…' : 'Salvar variação'}
-                </button>
-                {(lista || []).length > 0 && (
-                  <button type="button" onClick={() => { setCriando(false); setErro(null); }}
-                    style={{ height:32, padding:'0 12px', borderRadius:8, border:'1px solid var(--border)', background:'transparent',
-                      color:'var(--dim)', fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>Cancelar</button>
-                )}
-              </div>
-            </div>
-          ) : cheio ? (
-            <div style={{ fontSize:11.5, color:'var(--faint)' }}>Limite de 5 variações — exclua uma pra criar outra.</div>
-          ) : (
-            <button type="button" onClick={() => { setCriando(true); setErro(null); }}
-              style={{ height:34, padding:'0 12px', borderRadius:9, border:'1px dashed var(--border)', background:'transparent',
-                color:'var(--text)', fontSize:12.5, fontFamily:'inherit', cursor:'pointer', alignSelf:'flex-start',
-                display:'inline-flex', alignItems:'center', gap:7 }}>
-              <Svg d="M12 5v14M5 12h14" w={14} h={14} sw={1.8}/> Nova variação
-            </button>
-          )}
+      ) : arr.length === 0 ? (
+        <div style={{ fontSize:12.5, color:'var(--faint)', padding:'11px 12px', borderRadius:10,
+          border:'1px dashed var(--border)', background:'var(--panel2)', lineHeight:1.5 }}>
+          Nenhuma variação salva ainda. Cadastre suas propostas no menu <b>Propostas</b> e volte aqui pra escolher.
         </div>
+      ) : (
+        <select value={selId}
+          onChange={e => { const p = arr.find(x => String(x.id) === e.target.value); onChange(p ? p.texto : ''); }}
+          style={{ width:'100%', height:40, borderRadius:9, border:'1px solid var(--border)',
+            background:'var(--panel2)', color:'var(--text)', padding:'0 10px', fontSize:13, fontFamily:'inherit', cursor:'pointer' }}>
+          <option value="">Nenhuma — o agente usa só CNAE + site</option>
+          {arr.map(p => <option key={p.id} value={String(p.id)}>{p.rotulo || ('Variação — ' + (p.texto || '').slice(0, 45))}</option>)}
+        </select>
+      )}
+      {sel && (
+        <div style={{ fontSize:12, color:'var(--dim)', lineHeight:1.5, marginTop:8, padding:'9px 11px',
+          borderRadius:9, background:'var(--panel2)', border:'1px solid var(--border)' }}>{sel.texto}</div>
       )}
       <div style={{ fontSize:11, color:'var(--faint)', marginTop:8, lineHeight:1.4 }}>
-        O agente usa a variação escolhida pra analisar cada empresa sob a ótica do que você vende e gerar
-        o briefing pro closer. Salve até 5 e escolha a mais adequada a cada radar.
+        Gerencie suas variações no menu <b>Propostas</b> — salve até 5 e escolha a mais adequada a cada radar.
       </div>
+    </div>
+  );
+}
+
+// Tela dedicada: gestão das até 5 propostas de valor (criar / editar / excluir).
+function Propostas() {
+  const [lista, setLista] = useState(null);
+  const [editId, setEditId] = useState(null);   // id em edição, 'novo', ou null
+  const [rotulo, setRotulo] = useState('');
+  const [texto, setTexto] = useState('');
+  const [erro, setErro] = useState(null);
+  const [salvando, setSalvando] = useState(false);
+
+  const carregar = () => fetch('/api/propostas', { credentials:'same-origin' })
+    .then(r => r.json()).then(rows => setLista(Array.isArray(rows) ? rows : [])).catch(() => setLista([]));
+  useEffect(carregar, []);
+
+  const abrirNovo = () => { setEditId('novo'); setRotulo(''); setTexto(''); setErro(null); };
+  const abrirEdit = (p) => { setEditId(p.id); setRotulo(p.rotulo || ''); setTexto(p.texto || ''); setErro(null); };
+
+  const salvar = async () => {
+    const t = texto.trim();
+    if (!t) { setErro('Escreva a proposta.'); return; }
+    setSalvando(true); setErro(null);
+    try {
+      const novo = editId === 'novo';
+      const r = await fetch(novo ? '/api/propostas' : '/api/propostas/' + editId, {
+        method: novo ? 'POST' : 'PATCH', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ rotulo: rotulo.trim(), texto: t })
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.erro || 'Erro ao salvar.');
+      setEditId(null); carregar();
+    } catch (e) { setErro(e.message); }
+    finally { setSalvando(false); }
+  };
+
+  const excluir = async (p) => {
+    if (!window.confirm('Excluir a variação "' + (p.rotulo || 'sem rótulo') + '"?')) return;
+    const r = await fetch('/api/propostas/' + p.id, { method:'DELETE', credentials:'same-origin' });
+    if (r.ok) carregar();
+  };
+
+  const arr = lista || [];
+  const cheio = arr.length >= 5;
+  const editando = editId != null;
+
+  return (
+    <div style={{ maxWidth:820 }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-end', marginBottom:16, gap:12, flexWrap:'wrap' }}>
+        <div style={{ fontSize:12.5, color:'var(--faint)', lineHeight:1.5, maxWidth:560 }}>
+          Cadastre até 5 variações de "o que você vende". Na criação de cada radar você escolhe uma —
+          é o que o agente SWOT usa pra analisar cada empresa sob a ótica da sua oferta.
+        </div>
+        <button type="button" onClick={abrirNovo} disabled={cheio || editando}
+          style={{ height:38, padding:'0 16px', borderRadius:9, border:'none', background:(cheio||editando) ? 'var(--panel2)' : 'var(--gold)',
+            color:(cheio||editando) ? 'var(--faint)' : '#0E1936', fontWeight:600, fontSize:13, fontFamily:'inherit',
+            cursor:(cheio||editando) ? 'default' : 'pointer', whiteSpace:'nowrap', display:'inline-flex', alignItems:'center', gap:7 }}>
+          <Svg d="M12 5v14M5 12h14" w={15} h={15} sw={1.8}/> Nova variação
+        </button>
+      </div>
+      {cheio && !editando && (
+        <div style={{ fontSize:11.5, color:'var(--faint)', marginBottom:12 }}>Limite de 5 atingido — exclua uma pra criar outra.</div>
+      )}
+
+      {editId === 'novo' && (
+        <PropostaForm rotulo={rotulo} setRotulo={setRotulo} texto={texto} setTexto={setTexto}
+          erro={erro} salvando={salvando} onSalvar={salvar} onCancelar={() => setEditId(null)} titulo="Nova variação"/>
+      )}
+
+      {lista === null ? (
+        <div style={{ fontSize:13, color:'var(--faint)' }}>Carregando…</div>
+      ) : arr.length === 0 && editId !== 'novo' ? (
+        <div style={{ fontSize:13, color:'var(--faint)', padding:'28px 18px', textAlign:'center',
+          border:'1px dashed var(--border)', borderRadius:12 }}>
+          Nenhuma variação ainda. Clique em <b>Nova variação</b> pra criar a primeira.
+        </div>
+      ) : (
+        <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+          {arr.map((p, i) => editId === p.id ? (
+            <PropostaForm key={p.id} rotulo={rotulo} setRotulo={setRotulo} texto={texto} setTexto={setTexto}
+              erro={erro} salvando={salvando} onSalvar={salvar} onCancelar={() => setEditId(null)} titulo="Editar variação"/>
+          ) : (
+            <div key={p.id} style={{ display:'flex', gap:12, alignItems:'flex-start', padding:'14px 16px',
+              borderRadius:12, background:'var(--panel)', border:'1px solid var(--border)' }}>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:13, fontWeight:600, marginBottom:3 }}>{p.rotulo || ('Variação ' + (i + 1))}</div>
+                <div style={{ fontSize:12.5, color:'var(--dim)', lineHeight:1.5 }}>{p.texto}</div>
+              </div>
+              <div style={{ display:'flex', gap:6, flexShrink:0 }}>
+                <button type="button" onClick={() => abrirEdit(p)} title="Editar" disabled={editando}
+                  style={{ width:30, height:30, borderRadius:8, border:'1px solid var(--border)', background:'transparent',
+                    color:'var(--dim)', cursor: editando ? 'default' : 'pointer', display:'flex', alignItems:'center', justifyContent:'center', opacity: editando ? .5 : 1 }}>
+                  <Svg d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" w={15} h={15} sw={1.7}/>
+                </button>
+                <button type="button" onClick={() => excluir(p)} title="Excluir" disabled={editando}
+                  style={{ width:30, height:30, borderRadius:8, border:'1px solid var(--border)', background:'transparent',
+                    color:'var(--dim)', cursor: editando ? 'default' : 'pointer', display:'flex', alignItems:'center', justifyContent:'center', opacity: editando ? .5 : 1 }}>
+                  <Svg d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" w={15} h={15} sw={1.7}/>
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PropostaForm({ rotulo, setRotulo, texto, setTexto, erro, salvando, onSalvar, onCancelar, titulo }) {
+  return (
+    <div style={{ padding:16, borderRadius:12, border:'1px solid var(--gold)', background:'var(--panel)', marginBottom:12 }}>
+      <div style={{ fontSize:12.5, fontWeight:600, marginBottom:10 }}>{titulo}</div>
+      <input value={rotulo} onChange={e => setRotulo(e.target.value)}
+        placeholder="Rótulo (opcional) — ex: Pitch clínicas"
+        style={{ width:'100%', height:36, borderRadius:8, border:'1px solid var(--border)',
+          background:'var(--panel2)', color:'var(--text)', padding:'0 10px', fontSize:12.5, fontFamily:'inherit', marginBottom:9 }}/>
+      <textarea value={texto} onChange={e => setTexto(e.target.value)}
+        placeholder="Ex: software de gestão de agenda para clínicas, que reduz faltas e lota horários ociosos"
+        style={{ width:'100%', minHeight:80, borderRadius:8, border:'1px solid var(--border)',
+          background:'var(--panel2)', color:'var(--text)', padding:10, fontSize:12.5, fontFamily:'inherit', lineHeight:1.5, resize:'vertical' }}/>
+      {erro && <div style={{ fontSize:11.5, color:'#F59E0B', marginTop:6 }}>{erro}</div>}
+      <div style={{ display:'flex', gap:8, marginTop:10 }}>
+        <button type="button" onClick={onSalvar} disabled={salvando}
+          style={{ height:34, padding:'0 16px', borderRadius:8, border:'none', background:C.gold, color:'#0E1936',
+            fontWeight:600, fontSize:12.5, fontFamily:'inherit', cursor: salvando ? 'default' : 'pointer', opacity: salvando ? .7 : 1 }}>
+          {salvando ? 'Salvando…' : 'Salvar'}
+        </button>
+        <button type="button" onClick={onCancelar}
+          style={{ height:34, padding:'0 14px', borderRadius:8, border:'1px solid var(--border)', background:'transparent',
+            color:'var(--dim)', fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>Cancelar</button>
+      </div>
+    </div>
+  );
+}
+
+// Fichamento comercial do cliente (só master): calibra o agente SWOT sem mexer
+// no treinamento técnico base. Preenchido na reunião de onboarding.
+const SWOT_PERGUNTAS = [
+  { k:'icp',              label:'Cliente ideal (ICP)',            ph:'Que tipo de empresa é o seu melhor cliente? Setor, porte, região, características.' },
+  { k:'diferencial',      label:'Diferencial competitivo',        ph:'O que te diferencia? Por que os clientes fecham com você e não com o concorrente?' },
+  { k:'dores',            label:'Dores que você resolve',         ph:'Quais problemas do cliente o seu produto/serviço resolve na prática?' },
+  { k:'processo',         label:'Modelo de processo comercial',   ph:'Como é o seu processo de vendas? Etapas, ciclo médio, quem decide, quantas reuniões.' },
+  { k:'cadencia',         label:'Cadência de abordagem',          ph:'Como o time aborda? Canais (ligação, e-mail, WhatsApp, social), nº de toques, ritmo.' },
+  { k:'gatilhos',         label:'Gatilhos de bom timing',         ph:'Que sinais indicam que a empresa é uma boa hora pra abordar? (crescimento, contratação, etc.)' },
+  { k:'objecoes',         label:'Objeções comuns',                ph:'Principais objeções que você ouve e como o time costuma contornar.' },
+  { k:'desqualificadores',label:'Desqualificadores (mau lead)',   ph:'O que torna uma empresa um MAU lead pra você? Quando descartar de cara.' },
+  { k:'concorrentes',     label:'Concorrentes / alternativas',    ph:'Com quem você concorre — incluindo "não fazer nada" ou solução interna do cliente.' },
+  { k:'tom',              label:'Tom desejado do briefing',       ph:'Como você quer o briefing? Mais direto e objetivo, mais consultivo, foco em dados…' },
+  { k:'observacoes',      label:'Observações adicionais',         ph:'Qualquer outra instrução que ajude o agente a entender o seu negócio.' },
+];
+
+function AgenteSwot() {
+  const [perfil, setPerfil] = useState(null);   // null = carregando
+  const [salvando, setSalvando] = useState(false);
+  const [salvo, setSalvo] = useState(false);
+  const [erro, setErro] = useState(null);
+
+  useEffect(() => {
+    fetch('/api/config', { credentials:'same-origin' })
+      .then(r => r.json())
+      .then(c => setPerfil((c && typeof c.swot_perfil === 'object' && c.swot_perfil) || {}))
+      .catch(() => setPerfil({}));
+  }, []);
+
+  const setCampo = (k, v) => { setPerfil(p => ({ ...(p || {}), [k]: v })); setSalvo(false); };
+
+  const salvar = async () => {
+    setSalvando(true); setErro(null); setSalvo(false);
+    try {
+      const r = await fetch('/api/config', {
+        method:'PATCH', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ swot_perfil: perfil || {} })
+      });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.erro || 'Erro ao salvar.'); }
+      setSalvo(true);
+    } catch (e) { setErro(e.message); }
+    finally { setSalvando(false); }
+  };
+
+  const preenchidos = SWOT_PERGUNTAS.filter(q => String((perfil || {})[q.k] || '').trim()).length;
+
+  return (
+    <div style={{ maxWidth:820 }}>
+      <div style={{ padding:16, borderRadius:12, background:'var(--panel)', border:'1px solid var(--border)', marginBottom:18 }}>
+        <div style={{ fontSize:13, fontWeight:600, marginBottom:6 }}>Treinamento técnico (base — sempre ativo)</div>
+        <div style={{ fontSize:12.5, color:'var(--dim)', lineHeight:1.55 }}>
+          O agente já vem treinado pra extrair fatos concretos de cada empresa (site + firmografia + motivo do match),
+          montar um SWOT sob a ótica da sua venda e entregar dados úteis pro closer — sem inventar e sem escrever
+          mensagem pronta. Isso é fixo e garante a qualidade. Abaixo você <b>personaliza</b> esse agente pro cliente:
+          quanto mais completo o fichamento, mais afiada a análise.
+        </div>
+      </div>
+
+      {perfil === null ? (
+        <div style={{ fontSize:13, color:'var(--faint)' }}>Carregando…</div>
+      ) : (
+        <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
+          {SWOT_PERGUNTAS.map(q => (
+            <div key={q.k}>
+              <label style={{ display:'block', fontSize:12.5, fontWeight:600, marginBottom:6 }}>{q.label}</label>
+              <textarea value={(perfil || {})[q.k] || ''} onChange={e => setCampo(q.k, e.target.value)} placeholder={q.ph}
+                style={{ width:'100%', minHeight:64, borderRadius:10, border:'1px solid var(--border)',
+                  background:'var(--panel2)', color:'var(--text)', padding:11, fontSize:12.5,
+                  fontFamily:'inherit', lineHeight:1.5, resize:'vertical' }}/>
+            </div>
+          ))}
+          <div style={{ display:'flex', alignItems:'center', gap:14, position:'sticky', bottom:0,
+            padding:'12px 0', background:'linear-gradient(transparent, var(--bg) 30%)' }}>
+            <button type="button" onClick={salvar} disabled={salvando}
+              style={{ height:40, padding:'0 20px', borderRadius:9, border:'none', background:C.gold, color:'#0E1936',
+                fontWeight:600, fontSize:13, fontFamily:'inherit', cursor: salvando ? 'default' : 'pointer', opacity: salvando ? .7 : 1 }}>
+              {salvando ? 'Salvando…' : 'Salvar fichamento'}
+            </button>
+            <span style={{ fontSize:12, color:'var(--faint)' }}>{preenchidos}/{SWOT_PERGUNTAS.length} campos preenchidos</span>
+            {salvo && <span style={{ fontSize:12.5, color:'#4ADE80' }}>✓ Salvo — o agente já usa isso nas próximas análises.</span>}
+            {erro && <span style={{ fontSize:12.5, color:'#F59E0B' }}>{erro}</span>}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2035,7 +2180,7 @@ function NovaBusca({ onSalvar, inicial }) {
             </div>
           </div>
           )}
-          <PropostaValorPicker value={propostaSel} onChange={setPropostaSel} inicial={iniProposta}/>
+          <PropostaDropdown value={propostaSel} onChange={setPropostaSel} inicial={iniProposta}/>
         </div>
       ) : (() => {
         const n = cnpjsParsed.length;
@@ -2093,7 +2238,7 @@ function NovaBusca({ onSalvar, inicial }) {
 
           {(tipo === 'lookalike' || tipo === 'cnpj') && (
             <div style={{ marginTop:18, borderTop:'1px solid var(--border)', paddingTop:16 }}>
-              <PropostaValorPicker value={propostaSel} onChange={setPropostaSel} inicial={iniProposta}/>
+              <PropostaDropdown value={propostaSel} onChange={setPropostaSel} inicial={iniProposta}/>
             </div>
           )}
         </div>
@@ -3712,6 +3857,8 @@ function App() {
       case 'buscas': return <Buscas onOpen={openBusca}/>;
       case 'buscaDetail': return <BuscaDetail buscaId={buscaDetailId} onBack={() => setScreen('buscas')} onOpenLead={setOpenLeadId} onDuplicar={duplicarBusca}/>;
       case 'nova': return <NovaBusca key={duplicarDe ? 'dup-'+duplicarDe.id : 'nova'} inicial={duplicarDe} onSalvar={() => navTo('buscas')}/>;
+      case 'propostas': return <Propostas/>;
+      case 'agente': return <AgenteSwot/>;
       case 'integracoes': return <Integracoes/>;
       case 'usuarios': return <Usuarios user={user}/>;
       case 'config': return <Config/>;

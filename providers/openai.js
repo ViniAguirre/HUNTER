@@ -113,13 +113,19 @@ function montarPrompt(empresa, contexto, perfilEmpresa) {
 
 // Gera o briefing SWOT. Retorna objeto já parseado (ou lança em erro de API).
 // `provedor`: 'openai' (padrão) ou 'openrouter' — mesma API, endpoint diferente.
-async function gerarSwot(empresa, { apiKey, modelo, contexto, perfilEmpresa, provedor } = {}) {
+async function gerarSwot(empresa, { apiKey, modelo, contexto, perfilEmpresa, provedor, instrucoesCliente } = {}) {
   const prov = provedorDe(provedor);
   if (!apiKey) throw new Error(`${prov.rotulo}: chave obrigatória (configure em Integrações → Inteligência).`);
+  // Personalização do cliente (tela "Agente SWOT", só master): entra COMO
+  // COMPLEMENTO ao treinamento técnico base, sem poder violar as regras acima.
+  const extra = (instrucoesCliente || '').trim();
+  const systemContent = extra
+    ? `${SYSTEM}\n\nPersonalização deste cliente (respeite, desde que NÃO contrarie as regras acima nem invente dados):\n${extra}`
+    : SYSTEM;
   const body = {
     model: modelo || prov.modelo,
     messages: [
-      { role: 'system', content: SYSTEM },
+      { role: 'system', content: systemContent },
       { role: 'user', content: montarPrompt(empresa, contexto, perfilEmpresa) },
     ],
     temperature: 0.4,

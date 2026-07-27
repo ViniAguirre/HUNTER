@@ -441,6 +441,7 @@ async function init() {
   await pool.query(`
     ALTER TABLE config ADD COLUMN IF NOT EXISTS web_paid_lookup_ativo   BOOLEAN NOT NULL DEFAULT true;
     ALTER TABLE config ADD COLUMN IF NOT EXISTS web_paid_lookup_limite  INTEGER NOT NULL DEFAULT 30;
+    ALTER TABLE config ADD COLUMN IF NOT EXISTS swot_perfil             JSONB NOT NULL DEFAULT '{}';
   `);
 
   // Contador diário genérico (chave + dia), usado pelo teto de confirmação paga
@@ -821,6 +822,23 @@ app.post('/api/propostas', requireAuth, requireEditor, async (req, res) => {
       [rotulo, texto]
     );
     res.status(201).json(row);
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+app.patch('/api/propostas/:id', requireAuth, requireEditor, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
+  const texto = String(req.body.texto || '').trim();
+  const rotulo = String(req.body.rotulo || '').trim().slice(0, 60) || null;
+  if (!texto) return res.status(400).json({ erro: 'escreva a proposta de valor' });
+  if (texto.length > 2000) return res.status(400).json({ erro: 'proposta muito longa (máx. 2000 caracteres)' });
+  try {
+    const { rows: [row] } = await pool.query(
+      `UPDATE propostas_valor SET rotulo=$2, texto=$3 WHERE id=$1 RETURNING id, rotulo, texto, criado_em`,
+      [id, rotulo, texto]
+    );
+    if (!row) return res.status(404).json({ erro: 'não encontrada' });
+    res.json(row);
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
@@ -1433,6 +1451,17 @@ app.patch('/api/config', requireAuth, requireMaster, async (req, res) => {
     const tags = (Array.isArray(b.crm_conversao_tags) ? b.crm_conversao_tags : String(b.crm_conversao_tags || '').split(','))
       .map(t => String(t).trim().toLowerCase()).filter(Boolean).slice(0, 40);
     sets.push(`crm_conversao_tags=$${sets.length+1}`); vals.push(tags);
+  }
+  if ('swot_perfil' in b) {
+    // Perfil comercial do cliente (fichamento) — objeto {chave: resposta}. Só
+    // aceita strings, corta cada resposta em 1200 chars e no máx. 30 campos.
+    const src = (b.swot_perfil && typeof b.swot_perfil === 'object' && !Array.isArray(b.swot_perfil)) ? b.swot_perfil : {};
+    const limpo = {};
+    for (const [k, v] of Object.entries(src).slice(0, 30)) {
+      const val = String(v == null ? '' : v).trim().slice(0, 1200);
+      if (val) limpo[String(k).slice(0, 40)] = val;
+    }
+    sets.push(`swot_perfil=$${sets.length+1}::jsonb`); vals.push(JSON.stringify(limpo));
   }
   if (!sets.length) return res.status(400).json({ erro: 'nada para atualizar' });
   try {

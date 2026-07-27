@@ -8,12 +8,44 @@
  */
 const openai = require('../providers/openai');
 
+// Rótulos do fichamento comercial (tela "Agente SWOT", master). Precisa casar
+// com as perguntas do front — é o que transforma as respostas salvas num bloco
+// legível que calibra o agente.
+const PERFIL_LABELS = {
+  icp: 'Cliente ideal (ICP)',
+  diferencial: 'Diferencial competitivo',
+  dores: 'Dores que resolvemos',
+  processo: 'Modelo de processo comercial',
+  cadencia: 'Cadência de abordagem',
+  gatilhos: 'Gatilhos de bom timing',
+  objecoes: 'Objeções comuns',
+  desqualificadores: 'Desqualificadores (mau lead)',
+  concorrentes: 'Concorrentes / alternativas',
+  tom: 'Tom desejado do briefing',
+  observacoes: 'Observações adicionais',
+};
+
+function compilarPerfil(perfil) {
+  if (!perfil || typeof perfil !== 'object') return '';
+  const linhas = [];
+  for (const [k, label] of Object.entries(PERFIL_LABELS)) {
+    const v = String(perfil[k] || '').trim();
+    if (v) linhas.push(`- ${label}: ${v}`);
+  }
+  // Campos extras que porventura existam além do schema conhecido.
+  for (const [k, v] of Object.entries(perfil)) {
+    if (!PERFIL_LABELS[k] && String(v || '').trim()) linhas.push(`- ${k}: ${String(v).trim()}`);
+  }
+  return linhas.length ? `Perfil comercial deste cliente (fichamento — use pra calibrar a análise e o SWOT):\n${linhas.join('\n')}` : '';
+}
+
 module.exports = async function swot(job, pool, queues) {
   const { cnpj, busca_id, lead_id } = job.data;
 
   const { rows: [busca] } = await pool.query(`SELECT criterios, crm_auto FROM buscas WHERE id=$1`, [busca_id]);
-  const { rows: [cfg] } = await pool.query(`SELECT crm_auto_global FROM config`);
+  const { rows: [cfg] } = await pool.query(`SELECT crm_auto_global, swot_perfil FROM config`);
   const crmAuto = !!(busca?.crm_auto || cfg?.crm_auto_global);
+  const instrucoesCliente = compilarPerfil(cfg?.swot_perfil);   // fichamento comercial (tela master)
 
   // Integrações de IA ativas em ordem de preferência (OpenRouter antes de
   // OpenAI). Se a primeira falhar — crédito esgotado, chave inválida, rate
@@ -41,6 +73,7 @@ module.exports = async function swot(job, pool, queues) {
         try {
           briefing = await openai.gerarSwot(empresa, {
             apiKey: ig.key_cifrada, modelo: ig.config?.modelo, contexto, perfilEmpresa, provedor: ig.provedor,
+            instrucoesCliente,
           });
           break;
         } catch (e) {
