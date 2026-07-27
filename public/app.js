@@ -7440,14 +7440,25 @@ function LeadDetailPanel({
     website: ''
   });
   const [salvandoContato, setSalvandoContato] = useState(false);
+  const [erroCarga, setErroCarga] = useState(null);
   useEffect(() => {
     if (!leadId) return;
     setLead(null);
     setDisplayStatus(null);
     setEditandoContato(false);
+    setErroCarga(null);
     fetch('/api/leads/' + leadId, {
       credentials: 'same-origin'
-    }).then(r => r.json()).then(l => {
+    }).then(async r => {
+      // Sem checar o r.ok, um 404 virava "lead" = {erro:'não encontrado'} e o
+      // painel abria com TODOS os campos vazios — parecia que os dados da
+      // Receita tinham sumido, quando na verdade o lead não existia mais.
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        throw new Error(r.status === 404 ? 'Este lead não existe mais (pode ter sido excluído ou descartado pelo motor).' : d.erro || 'Não foi possível carregar o lead.');
+      }
+      return r.json();
+    }).then(l => {
       setLead(l);
       setDisplayStatus(l.status);
       const cv = l.contato_validado || {};
@@ -7456,7 +7467,7 @@ function LeadDetailPanel({
         email: cv.email || '',
         website: cv.website || ''
       });
-    }).catch(() => {});
+    }).catch(e => setErroCarga(e.message));
   }, [leadId]);
   const salvarContato = async () => {
     setSalvandoContato(true);
@@ -7527,12 +7538,40 @@ function LeadDetailPanel({
         background: 'var(--panel)',
         borderLeft: '1px solid var(--border)',
         display: 'flex',
+        flexDirection: 'column',
         alignItems: 'center',
         justifyContent: 'center',
+        gap: 14,
         color: 'var(--faint)',
-        fontSize: 13
+        fontSize: 13,
+        padding: 30,
+        textAlign: 'center'
       }
-    }, "Carregando\u2026"));
+    }, erroCarga ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 14,
+        fontWeight: 600,
+        color: 'var(--text)'
+      }
+    }, "Lead indispon\xEDvel"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        lineHeight: 1.5,
+        maxWidth: 340
+      }
+    }, erroCarga), /*#__PURE__*/React.createElement("button", {
+      onClick: onClose,
+      style: {
+        height: 36,
+        padding: '0 18px',
+        borderRadius: 9,
+        border: '1px solid var(--border)',
+        background: 'transparent',
+        color: 'var(--text)',
+        fontSize: 13,
+        fontFamily: 'inherit',
+        cursor: 'pointer'
+      }
+    }, "Fechar")) : 'Carregando…'));
   }
   const l = lead;
   const status = displayStatus || l.status;

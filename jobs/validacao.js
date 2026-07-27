@@ -31,6 +31,11 @@ async function seguirParaSwot(queues, data) {
 
 module.exports = async function validacao(job, pool, queues) {
   const { cnpj, busca_id, lead_id } = job.data;
+  // Re-enriquecimento pedido pelo usuário num lead que JÁ existe: nunca apaga o
+  // lead se a busca nova não achar telefone. Descartar aqui seria destruir um
+  // lead que o usuário só queria atualizar (a regra de apagar vale só na
+  // primeira passagem, quando o lead ainda nem "existia" pro usuário).
+  const preservarLead = !!job.data.preservar;
 
   const { rows: [ig] } = await pool.query(
     `SELECT provedor, key_cifrada, config FROM integracoes
@@ -129,7 +134,7 @@ module.exports = async function validacao(job, pool, queues) {
     // Incompleto (falta telefone OU e-mail): 1 re-enriquecimento (busca fresca).
     if (!completo && tentativa < MAX_TENT_CONTATO && queues?.validacao) {
       await queues.validacao.add('validacao',
-        { cnpj, busca_id, lead_id, tentativa_contato: tentativa + 1 },
+        { cnpj, busca_id, lead_id, tentativa_contato: tentativa + 1, preservar: preservarLead },
         { delay: 2 * 60 * 1000, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 2, backoff: { type: 'exponential', delay: 10000 } });
       return { lead_id, retry: tentativa + 1, motivo: 'contato_incompleto' };
     }
@@ -149,8 +154,15 @@ module.exports = async function validacao(job, pool, queues) {
       return { lead_id, contato: 'decisao_so_telefone' };
     }
 
-    // 3) SEM telefone → não é um lead útil: vira só "empresa encontrada". Remove o
-    //    lead (a empresa continua no ledger/contagem). Sem SWOT, sem CRM.
+    // 3) SEM telefone. Se for re-enriquecimento pedido pelo usuário, o lead é
+    //    PRESERVADO (só fica pendente pra decisão manual) — ele pediu pra
+    //    atualizar, não pra descartar. Na primeira passagem, sim: vira só
+    //    "empresa encontrada" e o lead é removido (a empresa segue no ledger).
+    if (preservarLead) {
+      await pool.query(`UPDATE leads SET contato_status='decisao', contato_pendente=true WHERE id=$1`, [lead_id]);
+      await seguirParaSwot(queues, { cnpj, busca_id, lead_id, contato_ok: false });
+      return { lead_id, contato: 'sem_telefone_preservado' };
+    }
     await pool.query(`UPDATE buscas SET sem_contato = sem_contato + 1 WHERE id=$1`, [busca_id]).catch(() => {});
     await pool.query(`DELETE FROM leads WHERE id=$1`, [lead_id]);
     return { lead_id, contato: 'sem_telefone_removido' };

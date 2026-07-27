@@ -1175,8 +1175,10 @@ app.post('/api/leads/acoes', requireAuth, requireEditor, async (req, res) => {
       // busca nova (senão dado errado anterior fica "grudado" se a nova não achar).
       await pool.query(
         `UPDATE leads SET contato_validado=NULL, contato_pendente=false WHERE id = ANY($1::int[])`, [idsInt]);
+      // preservar: o usuário pediu pra ATUALIZAR estes leads — se a busca nova
+      // não achar telefone, o lead fica pendente, mas NUNCA é apagado.
       await Promise.all(rows.map(r =>
-        monitorQueues.validacao.add('validacao', { cnpj: r.cnpj, busca_id: r.busca_id, lead_id: r.id },
+        monitorQueues.validacao.add('validacao', { cnpj: r.cnpj, busca_id: r.busca_id, lead_id: r.id, preservar: true },
           { jobId: `reval-${r.id}-${Date.now()}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 2, backoff: { type: 'exponential', delay: 10000 } })
       ));
       return res.json({ ok: true, reenfileirados: rows.length });

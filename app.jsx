@@ -3333,20 +3333,33 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
   const [editandoContato, setEditandoContato] = useState(false);
   const [contatoForm, setContatoForm] = useState({ telefone:'', email:'', website:'' });
   const [salvandoContato, setSalvandoContato] = useState(false);
+  const [erroCarga, setErroCarga] = useState(null);
 
   useEffect(() => {
     if (!leadId) return;
     setLead(null);
     setDisplayStatus(null);
     setEditandoContato(false);
+    setErroCarga(null);
     fetch('/api/leads/' + leadId, { credentials:'same-origin' })
-      .then(r => r.json())
+      .then(async r => {
+        // Sem checar o r.ok, um 404 virava "lead" = {erro:'não encontrado'} e o
+        // painel abria com TODOS os campos vazios — parecia que os dados da
+        // Receita tinham sumido, quando na verdade o lead não existia mais.
+        if (!r.ok) {
+          const d = await r.json().catch(() => ({}));
+          throw new Error(r.status === 404
+            ? 'Este lead não existe mais (pode ter sido excluído ou descartado pelo motor).'
+            : (d.erro || 'Não foi possível carregar o lead.'));
+        }
+        return r.json();
+      })
       .then(l => {
         setLead(l); setDisplayStatus(l.status);
         const cv = l.contato_validado || {};
         setContatoForm({ telefone: cv.telefone || '', email: cv.email || '', website: cv.website || '' });
       })
-      .catch(() => {});
+      .catch(e => setErroCarga(e.message));
   }, [leadId]);
 
   const salvarContato = async () => {
@@ -3386,8 +3399,19 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
         <div onClick={onClose} style={{ position:'absolute', inset:0, background:'rgba(5,9,20,.55)' }}/>
         <div style={{ position:'absolute', top:0, right:0, height:'100vh', width:560, maxWidth:'94vw',
           background:'var(--panel)', borderLeft:'1px solid var(--border)', display:'flex',
-          alignItems:'center', justifyContent:'center', color:'var(--faint)', fontSize:13 }}>
-          Carregando…
+          flexDirection:'column', alignItems:'center', justifyContent:'center', gap:14,
+          color:'var(--faint)', fontSize:13, padding:30, textAlign:'center' }}>
+          {erroCarga ? (
+            <>
+              <div style={{ fontSize:14, fontWeight:600, color:'var(--text)' }}>Lead indisponível</div>
+              <div style={{ lineHeight:1.5, maxWidth:340 }}>{erroCarga}</div>
+              <button onClick={onClose}
+                style={{ height:36, padding:'0 18px', borderRadius:9, border:'1px solid var(--border)',
+                  background:'transparent', color:'var(--text)', fontSize:13, fontFamily:'inherit', cursor:'pointer' }}>
+                Fechar
+              </button>
+            </>
+          ) : 'Carregando…'}
         </div>
       </div>
     );
