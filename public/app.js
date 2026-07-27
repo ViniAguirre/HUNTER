@@ -8937,5 +8937,76 @@ function DecisaoModal({
     style: btn(C.red)
   }, "N\xE3o qualificado")))))));
 }
-ReactDOM.createRoot(document.getElementById('root')).render(/*#__PURE__*/React.createElement(App, null));
+
+// Sem isto, QUALQUER erro de render em QUALQUER componente (um bug pontual,
+// um dado inesperado da API) derruba a árvore inteira e vira tela branca —
+// sem mensagem nenhuma pro usuário. Com o boundary, mostra uma tela de erro
+// com botão de recarregar, e imprime o erro completo no console (F12) pra
+// dar pra diagnosticar a causa em vez de só "ficou branco".
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = {
+      erro: null
+    };
+  }
+  static getDerivedStateFromError(erro) {
+    return {
+      erro
+    };
+  }
+  componentDidCatch(erro, info) {
+    console.error('[Hunter] erro de render capturado:', erro, info?.componentStack);
+  }
+  render() {
+    if (this.state.erro) {
+      return /*#__PURE__*/React.createElement("div", {
+        style: {
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: '#0E1936',
+          color: '#ECEFF7',
+          fontFamily: 'Inter,system-ui,sans-serif',
+          padding: 24
+        }
+      }, /*#__PURE__*/React.createElement("div", {
+        style: {
+          maxWidth: 440,
+          textAlign: 'center'
+        }
+      }, /*#__PURE__*/React.createElement("div", {
+        style: {
+          fontSize: 17,
+          fontWeight: 600,
+          marginBottom: 10
+        }
+      }, "Algo deu errado nesta tela"), /*#__PURE__*/React.createElement("div", {
+        style: {
+          fontSize: 13,
+          color: '#8A95B4',
+          marginBottom: 18,
+          lineHeight: 1.5
+        }
+      }, "A tela travou por um erro inesperado. Recarregar costuma resolver. Se continuar, avise o suporte com um print do console (tecla F12 \u2192 aba Console)."), /*#__PURE__*/React.createElement("button", {
+        onClick: () => window.location.reload(),
+        style: {
+          height: 40,
+          padding: '0 20px',
+          borderRadius: 9,
+          border: 'none',
+          background: '#FBE49A',
+          color: '#0E1936',
+          fontWeight: 600,
+          fontSize: 13.5,
+          fontFamily: 'inherit',
+          cursor: 'pointer'
+        }
+      }, "Recarregar")));
+    }
+    return this.props.children;
+  }
+}
+ReactDOM.createRoot(document.getElementById('root')).render(/*#__PURE__*/React.createElement(ErrorBoundary, null, /*#__PURE__*/React.createElement(App, null)));
 
