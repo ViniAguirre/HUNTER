@@ -43,6 +43,14 @@ module.exports = async function validacao(job, pool, queues) {
      ORDER BY ordem LIMIT 1`
   );
 
+  const tavilyKey = await chaveBuscaWeb(pool);
+  // O motor teve alguma fonte REAL de enriquecimento nesta rodada? Sem provedor
+  // de contato (Places/Econodata) e sem busca web (Tavily), sobra só o scraping
+  // grátis, que falha na maioria das empresas pequenas. Nesse cenário, "não
+  // achou telefone" fala da CONFIGURAÇÃO, não da qualidade da empresa — e
+  // descartar o lead apagaria a produção inteira do radar.
+  const temFonteEnriquecimento = !!ig || !!tavilyKey;
+
   try {
     const { rows: [emp] } = await pool.query(
       `SELECT razao, fantasia, cidade, uf, contato_receita, contatos_verificados FROM empresas WHERE cnpj=$1`, [cnpj]
@@ -85,7 +93,6 @@ module.exports = async function validacao(job, pool, queues) {
     //    pro SWOT). Se houver chave de busca web (Tavily), ela torna essa busca mais
     //    estável; senão, DuckDuckGo grátis.
     if (!c || !c.website || !c.resumo_site) {
-      const tavilyKey = await chaveBuscaWeb(pool);
       const g = await google.buscarContatoGratis(nome, emp?.cidade, emp?.uf, { tavilyKey }).catch(() => null);
       if (g && (g.website || g.email || g.telefone)) {
         if (!c) {
@@ -158,7 +165,12 @@ module.exports = async function validacao(job, pool, queues) {
     //    PRESERVADO (só fica pendente pra decisão manual) — ele pediu pra
     //    atualizar, não pra descartar. Na primeira passagem, sim: vira só
     //    "empresa encontrada" e o lead é removido (a empresa segue no ledger).
-    if (preservarLead) {
+    if (preservarLead || !temFonteEnriquecimento) {
+      if (!temFonteEnriquecimento) {
+        console.warn(`[validacao] lead ${lead_id} (${cnpj}): sem telefone, mas NENHUMA fonte de ` +
+          `enriquecimento ativa (Integrações → Contato comercial / Busca na web). Lead PRESERVADO ` +
+          `como pendente em vez de descartado — configure um provedor pra qualificação valer.`);
+      }
       await pool.query(`UPDATE leads SET contato_status='decisao', contato_pendente=true WHERE id=$1`, [lead_id]);
       await seguirParaSwot(queues, { cnpj, busca_id, lead_id, contato_ok: false });
       return { lead_id, contato: 'sem_telefone_preservado' };
