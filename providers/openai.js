@@ -28,11 +28,39 @@ const MODELO_PADRAO = PROVEDORES.openai.modelo;
 
 function provedorDe(nome) { return PROVEDORES[nome] || PROVEDORES.openai; }
 
-// Só a OpenAI nativa (e modelos openai/* via OpenRouter) garantem o "JSON mode"
-// (response_format). Modelos livres/de terceiros no OpenRouter podem não aceitar
-// — então só enviamos response_format quando é seguro.
+// Quem aceita "JSON mode" (response_format). Além da OpenAI nativa e dos
+// modelos openai/*, incluímos os ROTEADORES do OpenRouter (openrouter/auto,
+// openrouter/free): eles escolhem o modelo em função dos recursos pedidos, então
+// pedir saída estruturada faz o roteador filtrar por modelos que suportam JSON —
+// sem isso ele sorteia qualquer modelo grátis, que às vezes responde em prosa e
+// quebra o parser. Se algum provedor recusar o parâmetro, `postChat` refaz a
+// chamada sem ele (fallback), então isso nunca vira erro fatal.
 function suportaJsonMode(provedor, modelo) {
-  return provedor === 'openai' || /^openai\//i.test(String(modelo || ''));
+  const m = String(modelo || '');
+  return provedor === 'openai' || /^openai\//i.test(m) || /^openrouter\//i.test(m);
+}
+
+// POST no endpoint de chat com fallback: se o provedor/modelo recusar
+// `response_format`, tenta de novo sem ele em vez de falhar a geração.
+async function postChat(url, body, apiKey) {
+  try {
+    return await axios.post(url, body, {
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      timeout: 30000,
+    });
+  } catch (err) {
+    const status = err.response?.status;
+    const msg = String(err.response?.data?.error?.message || '');
+    const recusouJson = body.response_format
+      && [400, 404, 422].includes(status)
+      && /response_format|json|structured|schema/i.test(msg);
+    if (!recusouJson) throw err;
+    const { response_format, ...semJson } = body;
+    return axios.post(url, semJson, {
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      timeout: 30000,
+    });
+  }
 }
 
 // Parser tolerante: aceita JSON puro, JSON em cerca de código (```json … ```),
@@ -129,15 +157,15 @@ async function gerarSwot(empresa, { apiKey, modelo, contexto, perfilEmpresa, pro
       { role: 'user', content: montarPrompt(empresa, contexto, perfilEmpresa) },
     ],
     temperature: 0.4,
-    max_tokens: 900,
+    // Folga suficiente pro briefing inteiro (resumo + fatos + 4 listas do SWOT
+    // + sinal). Apertado demais, a resposta é cortada no meio e o JSON fica
+    // inválido — o que aparecia como "briefing vazio" sem explicação.
+    max_tokens: 1400,
   };
   if (suportaJsonMode(provedor, body.model)) body.response_format = { type: 'json_object' };
   const arr = v => Array.isArray(v) ? v.filter(Boolean).map(x => String(x)) : (v ? [String(v)] : []);
   try {
-    const { data } = await axios.post(prov.url, body, {
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      timeout: 30000,
-    });
+    const { data } = await postChat(prov.url, body, apiKey);
     const txt = data?.choices?.[0]?.message?.content || '{}';
     const parsed = extrairJson(txt);
     return {
@@ -198,10 +226,7 @@ async function sugerirCnae(texto, catalogo, { apiKey, modelo, max = 8, provedor 
   };
   if (suportaJsonMode(provedor, body.model)) body.response_format = { type: 'json_object' };
   try {
-    const { data } = await axios.post(prov.url, body, {
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      timeout: 30000,
-    });
+    const { data } = await postChat(prov.url, body, apiKey);
     const parsed = extrairJson(data?.choices?.[0]?.message?.content || '{}');
     const codigos = Array.isArray(parsed.codigos) ? parsed.codigos : [];
     const out = [];
