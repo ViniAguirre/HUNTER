@@ -51,6 +51,12 @@ module.exports = async function swot(job, pool, queues) {
   // OpenAI). Se a primeira falhar — crédito esgotado, chave inválida, rate
   // limit — tenta a próxima automaticamente.
   const igs = await openai.integracoesIA(pool);
+  // Sem isto, "nenhuma IA ativa" some sem deixar rastro e o briefing só aparece
+  // vazio na tela, sem explicação. O log diz a verdade.
+  if (!igs.length) {
+    console.warn(`[swot] lead ${lead_id} (${cnpj}): NENHUMA integração de IA ativa ` +
+      `(Integrações → Inteligência: salve a chave E clique em "Ativar"). Briefing não gerado.`);
+  }
 
   if (igs.length) {
     const [{ rows: [empresa] }, { rows: [lead] }] = await Promise.all([
@@ -86,6 +92,9 @@ module.exports = async function swot(job, pool, queues) {
         `UPDATE leads SET swot=$2::jsonb, estagio='pronto', atualizado_em=now() WHERE id=$1`,
         [lead_id, JSON.stringify(briefing)]
       );
+      console.log(`[swot] lead ${lead_id} (${cnpj}): briefing gerado.`);
+    } else {
+      console.warn(`[swot] lead ${lead_id}: empresa ${cnpj} não encontrada na base — briefing não gerado.`);
     }
   }
   // Sem chave IA: o lead segue 'scored' (sem gasto). Mesmo assim pode ir ao CRM.
