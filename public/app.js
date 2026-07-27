@@ -3394,10 +3394,14 @@ function Propostas() {
   const [texto, setTexto] = useState('');
   const [erro, setErro] = useState(null);
   const [salvando, setSalvando] = useState(false);
-  const carregar = () => fetch('/api/propostas', {
-    credentials: 'same-origin'
-  }).then(r => r.json()).then(rows => setLista(Array.isArray(rows) ? rows : [])).catch(() => setLista([]));
-  useEffect(carregar, []);
+  const carregar = () => {
+    fetch('/api/propostas', {
+      credentials: 'same-origin'
+    }).then(r => r.json()).then(rows => setLista(Array.isArray(rows) ? rows : [])).catch(() => setLista([]));
+  };
+  useEffect(() => {
+    carregar();
+  }, []);
   const abrirNovo = () => {
     setEditId('novo');
     setRotulo('');

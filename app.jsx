@@ -1486,9 +1486,9 @@ function Propostas() {
   const [erro, setErro] = useState(null);
   const [salvando, setSalvando] = useState(false);
 
-  const carregar = () => fetch('/api/propostas', { credentials:'same-origin' })
-    .then(r => r.json()).then(rows => setLista(Array.isArray(rows) ? rows : [])).catch(() => setLista([]));
-  useEffect(carregar, []);
+  const carregar = () => { fetch('/api/propostas', { credentials:'same-origin' })
+    .then(r => r.json()).then(rows => setLista(Array.isArray(rows) ? rows : [])).catch(() => setLista([])); };
+  useEffect(() => { carregar(); }, []);
 
   const abrirNovo = () => { setEditId('novo'); setRotulo(''); setTexto(''); setErro(null); };
   const abrirEdit = (p) => { setEditId(p.id); setRotulo(p.rotulo || ''); setTexto(p.texto || ''); setErro(null); };
