@@ -1723,6 +1723,11 @@ function NovaBusca({ onSalvar, inicial }) {
   const [abertura, setAbertura] = useState(aberturaInicial(iniP));
   const [capital, setCapital] = useState(capitalInicial(iniP));
   const [crmAuto, setCrmAuto] = useState(!!inicial?.crm_auto);
+  // Filas do CRM (se houver CRM configurado): permite mandar cada radar pra uma
+  // fila diferente. Vazio = usa a fila padrão das Integrações.
+  const [crmFilas, setCrmFilas] = useState([]);
+  const [crmFilaPadrao, setCrmFilaPadrao] = useState(null);
+  const [crmQueue, setCrmQueue] = useState(inicial?.crm_queue_id ? String(inicial.crm_queue_id) : '');
   const [listaCnpj, setListaCnpj] = useState(Array.isArray(iniCrit.cnpjs) ? iniCrit.cnpjs.join('\n') : '');
   const [uploadMsg, setUploadMsg] = useState(null);   // feedback do upload de arquivo
   const arquivoRef = useRef();
@@ -1733,6 +1738,18 @@ function NovaBusca({ onSalvar, inicial }) {
   const [propostaSel, setPropostaSel] = useState(iniProposta);   // texto da variação de proposta escolhida
 
   // CNPJs válidos (14 dígitos, sem repetição) colados na aba lista/lookalike.
+  useEffect(() => {
+    fetch('/api/crm/filas', { credentials:'same-origin' })
+      .then(r => r.ok ? r.json() : { filas: [] })
+      .then(d => {
+        setCrmFilas(Array.isArray(d.filas) ? d.filas : []);
+        setCrmFilaPadrao(d.padrao != null ? String(d.padrao) : null);
+      })
+      .catch(() => {});
+  }, []);
+
+  const crmFilaPadraoNome = crmFilas.find(q => String(q.id) === crmFilaPadrao)?.queue || '';
+
   const cnpjsParsed = useMemo(() => {
     const vistos = new Set();
     for (const item of listaCnpj.split(/[\s,;]+/)) {
@@ -1929,7 +1946,8 @@ function NovaBusca({ onSalvar, inicial }) {
       const r = await fetch('/api/buscas', {
         method:'POST', credentials:'same-origin',
         headers:{ 'Content-Type':'application/json' },
-        body: JSON.stringify({ nome, tipo, corte_score: corte, crm_auto: crmAuto, criterios })
+        body: JSON.stringify({ nome, tipo, corte_score: corte, crm_auto: crmAuto,
+          crm_queue_id: crmQueue || null, criterios })
       });
       if (!r.ok) { const d = await r.json().catch(()=>({})); throw new Error(d.erro || 'Erro ao criar radar.'); }
       onSalvar();
@@ -2300,6 +2318,23 @@ function NovaBusca({ onSalvar, inicial }) {
             <div style={{ fontSize:11, color:'var(--faint)', marginTop:7, lineHeight:1.4 }}>
               No automático, cada lead aprovado é enviado ao webhook após o SWOT. No manual, você envia pela triagem. Configure a URL em Integrações.
             </div>
+            {crmFilas.length > 0 && (
+              <div style={{ marginTop:16 }}>
+                <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>
+                  Fila do CRM para os leads deste radar
+                </label>
+                <select value={crmQueue} onChange={e => setCrmQueue(e.target.value)}
+                  style={{ width:'100%', height:40, borderRadius:9, border:'1px solid var(--border)',
+                    background:'var(--panel2)', color:'var(--text)', padding:'0 10px', fontSize:13,
+                    fontFamily:'inherit', cursor:'pointer' }}>
+                  <option value="">Usar a fila padrão das Integrações{crmFilaPadraoNome ? ` (${crmFilaPadraoNome})` : ''}</option>
+                  {crmFilas.map(q => <option key={q.id} value={String(q.id)}>{q.queue}</option>)}
+                </select>
+                <div style={{ fontSize:11, color:'var(--faint)', marginTop:7, lineHeight:1.4 }}>
+                  Cada radar pode cair numa fila diferente do CRM. Deixe no padrão se não quiser separar.
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -2396,14 +2431,17 @@ function IntegracaoGK({ row, meta, onSaved }) {
 
   const salvar = async () => {
     if (!backend.trim() || !token.trim()) { setErro('Informe Backend e Token.'); return; }
-    if (!companyId) { setErro('Selecione a empresa (obrigatória para criar o contato).'); return; }
+    // A empresa só é exigida quando o token dá acesso a VÁRIAS (aí é preciso
+    // escolher qual). Token com escopo de uma única empresa não lista nenhuma —
+    // o próprio CRM já sabe a empresa, e exigir a escolha travava o salvamento.
+    if (empresas.length > 0 && !companyId) { setErro('Selecione a empresa (o token dá acesso a mais de uma).'); return; }
     if (!queueId) { setErro('Selecione a fila padrão.'); return; }
     setErro(null); setSalvando(true);
     try {
       const r = await fetch('/api/integracoes', {
         method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
         body: JSON.stringify({ categoria:'crm', provedor:'gk', ativo:true, key: token.trim(),
-          config: { backend: backend.trim(), companyId, queueId, status:'pending' } })
+          config: { backend: backend.trim(), companyId: companyId || null, queueId, status:'pending' } })
       });
       if (!r.ok) { const d = await r.json().catch(()=>({})); throw new Error(d.erro || 'Erro ao salvar.'); }
       setToken('');

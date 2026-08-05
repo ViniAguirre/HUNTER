@@ -410,6 +410,7 @@ async function init() {
     ALTER TABLE config ADD COLUMN IF NOT EXISTS crm_lookalike_auto     BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE config ADD COLUMN IF NOT EXISTS webhook_entrada_secret TEXT;
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS lista TEXT;
+    ALTER TABLE buscas ADD COLUMN IF NOT EXISTS crm_queue_id TEXT;
     ALTER TABLE leads  ADD COLUMN IF NOT EXISTS crm_ref TEXT;
     CREATE INDEX IF NOT EXISTS idx_leads_crm_ref ON leads(crm_ref);
     ALTER TABLE leads  ADD COLUMN IF NOT EXISTS contato_pendente BOOLEAN NOT NULL DEFAULT false;
@@ -883,11 +884,14 @@ app.post('/api/buscas', requireAuth, requireEditor, async (req, res) => {
   const corteScore = typeof req.body.corte_score === 'number'
     ? Math.max(0, Math.min(100, req.body.corte_score)) : 60;
   const crmAuto = !!req.body.crm_auto;
+  // Fila do CRM específica deste radar (opcional). Vazio = usa a fila padrão
+  // configurada em Integrações.
+  const crmQueueId = String(req.body.crm_queue_id || '').trim() || null;
   try {
     const { rows:[b] } = await pool.query(
-      `INSERT INTO buscas (nome, tipo, ritmo, criterios, corte_score, crm_auto, criador_id, ultima_ativ)
-       VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,now()) RETURNING *`,
-      [nome, tipo, ritmo, JSON.stringify(criterios), corteScore, crmAuto, req.user.id]
+      `INSERT INTO buscas (nome, tipo, ritmo, criterios, corte_score, crm_auto, crm_queue_id, criador_id, ultima_ativ)
+       VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8,now()) RETURNING *`,
+      [nome, tipo, ritmo, JSON.stringify(criterios), corteScore, crmAuto, crmQueueId, req.user.id]
     );
     res.status(201).json({ ...b, health: computeHealth(b), criador_nome: req.user.nome });
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
@@ -1410,6 +1414,22 @@ app.patch('/api/integracoes/:id', requireAuth, requireMaster, async (req, res) =
 
 // GK CRM: testa a conexão (backend + token) e lista empresas + filas pra a UI.
 const gk = require('./providers/gk');
+// Filas do CRM usando a integração JÁ salva — sem pedir token e sem exigir
+// master. Serve pra escolher a fila na criação de cada radar. Devolve lista
+// vazia (200) quando não há CRM configurado, pra UI só esconder o campo.
+app.get('/api/crm/filas', requireAuth, async (req, res) => {
+  try {
+    const { rows: [ig] } = await pool.query(
+      `SELECT provedor, key_cifrada, config FROM integracoes
+       WHERE categoria='crm' AND provedor='gk' AND ativo=true
+         AND key_cifrada IS NOT NULL AND key_cifrada <> '' LIMIT 1`
+    );
+    if (!ig?.config?.backend) return res.json({ filas: [], padrao: null });
+    const filas = await gk.listarFilas(ig.config.backend, ig.key_cifrada).catch(() => []);
+    res.json({ filas, padrao: ig.config.queueId || null });
+  } catch (e) { console.error(e); res.json({ filas: [], padrao: null }); }
+});
+
 app.post('/api/integracoes/gk/conectar', requireAuth, requireMaster, async (req, res) => {
   const backend = String(req.body.backend || '').trim();
   const token = String(req.body.token || '').trim();

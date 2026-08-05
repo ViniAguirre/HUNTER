@@ -3960,6 +3960,11 @@ function NovaBusca({
   const [abertura, setAbertura] = useState(aberturaInicial(iniP));
   const [capital, setCapital] = useState(capitalInicial(iniP));
   const [crmAuto, setCrmAuto] = useState(!!inicial?.crm_auto);
+  // Filas do CRM (se houver CRM configurado): permite mandar cada radar pra uma
+  // fila diferente. Vazio = usa a fila padrão das Integrações.
+  const [crmFilas, setCrmFilas] = useState([]);
+  const [crmFilaPadrao, setCrmFilaPadrao] = useState(null);
+  const [crmQueue, setCrmQueue] = useState(inicial?.crm_queue_id ? String(inicial.crm_queue_id) : '');
   const [listaCnpj, setListaCnpj] = useState(Array.isArray(iniCrit.cnpjs) ? iniCrit.cnpjs.join('\n') : '');
   const [uploadMsg, setUploadMsg] = useState(null); // feedback do upload de arquivo
   const arquivoRef = useRef();
@@ -3970,6 +3975,17 @@ function NovaBusca({
   const [propostaSel, setPropostaSel] = useState(iniProposta); // texto da variação de proposta escolhida
 
   // CNPJs válidos (14 dígitos, sem repetição) colados na aba lista/lookalike.
+  useEffect(() => {
+    fetch('/api/crm/filas', {
+      credentials: 'same-origin'
+    }).then(r => r.ok ? r.json() : {
+      filas: []
+    }).then(d => {
+      setCrmFilas(Array.isArray(d.filas) ? d.filas : []);
+      setCrmFilaPadrao(d.padrao != null ? String(d.padrao) : null);
+    }).catch(() => {});
+  }, []);
+  const crmFilaPadraoNome = crmFilas.find(q => String(q.id) === crmFilaPadrao)?.queue || '';
   const cnpjsParsed = useMemo(() => {
     const vistos = new Set();
     for (const item of listaCnpj.split(/[\s,;]+/)) {
@@ -4243,6 +4259,7 @@ function NovaBusca({
           tipo,
           corte_score: corte,
           crm_auto: crmAuto,
+          crm_queue_id: crmQueue || null,
           criterios
         })
       });
@@ -5121,7 +5138,45 @@ function NovaBusca({
       marginTop: 7,
       lineHeight: 1.4
     }
-  }, "No autom\xE1tico, cada lead aprovado \xE9 enviado ao webhook ap\xF3s o SWOT. No manual, voc\xEA envia pela triagem. Configure a URL em Integra\xE7\xF5es.")))), /*#__PURE__*/React.createElement("div", {
+  }, "No autom\xE1tico, cada lead aprovado \xE9 enviado ao webhook ap\xF3s o SWOT. No manual, voc\xEA envia pela triagem. Configure a URL em Integra\xE7\xF5es."), crmFilas.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 16
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 7
+    }
+  }, "Fila do CRM para os leads deste radar"), /*#__PURE__*/React.createElement("select", {
+    value: crmQueue,
+    onChange: e => setCrmQueue(e.target.value),
+    style: {
+      width: '100%',
+      height: 40,
+      borderRadius: 9,
+      border: '1px solid var(--border)',
+      background: 'var(--panel2)',
+      color: 'var(--text)',
+      padding: '0 10px',
+      fontSize: 13,
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "Usar a fila padr\xE3o das Integra\xE7\xF5es", crmFilaPadraoNome ? ` (${crmFilaPadraoNome})` : ''), crmFilas.map(q => /*#__PURE__*/React.createElement("option", {
+    key: q.id,
+    value: String(q.id)
+  }, q.queue))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)',
+      marginTop: 7,
+      lineHeight: 1.4
+    }
+  }, "Cada radar pode cair numa fila diferente do CRM. Deixe no padr\xE3o se n\xE3o quiser separar."))))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 12
@@ -5307,8 +5362,11 @@ function IntegracaoGK({
       setErro('Informe Backend e Token.');
       return;
     }
-    if (!companyId) {
-      setErro('Selecione a empresa (obrigatória para criar o contato).');
+    // A empresa só é exigida quando o token dá acesso a VÁRIAS (aí é preciso
+    // escolher qual). Token com escopo de uma única empresa não lista nenhuma —
+    // o próprio CRM já sabe a empresa, e exigir a escolha travava o salvamento.
+    if (empresas.length > 0 && !companyId) {
+      setErro('Selecione a empresa (o token dá acesso a mais de uma).');
       return;
     }
     if (!queueId) {
@@ -5331,7 +5389,7 @@ function IntegracaoGK({
           key: token.trim(),
           config: {
             backend: backend.trim(),
-            companyId,
+            companyId: companyId || null,
             queueId,
             status: 'pending'
           }

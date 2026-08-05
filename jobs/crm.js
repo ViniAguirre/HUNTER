@@ -21,7 +21,8 @@ module.exports = async function crm(job, pool) {
   if (!ig) return { skipped: 'sem_crm', lead_id };
 
   const { rows: [lead] } = await pool.query(
-    `SELECT l.id, l.cnpj, l.busca_id, l.score, l.swot, l.contato_validado, l.crm_ref, b.nome AS busca_nome
+    `SELECT l.id, l.cnpj, l.busca_id, l.score, l.swot, l.contato_validado, l.crm_ref,
+            b.nome AS busca_nome, b.crm_queue_id AS busca_queue_id
      FROM leads l LEFT JOIN buscas b ON b.id=l.busca_id WHERE l.id=$1`, [lead_id]
   );
   if (!lead) return { error: 'lead ausente', lead_id };
@@ -37,9 +38,14 @@ module.exports = async function crm(job, pool) {
   if (ig.provedor === 'gk') {
     const backend = ig.config?.backend;
     const token = ig.key_cifrada;
-    const queueId = ig.config?.queueId;
-    if (!backend || !queueId || !ig.config?.companyId) {
-      throw new Error('GK: configure Backend, Empresa e Fila em Integrações (empresa é obrigatória pro contato).');
+    // Fila do RADAR tem prioridade sobre a fila padrão da integração — permite
+    // mandar cada radar pra uma fila diferente do CRM.
+    const queueId = lead.busca_queue_id || ig.config?.queueId;
+    // companyId é OPCIONAL: token com escopo de uma única empresa não lista
+    // /companies/all, e o próprio CRM já vincula o contato à empresa do token.
+    // Exigir aqui travava o envio de quem usa token escopado.
+    if (!backend || !queueId) {
+      throw new Error('GK: configure Backend e Fila em Integrações.');
     }
 
     // Contato do decisor. Prioriza o VALIDADO (Econodata); só cai no da Receita
