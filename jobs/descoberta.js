@@ -122,7 +122,13 @@ module.exports = async function descoberta(job, pool, queues) {
     return { skipped: 'sem_filtro', motivo: 'busca sem UF, CNAE, município nem palavra-chave — defina ao menos um', novos: 0 };
   }
 
-  let token = null, pagina = 0, esgotou = false;
+  // Retoma a varredura de onde parou. Sem isto, um job interrompido no meio
+  // (deploy que reinicia o worker, crash, retry do BullMQ) recomeçava da página
+  // 1 e PAGAVA DE NOVO por páginas já consultadas na CNPJá — e, como o total só
+  // era gravado no fim, o universo_varrido ficava zerado apesar do gasto.
+  const { rows: [bTok] } = await pool.query(`SELECT descoberta_token FROM buscas WHERE id=$1`, [busca_id]);
+  let token = bTok?.descoberta_token || null;
+  let pagina = 0, esgotou = false;
   const counters = { novos: 0, pulados: 0, enfileirados: 0, total: 0 };
 
   do {
@@ -133,12 +139,23 @@ module.exports = async function descoberta(job, pool, queues) {
     }
     token = next;
     pagina++;
+    // Progresso persistido A CADA PÁGINA: o que já foi pago fica registrado e o
+    // cursor sobrevive a uma interrupção. NÃO tocamos em ultimo_heartbeat aqui —
+    // o scheduler usa ele pra deduplicar disparos, e mexer no meio da varredura
+    // criaria jobs concorrentes varrendo (e pagando) em paralelo.
+    await pool.query(
+      `UPDATE buscas SET universo_varrido = universo_varrido + $1, descoberta_token = $2 WHERE id=$3`,
+      [offices.length, next, busca_id]
+    );
     if (!next) { esgotou = true; break; }
   } while (pagina < TETO_PAGINAS);
 
+  // Esgotou de verdade (acabaram as páginas) → limpa o cursor, pra uma eventual
+  // reativação recomeçar do zero. Parou no teto de páginas → mantém o cursor,
+  // pra continuar de onde parou em vez de repagar o começo.
   await pool.query(
-    `UPDATE buscas SET universo_varrido = universo_varrido + $1, status='Esgotada', ultimo_heartbeat=now() WHERE id=$2`,
-    [counters.total, busca_id]
+    `UPDATE buscas SET status='Esgotada', descoberta_token=$1, ultimo_heartbeat=now() WHERE id=$2`,
+    [esgotou ? null : token, busca_id]
   );
 
   return { modo: tipo, ...counters, paginas: pagina, esgotou };

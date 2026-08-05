@@ -411,6 +411,7 @@ async function init() {
     ALTER TABLE config ADD COLUMN IF NOT EXISTS webhook_entrada_secret TEXT;
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS lista TEXT;
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS crm_queue_id TEXT;
+    ALTER TABLE buscas ADD COLUMN IF NOT EXISTS descoberta_token TEXT;
     ALTER TABLE leads  ADD COLUMN IF NOT EXISTS crm_ref TEXT;
     CREATE INDEX IF NOT EXISTS idx_leads_crm_ref ON leads(crm_ref);
     ALTER TABLE leads  ADD COLUMN IF NOT EXISTS contato_pendente BOOLEAN NOT NULL DEFAULT false;
