@@ -122,6 +122,33 @@ module.exports = async function descoberta(job, pool, queues) {
     return { skipped: 'sem_filtro', motivo: 'busca sem UF, CNAE, município nem palavra-chave — defina ao menos um', novos: 0 };
   }
 
+  // ── 1) BANCO LOCAL PRIMEIRO (grátis) ────────────────────────────────────────
+  // O cadastro `empresas` é global: o que qualquer cliente já descobriu serve
+  // pra todos. Só vamos à CNPJá (paga) pelo que faltar. `orcamentoDaHora` limita
+  // quantas cabem agora, então não adianta puxar mais do que isso.
+  const counters = { novos: 0, pulados: 0, enfileirados: 0, total: 0, locais: 0 };
+  const tetoLocal = Math.min(orcamentoDaHora, TETO_PAGINAS * 100);
+  const locais = await buscarLocal(pool, params, tetoLocal);
+  for (const emp of locais) {
+    const antes = counters.enfileirados;
+    await processarOffice(pool, queues, busca_id, emp, counters);
+    if (counters.enfileirados > antes) counters.locais++;
+  }
+  counters.total += locais.length;
+  if (locais.length) {
+    await pool.query(
+      `UPDATE buscas SET universo_varrido = universo_varrido + $1 WHERE id=$2`,
+      [locais.length, busca_id]
+    );
+    console.log(`[descoberta] busca ${busca_id}: ${counters.locais} empresa(s) aproveitada(s) do banco local (sem custo CNPJá).`);
+  }
+  // Encheu a cota da hora só com o banco local → nem toca na CNPJá nesta rodada.
+  if (counters.enfileirados >= orcamentoDaHora) {
+    await pool.query(`UPDATE buscas SET ultimo_heartbeat=now() WHERE id=$1`, [busca_id]);
+    return { modo: tipo, ...counters, fonte: 'local', paginas: 0, esgotou: false };
+  }
+
+  // ── 2) CNPJá (paga) pelo que faltar ─────────────────────────────────────────
   // Retoma a varredura de onde parou. Sem isto, um job interrompido no meio
   // (deploy que reinicia o worker, crash, retry do BullMQ) recomeçava da página
   // 1 e PAGAVA DE NOVO por páginas já consultadas na CNPJá — e, como o total só
@@ -129,7 +156,6 @@ module.exports = async function descoberta(job, pool, queues) {
   const { rows: [bTok] } = await pool.query(`SELECT descoberta_token FROM buscas WHERE id=$1`, [busca_id]);
   let token = bTok?.descoberta_token || null;
   let pagina = 0, esgotou = false;
-  const counters = { novos: 0, pulados: 0, enfileirados: 0, total: 0 };
 
   do {
     const { offices, next } = await cnpja.search({ ...params, token }, ig.key_cifrada);
@@ -436,6 +462,51 @@ async function processarOffice(pool, queues, busca_id, office, counters) {
   counters.enfileirados++;
 }
 
+// Varre o CADASTRO LOCAL (tabela `empresas`, global entre todos os clientes)
+// aplicando os mesmos filtros do radar, ANTES de gastar crédito na CNPJá.
+// Empresas descobertas por qualquer cliente ficam disponíveis pra todos — o que
+// é isolado por cliente é o estado (empresa_tenant_estado), então cada tenant
+// só recebe as que ele ainda não processou.
+// Devolve os offices no mesmo formato que a CNPJá entrega, pra reaproveitar
+// `processarOffice` sem nenhuma diferença de tratamento.
+async function buscarLocal(pool, params, limite) {
+  const conds = [`(situacao IS NULL OR situacao ILIKE '%ativa%')`];
+  const vals = [];
+  const add = (sql, val) => { vals.push(val); conds.push(sql.replace('$?', `$${vals.length}`)); };
+
+  if (params.states?.length)         add(`uf = ANY($?)`, params.states.map(s => String(s).toUpperCase()));
+  if (params.activities?.length)     add(`cnae = ANY($?)`, params.activities.map(c => String(c).replace(/\D/g, '')));
+  if (params.municipiosNomes?.length) add(`cidade ILIKE ANY($?)`, params.municipiosNomes);
+  if (params.portes?.length)          add(`porte = ANY($?)`, params.portes);
+  // Palavra-chave: casa em razão social OU nome fantasia (mesma semântica do
+  // filtro `names.in` da CNPJá, que é OU entre os termos).
+  if (params.names?.length) {
+    vals.push(params.names.map(t => `%${String(t).trim()}%`));
+    conds.push(`(razao ILIKE ANY($${vals.length}) OR fantasia ILIKE ANY($${vals.length}))`);
+  }
+
+  // Já processadas POR ESTE cliente ficam de fora (a RLS de empresa_tenant_estado
+  // já escopa no tenant atual).
+  conds.push(`NOT EXISTS (SELECT 1 FROM empresa_tenant_estado ete WHERE ete.cnpj = e.cnpj)`);
+
+  vals.push(Math.max(1, limite));
+  const sql = `
+    SELECT cnpj, razao, fantasia, setor, cnae, porte, cidade, uf, situacao, abertura,
+           capital, endereco, natureza_juridica, opcao_simples, decisor, cargo
+    FROM empresas e
+    WHERE ${conds.join(' AND ')}
+    ORDER BY atualizado_em DESC
+    LIMIT $${vals.length}`;
+  try {
+    const { rows } = await pool.query(sql, vals);
+    return rows;
+  } catch (e) {
+    // Nunca deixa a busca local derrubar a descoberta — na dúvida, segue pra CNPJá.
+    console.warn('[descoberta] busca local falhou (segue pra CNPJá):', e.message);
+    return [];
+  }
+}
+
 function buildSearchParams(criterios) {
   const p = criterios.params || {};
   const out = { states: [], activities: [], municipalities: [], names: [], limit: 100 };
@@ -445,6 +516,10 @@ function buildSearchParams(criterios) {
     out.activities = p.cnaes || [];
     out.municipalities = p.municipios_cod || [];
     out.names = p.keywords || [];
+    // Só pra busca LOCAL: a tabela `empresas` guarda cidade por NOME e o porte
+    // como texto — a CNPJá filtra por código de município e não usa porte aqui.
+    out.municipiosNomes = (p.municipios_rotulos || []).map(m => m?.n).filter(Boolean);
+    out.portes = p.portes || [];
     out.foundedGte = p.founded_gte || null;
     out.foundedLte = p.founded_lte || null;
     out.equityGte = p.equity_gte != null ? p.equity_gte : null;
