@@ -65,7 +65,22 @@ module.exports = async function crm(job, pool) {
   } else {
     // webhook genérico
     const url = ig.key_cifrada;
-    const payload = webhook.montarPayload(empresa, lead, { id: lead.busca_id, nome: lead.busca_nome }, ref);
+    // Dados da conexão do CRM GK (URL, token, fila) vão junto no payload pra
+    // quem recebe — normalmente um n8n — abrir o contato/ticket direto na API
+    // do CRM. Lido da integração GK salva mesmo que ela não seja a ativa: aqui
+    // ela é fonte de configuração, não o canal de envio.
+    const { rows: [gkIg] } = await pool.query(
+      `SELECT key_cifrada, config FROM integracoes
+       WHERE categoria='crm' AND provedor='gk' LIMIT 1`
+    );
+    const crmInfo = gkIg ? {
+      url: gkIg.config?.backend || null,
+      token: gkIg.key_cifrada || null,
+      // Fila do radar tem prioridade sobre a padrão da integração.
+      fila_id: lead.busca_queue_id || gkIg.config?.queueId || null,
+      empresa_id: gkIg.config?.companyId || null,
+    } : null;
+    const payload = webhook.montarPayload(empresa, lead, { id: lead.busca_id, nome: lead.busca_nome }, ref, crmInfo);
     await webhook.enviar(url, payload, ig.config?.secret || null);
   }
 
