@@ -270,6 +270,13 @@ const statusColors = { Qualificado:C.gold, Novo:C.blue, Enviado:C.green, Incompl
 const buscaStatusColors = { Ativa:C.green, Pausada:C.amber, Esgotada:C.blue, Encerrada:C.gray };
 const healthColors = { green:C.green, amber:C.amber, red:C.red, gray:C.gray };
 
+// Descoberta "Pela internet" (web-first) desligada na interface: ela consulta a
+// CNPJá UMA VEZ POR EMPRESA pra confirmar o CNPJ (contra ~100 empresas por
+// consulta no modo por CNAE), então sai muito mais cara. TODO o código do modo
+// web continua no backend e nos radares já criados — pra reativar, basta trocar
+// esta chave para true.
+const DESCOBERTA_WEB_HABILITADA = false;
+
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 const NAV_MAIN = [
   { key:'dashboard', label:'Dashboard', icon:'M4 4h7v7H4zM13 4h7v7h-7zM13 13h7v7h-7zM4 13h7v7H4z' },
@@ -1713,7 +1720,11 @@ function NovaBusca({ onSalvar, inicial }) {
     Array.isArray(iniP.cnaes_rotulos) ? iniP.cnaes_rotulos
       : (Array.isArray(iniP.cnaes) ? iniP.cnaes.map(c => ({ c: String(c), d: fmtCnae(c) })) : []));
   const [kwText, setKwText] = useState(Array.isArray(iniP.keywords) ? iniP.keywords.join(', ') : '');
-  const [modoDesc, setModoDesc] = useState(iniP.modo_descoberta || 'cnpja');   // cnpja | web (descoberta)
+  // cnpja | web. Com o modo web desligado, força 'cnpja' — inclusive ao duplicar
+  // um radar web antigo, senão o formulário abriria sem os campos de CNAE/UF.
+  const [modoDesc, setModoDesc] = useState(
+    DESCOBERTA_WEB_HABILITADA ? (iniP.modo_descoberta || 'cnpja') : 'cnpja'
+  );
   const [cnaeData, setCnaeData] = useState([]);
   const [cnaeFoco, setCnaeFoco] = useState(false);
   const [municBusca, setMunicBusca] = useState('');
@@ -1979,6 +1990,7 @@ function NovaBusca({ onSalvar, inicial }) {
 
       {tipo === 'icp' ? (
         <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:20, marginBottom:18 }}>
+          {DESCOBERTA_WEB_HABILITADA && (
           <div style={{ marginBottom:18 }}>
             <label style={{ display:'flex', alignItems:'center', fontSize:12, color:'var(--dim)', marginBottom:9 }}>
               Como descobrir as empresas
@@ -2002,6 +2014,7 @@ function NovaBusca({ onSalvar, inicial }) {
               })}
             </div>
           </div>
+          )}
           {modoDesc === 'cnpja' && (
           <div style={{ marginBottom:18, position:'relative' }}>
             <label style={{ display:'flex', alignItems:'center', fontSize:12, color:'var(--dim)', marginBottom:7 }}>
@@ -3006,6 +3019,7 @@ function Config() {
           e respeita uma cota por hora, pra não gastar o dia inteiro logo na primeira hora se o radar ficar ligado
           direto — a captação fica espalhada ao longo do dia. 0 = sem teto.
         </div>
+        {DESCOBERTA_WEB_HABILITADA && (
         <div style={{ borderTop:'1px solid var(--border)', marginTop:16, paddingTop:16 }}>
           <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:9 }}>Modo de descoberta padrão <span style={{ color:'var(--faint)' }}>(cada radar pode trocar)</span></label>
           <div style={{ display:'flex', gap:8 }}>
@@ -3023,6 +3037,8 @@ function Config() {
             })}
           </div>
         </div>
+        )}
+        {DESCOBERTA_WEB_HABILITADA && (
         <div style={{ borderTop:'1px solid var(--border)', marginTop:16, paddingTop:16 }}>
           <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:9 }}>
             Confirmação paga na descoberta pela internet
@@ -3052,6 +3068,7 @@ function Config() {
             </div>
           )}
         </div>
+        )}
       </div>
 
       <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:22 }}>

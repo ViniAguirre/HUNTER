@@ -606,6 +606,13 @@ const healthColors = {
   gray: C.gray
 };
 
+// Descoberta "Pela internet" (web-first) desligada na interface: ela consulta a
+// CNPJá UMA VEZ POR EMPRESA pra confirmar o CNPJ (contra ~100 empresas por
+// consulta no modo por CNAE), então sai muito mais cara. TODO o código do modo
+// web continua no backend e nos radares já criados — pra reativar, basta trocar
+// esta chave para true.
+const DESCOBERTA_WEB_HABILITADA = false;
+
 // ── Sidebar ───────────────────────────────────────────────────────────────────
 const NAV_MAIN = [{
   key: 'dashboard',
@@ -3950,7 +3957,9 @@ function NovaBusca({
     d: fmtCnae(c)
   })) : []);
   const [kwText, setKwText] = useState(Array.isArray(iniP.keywords) ? iniP.keywords.join(', ') : '');
-  const [modoDesc, setModoDesc] = useState(iniP.modo_descoberta || 'cnpja'); // cnpja | web (descoberta)
+  // cnpja | web. Com o modo web desligado, força 'cnpja' — inclusive ao duplicar
+  // um radar web antigo, senão o formulário abriria sem os campos de CNAE/UF.
+  const [modoDesc, setModoDesc] = useState(DESCOBERTA_WEB_HABILITADA ? iniP.modo_descoberta || 'cnpja' : 'cnpja');
   const [cnaeData, setCnaeData] = useState([]);
   const [cnaeFoco, setCnaeFoco] = useState(false);
   const [municBusca, setMunicBusca] = useState('');
@@ -4326,7 +4335,7 @@ function NovaBusca({
       padding: 20,
       marginBottom: 18
     }
-  }, /*#__PURE__*/React.createElement("div", {
+  }, DESCOBERTA_WEB_HABILITADA && /*#__PURE__*/React.createElement("div", {
     style: {
       marginBottom: 18
     }
@@ -6606,7 +6615,7 @@ function Config() {
       marginTop: 12,
       lineHeight: 1.5
     }
-  }, "O ", /*#__PURE__*/React.createElement("b", null, "limite di\xE1rio"), " \xE9 o teto de leads novos que o motor capta por dia somando todos os radares \u2014 protege o or\xE7amento. Ao atingi-lo, a capta\xE7\xE3o pausa e retoma no dia seguinte. O motor tamb\xE9m divide esse n\xFAmero por 24h e respeita uma cota por hora, pra n\xE3o gastar o dia inteiro logo na primeira hora se o radar ficar ligado direto \u2014 a capta\xE7\xE3o fica espalhada ao longo do dia. 0 = sem teto."), /*#__PURE__*/React.createElement("div", {
+  }, "O ", /*#__PURE__*/React.createElement("b", null, "limite di\xE1rio"), " \xE9 o teto de leads novos que o motor capta por dia somando todos os radares \u2014 protege o or\xE7amento. Ao atingi-lo, a capta\xE7\xE3o pausa e retoma no dia seguinte. O motor tamb\xE9m divide esse n\xFAmero por 24h e respeita uma cota por hora, pra n\xE3o gastar o dia inteiro logo na primeira hora se o radar ficar ligado direto \u2014 a capta\xE7\xE3o fica espalhada ao longo do dia. 0 = sem teto."), DESCOBERTA_WEB_HABILITADA && /*#__PURE__*/React.createElement("div", {
     style: {
       borderTop: '1px solid var(--border)',
       marginTop: 16,
@@ -6654,7 +6663,7 @@ function Config() {
         marginTop: 2
       }
     }, d));
-  }))), /*#__PURE__*/React.createElement("div", {
+  }))), DESCOBERTA_WEB_HABILITADA && /*#__PURE__*/React.createElement("div", {
     style: {
       borderTop: '1px solid var(--border)',
       marginTop: 16,
