@@ -4130,16 +4130,56 @@ function NovaBusca({
     const scored = [];
     for (const s of cnaeData) {
       const d = semAcento(s.d);
-      let hits = 0;
-      for (const t of tokens) if (d.includes(t)) hits++;
+      let hits = 0,
+        exatos = 0;
+      for (const t of tokens) {
+        // Casa só no INÍCIO de palavra. Substring solto trazia lixo: "loja"
+        // casava dentro de "aLOJAmento", "agua" dentro de qualquer coisa.
+        const i = d.indexOf(t);
+        let achou = false;
+        for (let p = i; p !== -1; p = d.indexOf(t, p + 1)) {
+          if (p === 0 || !/[a-z0-9]/.test(d[p - 1])) {
+            achou = true;
+            // Palavra inteira (não é só prefixo) vale mais: "agua" em "água"
+            // conta mais que "agua" em "aguardente".
+            if (p + t.length === d.length || !/[a-z0-9]/.test(d[p + t.length])) exatos++;
+            break;
+          }
+        }
+        if (achou) hits++;
+      }
       if (hits > 0) scored.push({
         s,
-        hits
+        hits,
+        exatos
       });
     }
-    scored.sort((a, b) => b.hits - a.hits || a.s.d.length - b.s.d.length);
-    return scored.slice(0, 25).map(x => x.s);
+    if (!scored.length) return [];
+    // Só mostra quem casou MAIS termos. Antes, um CNAE que batia 1 de 3 termos
+    // aparecia lado a lado com um que batia os 3 — daí a lista sem sentido.
+    const melhor = Math.max(...scored.map(x => x.hits));
+    return scored.filter(x => x.hits === melhor).sort((a, b) => b.exatos - a.exatos || a.s.d.length - b.s.d.length).slice(0, 25).map(x => x.s);
   }, [cnaeBusca, cnaeData]);
+
+  // Quantos termos da busca o melhor resultado conseguiu casar. Se ficou abaixo
+  // do total, a lista provavelmente não tem o que o usuário quer — a IA resolve
+  // melhor (ex.: "purificador de água" não existe literalmente na CNAE).
+  const cnaeCoberturaBaixa = useMemo(() => {
+    const q = semAcento(cnaeBusca.trim());
+    const tokens = q.split(/\s+/).filter(t => t.length >= 3 && !STOP.has(t));
+    if (tokens.length < 2 || !cnaeResultados.length) return false;
+    const d = semAcento(cnaeResultados[0].d);
+    const casados = tokens.filter(t => {
+      for (let p = d.indexOf(t); p !== -1; p = d.indexOf(t, p + 1)) {
+        if (p === 0 || !/[a-z0-9]/.test(d[p - 1])) return true;
+      }
+      return false;
+    }).length;
+    // Só alerta quando casou MENOS DA METADE dos termos. Exigir todos gerava
+    // falso positivo: "clinica veterinaria" acha "Atividades veterinárias"
+    // casando só 1 de 2 — e esse resultado está certo.
+    return casados * 2 < tokens.length;
+  }, [cnaeBusca, cnaeResultados]);
   const addCnae = s => {
     setCnaeSel(prev => prev.find(x => x.c === s.c) ? prev : [...prev, s]);
     setCnaeBusca('');
@@ -4471,9 +4511,14 @@ function NovaBusca({
   }, /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 12.5,
-      color: 'var(--dim)'
+      color: cnaeCoberturaBaixa ? '#F59E0B' : 'var(--dim)'
     }
-  }, cnaeResultados.length === 0 ? 'Nenhuma atividade encontrada por palavra. A IA mapeia a descrição para o CNAE certo.' : 'Não é bem isso? Deixe a IA encontrar o CNAE certo a partir da sua descrição.'), /*#__PURE__*/React.createElement("button", {
+  }, cnaeResultados.length === 0 ? 'Nenhuma atividade encontrada por palavra. A IA mapeia a descrição para o CNAE certo.' : cnaeCoberturaBaixa
+  // A lista casou só parte dos termos — quase sempre é o caso de
+  // termo comercial que não existe na CNAE ("purificador",
+  // "pet shop"). Avisa em vez de deixar o usuário achar que a
+  // lista abaixo é a resposta.
+  ? 'A lista abaixo casou só parte do que você digitou — pode não ter o que procura. A IA acha o CNAE certo pela descrição.' : 'Não é bem isso? Deixe a IA encontrar o CNAE certo a partir da sua descrição.'), /*#__PURE__*/React.createElement("button", {
     type: "button",
     onClick: buscarComIA,
     style: {
