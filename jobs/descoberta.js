@@ -137,7 +137,8 @@ module.exports = async function descoberta(job, pool, queues) {
   counters.total += locais.length;
   if (locais.length) {
     await pool.query(
-      `UPDATE buscas SET universo_varrido = universo_varrido + $1 WHERE id=$2`,
+      `UPDATE buscas SET universo_varrido = universo_varrido + $1,
+                         varrido_local    = varrido_local + $1 WHERE id=$2`,
       [locais.length, busca_id]
     );
     console.log(`[descoberta] busca ${busca_id}: ${counters.locais} empresa(s) aproveitada(s) do banco local (sem custo CNPJá).`);
@@ -170,7 +171,9 @@ module.exports = async function descoberta(job, pool, queues) {
     // o scheduler usa ele pra deduplicar disparos, e mexer no meio da varredura
     // criaria jobs concorrentes varrendo (e pagando) em paralelo.
     await pool.query(
-      `UPDATE buscas SET universo_varrido = universo_varrido + $1, descoberta_token = $2 WHERE id=$3`,
+      `UPDATE buscas SET universo_varrido = universo_varrido + $1,
+                         varrido_api      = varrido_api + $1,
+                         descoberta_token = $2 WHERE id=$3`,
       [offices.length, next, busca_id]
     );
     if (!next) { esgotou = true; break; }

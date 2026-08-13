@@ -412,6 +412,11 @@ async function init() {
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS lista TEXT;
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS crm_queue_id TEXT;
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS descoberta_token TEXT;
+    -- Origem do que foi varrido: quanto veio da API PAGA (CNPJá) e quanto foi
+    -- reaproveitado de graça do cadastro local. universo_varrido segue sendo o
+    -- total (soma das duas), pra não mudar o que a tela já mostra.
+    ALTER TABLE buscas ADD COLUMN IF NOT EXISTS varrido_api   INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE buscas ADD COLUMN IF NOT EXISTS varrido_local INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE leads  ADD COLUMN IF NOT EXISTS crm_ref TEXT;
     CREATE INDEX IF NOT EXISTS idx_leads_crm_ref ON leads(crm_ref);
     ALTER TABLE leads  ADD COLUMN IF NOT EXISTS contato_pendente BOOLEAN NOT NULL DEFAULT false;
