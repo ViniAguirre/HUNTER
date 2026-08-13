@@ -64,6 +64,25 @@ function iniciarWorkers() {
     w.on('completed', job => console.log(`[${nome}] job ${job.id} ok`));
     w.on('failed', (job, err) => console.error(`[${nome}] job ${job?.id} falhou: ${err.message}`));
   }
+
+  // Autorrecuperação da descoberta: o scheduler deduplica disparos usando um
+  // jobId derivado de `ultimo_heartbeat` — enquanto ele não muda, um radar
+  // reativado gera SEMPRE o mesmo jobId. Se a tentativa falhar ANTES de tocar
+  // esse campo (ex.: worker reiniciado no meio por um deploy), o radar fica
+  // preso pra sempre em "Ativa" com zero resultado: o scheduler recalcula o
+  // mesmo jobId a cada ciclo e o BullMQ o ignora por já existir (mesmo morto).
+  // Ao esgotar as tentativas de verdade (sem mais retry pendente do BullMQ),
+  // tocamos o heartbeat pra o PRÓXIMO ciclo do scheduler gerar um jobId novo e
+  // tentar de novo — sem exigir destravamento manual.
+  workers.descoberta.on('failed', (job, err) => {
+    const buscaId = job?.data?.busca_id;
+    const tentativas = job?.attemptsMade || 0;
+    const maxTentativas = job?.opts?.attempts || 1;
+    if (!buscaId || tentativas < maxTentativas) return;   // ainda vai reter internamente — não mexe
+    pool.query(`UPDATE buscas SET ultimo_heartbeat=now() WHERE id=$1 AND status='Ativa'`, [buscaId])
+      .then(() => console.warn(`[descoberta] busca ${buscaId}: esgotou as tentativas — heartbeat liberado pro próximo ciclo do scheduler.`))
+      .catch(e => console.error(`[descoberta] falha ao liberar heartbeat da busca ${buscaId}: ${e.message}`));
+  });
 }
 
 // ── scheduler: respeita o ritmo (leads/h) de cada busca Ativa ───────────────
