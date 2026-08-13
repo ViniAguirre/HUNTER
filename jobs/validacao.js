@@ -63,14 +63,17 @@ module.exports = async function validacao(job, pool, queues) {
     // justamente tentar de novo achar o contato que faltou.
     const forcarFresco = tentativa > 0;
 
-    // 0) Descoberta WEB-FIRST já extraiu site/contato/resumo — reaproveita (sem re-buscar).
+    // 0) Empresa já validada ANTES — pela descoberta web-first, por este mesmo
+    //    tenant numa busca anterior, ou por OUTRO tenant (o cache em `empresas`
+    //    é global): reaproveita em vez de gastar Tavily/scrape de novo. Antes só
+    //    reaproveitava fonte==='web'; qualquer contato já achado e válido serve.
     const cvWeb = emp?.contatos_verificados;
-    if (!forcarFresco && cvWeb && cvWeb.fonte === 'web' && (cvWeb.email || cvWeb.telefone || cvWeb.resumo_site)) {
+    if (!forcarFresco && cvWeb && (cvWeb.email || cvWeb.telefone || cvWeb.resumo_site)) {
       c = {
         telefone: cvWeb.telefone || null, whatsapp: cvWeb.telefone || null,
         email: cvWeb.email || null, website: cvWeb.website || null,
         resumo_site: cvWeb.resumo_site || null, resumo_fonte: cvWeb.resumo_fonte || null,
-        fonte: 'web', validado: !!(cvWeb.email || cvWeb.telefone),
+        fonte: cvWeb.fonte || 'cache', validado: !!(cvWeb.email || cvWeb.telefone),
         validado_em: new Date().toISOString(),
       };
     }
@@ -124,7 +127,11 @@ module.exports = async function validacao(job, pool, queues) {
       if (c.validado) {
         await pool.query(
           `UPDATE empresas SET contatos_verificados=$2::jsonb WHERE cnpj=$1`,
-          [cnpj, JSON.stringify({ telefone: c.telefone, email: c.email, website: c.website || null, fonte: c.fonte })]
+          [cnpj, JSON.stringify({
+            telefone: c.telefone, email: c.email, website: c.website || null,
+            resumo_site: c.resumo_site || null, resumo_fonte: c.resumo_fonte || null,
+            fonte: c.fonte,
+          })]
         );
       }
     } else if (tentativa >= MAX_TENT_CONTATO) {

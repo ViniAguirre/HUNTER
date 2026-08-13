@@ -151,11 +151,44 @@ async function baixar(url) {
   catch (_) { return ''; }
 }
 
-// Telefone brasileiro no texto (com DDD entre parênteses pra evitar falso positivo).
-function extrairTelefoneDe(html) {
+const DDD_VALIDO = n => { const d = parseInt(n.slice(0, 2), 10); return d >= 11 && d <= 99; };
+
+// Candidatos a telefone no HTML, das formas mais confiáveis pras mais soltas:
+// link tel:/DDD entre parênteses (o site marcou explicitamente OU é o formato
+// BR mais comum) valem mais que dígitos soltos sem separador (mais chance de
+// pegar CEP/protocolo/etc. por engano).
+function candidatosTelefone(html) {
+  const out = [];
+  for (const m of html.matchAll(/href=["']tel:\+?55?(\d{10,11})["']/gi)) out.push({ num: m[1], forte: true });
   const txt = html.replace(/<[^>]+>/g, ' ');
-  const m = txt.match(/\(\d{2}\)\s?9?\d{4}[-\s]?\d{4}/);
-  return m ? m[0].replace(/\D/g, '') : null;
+  for (const m of txt.matchAll(/\(\d{2}\)\s?9?\d{4}[-\s]?\d{4}/g)) out.push({ num: m[0].replace(/\D/g, ''), forte: true });
+  // DDD-NNNNN-NNNN / DDD.NNNNN.NNNN / DDD NNNNN NNNN sem parênteses.
+  for (const m of txt.matchAll(/\b(\d{2})[-.\s](9\d{4})[-.\s]?(\d{4})\b/g)) out.push({ num: m[1] + m[2] + m[3], forte: false });
+  for (const m of txt.matchAll(/\b(\d{2})[-.\s](\d{4})[-.\s](\d{4})\b/g)) out.push({ num: m[1] + m[2] + m[3], forte: false });
+  // DDD colado (sem separador nenhum) — só o formato celular (9 na frente), o
+  // fixo colado sem separador tem alto risco de casar com outra sequência numérica.
+  for (const m of txt.matchAll(/\b(\d{2})(9\d{8})\b/g)) out.push({ num: m[1] + m[2], forte: false });
+  return out.filter(c => DDD_VALIDO(c.num));
+}
+
+// Telefone brasileiro no texto. Prioriza candidatos "fortes" (tel:/parênteses)
+// e, entre iguais, celular (11 dígitos) antes de fixo (10 dígitos).
+function extrairTelefoneDe(html) {
+  const cands = candidatosTelefone(html);
+  if (!cands.length) return null;
+  cands.sort((a, b) => (a.forte === b.forte ? b.num.length - a.num.length : (a.forte ? -1 : 1)));
+  return cands[0].num;
+}
+
+// Link de WhatsApp (wa.me / api.whatsapp.com / whatsapp.com "send") — sinal MAIS
+// forte que qualquer regex em texto solto: o próprio site diz que aquele número
+// é o WhatsApp dele.
+function extrairWhatsappDe(html) {
+  const m = html.match(/(?:wa\.me\/|api\.whatsapp\.com\/send\?phone=|whatsapp\.com\/send\/?\?phone=)\+?(\d{10,13})/i);
+  if (!m) return null;
+  let d = m[1];
+  if (d.length >= 12 && d.startsWith('55')) d = d.slice(2);
+  return (d.length === 10 || d.length === 11) && DDD_VALIDO(d) ? d : null;
 }
 
 // CNPJ no texto do site (rodapé costuma trazer). Grátis — evita consultar a CNPJá
@@ -173,7 +206,7 @@ async function scrapeSite(site) {
   if (!home) return { email: null, resumo: null, telefone: null, cnpj: null };
 
   let email = extrairEmailDe(home);
-  let telefone = extrairTelefoneDe(home);
+  let telefone = extrairWhatsappDe(home) || extrairTelefoneDe(home);
   let cnpj = extrairCnpjDe(home);
   const partes = [resumoDe(home, 2)].filter(Boolean);
   let fonte = 'home';
@@ -186,7 +219,7 @@ async function scrapeSite(site) {
     const r = resumoDe(h, 4);
     if (r && r.length >= 60) { partes.push(r); fonte = 'sobre'; }
     if (!email) email = extrairEmailDe(h);
-    if (!telefone) telefone = extrairTelefoneDe(h);
+    if (!telefone) telefone = extrairWhatsappDe(h) || extrairTelefoneDe(h);
     if (!cnpj) cnpj = extrairCnpjDe(h);
   }
 
@@ -195,7 +228,7 @@ async function scrapeSite(site) {
     const contato = acharLinks(home, site, PALAVRAS_CONTATO).find(u => !lidas.has(u));
     if (contato) {
       const h = await baixar(contato); lidas.add(contato);
-      email = email || extrairEmailDe(h); telefone = telefone || extrairTelefoneDe(h); cnpj = cnpj || extrairCnpjDe(h);
+      email = email || extrairEmailDe(h); telefone = telefone || extrairWhatsappDe(h) || extrairTelefoneDe(h); cnpj = cnpj || extrairCnpjDe(h);
     }
   }
 
