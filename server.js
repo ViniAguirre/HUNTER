@@ -424,6 +424,13 @@ async function init() {
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS sem_contato INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE config ADD COLUMN IF NOT EXISTS limite_diario INTEGER NOT NULL DEFAULT 350;
     ALTER TABLE config ADD COLUMN IF NOT EXISTS descoberta_modo_padrao TEXT NOT NULL DEFAULT 'cnpja';
+    -- Janela de funcionamento do motor (relógio). O padrão 0–24 = liga direto,
+    -- igual ao comportamento anterior; nada muda até o cliente definir a janela.
+    -- O teto diário é dividido pelas horas DA JANELA (e não por 24), então
+    -- 350/dia numa janela 8h–18h vira 35 leads/hora.
+    ALTER TABLE config ADD COLUMN IF NOT EXISTS janela_inicio INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE config ADD COLUMN IF NOT EXISTS janela_fim    INTEGER NOT NULL DEFAULT 24;
+    ALTER TABLE config ADD COLUMN IF NOT EXISTS janela_tz     TEXT NOT NULL DEFAULT 'America/Sao_Paulo';
     ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS master BOOLEAN NOT NULL DEFAULT false;
     CREATE TABLE IF NOT EXISTS sementes (
       id         SERIAL PRIMARY KEY,
@@ -1451,6 +1458,14 @@ app.post('/api/integracoes/gk/conectar', requireAuth, requireMaster, async (req,
   }
 });
 
+// Fusos aceitos na janela de funcionamento (todos os do Brasil + UTC).
+const FUSOS_VALIDOS = [
+  'America/Sao_Paulo', 'America/Manaus', 'America/Belem', 'America/Fortaleza',
+  'America/Recife', 'America/Bahia', 'America/Campo_Grande', 'America/Cuiaba',
+  'America/Porto_Velho', 'America/Boa_Vista', 'America/Rio_Branco',
+  'America/Noronha', 'UTC',
+];
+
 // ── API: configuração global ────────────────────────────────────────────────────
 app.get('/api/config', requireAuth, requireMaster, async (req, res) => {
   try {
@@ -1469,6 +1484,16 @@ app.patch('/api/config', requireAuth, requireMaster, async (req, res) => {
   if ('ttl_cache_dias' in b) add('ttl_cache_dias', num(b.ttl_cache_dias, 1, 3650));
   if ('parada_min'     in b) add('parada_min',     num(b.parada_min, 1, 10080));
   if ('limite_diario'  in b) add('limite_diario',  num(b.limite_diario, 0, 100000));
+  // Janela de funcionamento. `fim` vai até 24 (meia-noite). fim <= inicio é
+  // janela que atravessa a madrugada (ex.: 22h→6h) — o motor trata isso.
+  if ('janela_inicio'  in b) add('janela_inicio',  num(b.janela_inicio, 0, 23));
+  if ('janela_fim'     in b) add('janela_fim',     num(b.janela_fim, 1, 24));
+  if ('janela_tz' in b) {
+    // Whitelist: fuso inválido faria o Postgres estourar em toda checagem de
+    // orçamento — e o motor pararia de captar sem motivo aparente.
+    const tz = String(b.janela_tz || '').trim();
+    if (FUSOS_VALIDOS.includes(tz)) { sets.push(`janela_tz=$${sets.length+1}`); vals.push(tz); }
+  }
   if ('descoberta_modo_padrao' in b) { sets.push(`descoberta_modo_padrao=$${sets.length+1}`); vals.push(b.descoberta_modo_padrao === 'web' ? 'web' : 'cnpja'); }
   if ('web_paid_lookup_ativo' in b) { sets.push(`web_paid_lookup_ativo=$${sets.length+1}`); vals.push(!!b.web_paid_lookup_ativo); }
   if ('web_paid_lookup_limite' in b) add('web_paid_lookup_limite', num(b.web_paid_lookup_limite, 0, 10000));

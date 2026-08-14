@@ -3015,6 +3015,7 @@ function Config() {
           descoberta_modo_padrao: cfg.descoberta_modo_padrao,
           web_paid_lookup_ativo: cfg.web_paid_lookup_ativo, web_paid_lookup_limite: cfg.web_paid_lookup_limite,
           ttl_cache_dias: cfg.ttl_cache_dias, parada_min: cfg.parada_min,
+          janela_inicio: cfg.janela_inicio, janela_fim: cfg.janela_fim, janela_tz: cfg.janela_tz,
           alerta_email: cfg.alerta_email, crm_auto_global: cfg.crm_auto_global,
           crm_lookalike_auto: cfg.crm_lookalike_auto,
           crm_conversao_tags: cfg.crm_conversao_tags,
@@ -3054,9 +3055,52 @@ function Config() {
         </div>
         <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:12, lineHeight:1.5 }}>
           O <b>limite diário</b> é o teto de leads novos que o motor capta por dia somando todos os radares — protege o
-          orçamento. Ao atingi-lo, a captação pausa e retoma no dia seguinte. O motor também divide esse número por 24h
-          e respeita uma cota por hora, pra não gastar o dia inteiro logo na primeira hora se o radar ficar ligado
-          direto — a captação fica espalhada ao longo do dia. 0 = sem teto.
+          orçamento. Cada lead captado consome uma vaga <b>na hora em que nasce</b>: se ele for descartado depois (por
+          exemplo, quando o enriquecimento não acha telefone), a vaga <b>não</b> volta — a consulta paga já foi feita.
+          Ao atingir o teto, a captação pausa e retoma no dia seguinte. 0 = sem teto.
+        </div>
+
+        <div style={{ borderTop:'1px solid var(--border)', marginTop:16, paddingTop:16 }}>
+          <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:9 }}>
+            Horário de funcionamento <span style={{ color:'var(--faint)' }}>(o motor só capta dentro da janela)</span>
+          </label>
+          <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
+            <select value={cfg.janela_inicio ?? 0} onChange={e => set('janela_inicio', +e.target.value)}
+              style={{ ...inp, width:'auto', minWidth:100 }}>
+              {Array.from({ length:24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2,'0')}:00</option>)}
+            </select>
+            <span style={{ fontSize:12.5, color:'var(--faint)' }}>até</span>
+            <select value={cfg.janela_fim ?? 24} onChange={e => set('janela_fim', +e.target.value)}
+              style={{ ...inp, width:'auto', minWidth:100 }}>
+              {Array.from({ length:24 }, (_, i) => i + 1).map(h => <option key={h} value={h}>{String(h).padStart(2,'0')}:00</option>)}
+            </select>
+            <select value={cfg.janela_tz || 'America/Sao_Paulo'} onChange={e => set('janela_tz', e.target.value)}
+              style={{ ...inp, width:'auto', minWidth:170 }}>
+              {[['America/Sao_Paulo','Brasília (GMT-3)'],['America/Manaus','Manaus (GMT-4)'],
+                ['America/Cuiaba','Cuiabá (GMT-4)'],['America/Campo_Grande','Campo Grande (GMT-4)'],
+                ['America/Belem','Belém (GMT-3)'],['America/Fortaleza','Fortaleza (GMT-3)'],
+                ['America/Recife','Recife (GMT-3)'],['America/Bahia','Salvador (GMT-3)'],
+                ['America/Porto_Velho','Porto Velho (GMT-4)'],['America/Boa_Vista','Boa Vista (GMT-4)'],
+                ['America/Rio_Branco','Rio Branco (GMT-5)'],['America/Noronha','F. de Noronha (GMT-2)'],
+                ['UTC','UTC (GMT-0)']].map(([v,t]) => <option key={v} value={v}>{t}</option>)}
+            </select>
+          </div>
+          {(() => {
+            const ini = cfg.janela_inicio ?? 0, fim = cfg.janela_fim ?? 24;
+            const horas = (ini === 0 && fim >= 24) ? 24 : (fim > ini ? fim - ini : 24 - ini + fim);
+            const lim = +cfg.limite_diario || 0;
+            const porHora = lim ? Math.max(1, Math.ceil(lim / horas)) : 0;
+            return (
+              <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:10, lineHeight:1.5 }}>
+                {ini === 0 && fim >= 24
+                  ? <>O motor está trabalhando <b>24 horas por dia</b>. Defina uma janela pra concentrar a captação no horário comercial.</>
+                  : <>O motor trabalha <b>{horas}h por dia</b> ({String(ini).padStart(2,'0')}:00 às {String(fim).padStart(2,'0')}:00
+                     {fim <= ini ? ' do dia seguinte' : ''}) e fica parado fora desse período.</>}
+                {lim > 0 && <> O teto de {lim} leads/dia é dividido pelas horas da janela: <b>~{porHora} leads por hora</b>.
+                  Sobra de um dia não acumula pro dia seguinte.</>}
+              </div>
+            );
+          })()}
         </div>
         {DESCOBERTA_WEB_HABILITADA && (
         <div style={{ borderTop:'1px solid var(--border)', marginTop:16, paddingTop:16 }}>

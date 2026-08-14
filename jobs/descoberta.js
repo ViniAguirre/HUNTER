@@ -12,6 +12,7 @@ const cnpja = require('../providers/cnpja');
 const perfilamento = require('../providers/perfil');
 const baseRates = require('../providers/base');
 const google = require('../providers/google');
+const orcamento = require('./orcamento');
 
 const TRAVADOS = ['qualificado', 'em_crm', 'descarte_duro'];
 const TETO_PAGINAS = 20;   // com limit=100, até ~2000 empresas por varredura
@@ -51,12 +52,15 @@ module.exports = async function descoberta(job, pool, queues) {
   // evita ficar paginando a CNPJá à toa numa hora já cheia; a busca continua
   // "Ativa" e o scheduler tenta de novo no próximo ciclo (60s), retomando assim
   // que a hora virar ou o dia liberar orçamento.
-  const [orcamentoDia, orcamentoDaHora] = await Promise.all([orcamentoHoje(pool), orcamentoHora(pool)]);
+  const vagas = await orcamento.disponivel(pool);
+  const orcamentoDia = vagas.dia, orcamentoDaHora = vagas.hora;
   if (orcamentoDia <= 0 || orcamentoDaHora <= 0) {
     await pool.query(`UPDATE buscas SET ultimo_heartbeat=now() WHERE id=$1`, [busca_id]);
     return {
-      skipped: orcamentoDia <= 0 ? 'limite_diario' : 'cadencia_horaria',
-      motivo: orcamentoDia <= 0 ? 'teto diário de leads atingido' : 'cota da hora atual já usada — retoma na próxima hora',
+      skipped: vagas.foraDaJanela ? 'fora_da_janela' : (orcamentoDia <= 0 ? 'limite_diario' : 'cadencia_horaria'),
+      motivo: vagas.motivo || (orcamentoDia <= 0
+        ? 'teto diário de leads atingido'
+        : 'cota da hora atual já usada — retoma na próxima hora'),
       novos: 0,
     };
   }
@@ -190,30 +194,6 @@ module.exports = async function descoberta(job, pool, queues) {
   return { modo: tipo, ...counters, paginas: pagina, esgotou };
 };
 
-// Quantos leads (empresas qualificadas) ainda cabem hoje no teto geral
-// (config.limite_diario). Usado como saída rápida aqui; o Score 1 refaz esta
-// mesma consulta na hora exata de criar o lead (checagem precisa).
-async function orcamentoHoje(pool) {
-  const { rows: [cfg] } = await pool.query(`SELECT limite_diario FROM config`);
-  const limite = cfg?.limite_diario ?? 350;
-  if (!limite) return Number.MAX_SAFE_INTEGER;   // 0 = sem teto
-  const { rows: [{ n }] } = await pool.query(
-    `SELECT COUNT(*)::int n FROM leads WHERE criado_em >= date_trunc('day', now())`
-  );
-  return Math.max(0, limite - n);
-}
-
-// Cota da HORA atual (limite diário / 24, arredondado pra cima) — ver score1.js.
-async function orcamentoHora(pool) {
-  const { rows: [cfg] } = await pool.query(`SELECT limite_diario FROM config`);
-  const limite = cfg?.limite_diario ?? 350;
-  if (!limite) return Number.MAX_SAFE_INTEGER;
-  const porHora = Math.max(1, Math.ceil(limite / 24));
-  const { rows: [{ n }] } = await pool.query(
-    `SELECT COUNT(*)::int n FROM leads WHERE criado_em >= date_trunc('hour', now())`
-  );
-  return Math.max(0, porHora - n);
-}
 
 const semAcentoLower = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 

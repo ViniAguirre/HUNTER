@@ -6562,6 +6562,9 @@ function Config() {
           web_paid_lookup_limite: cfg.web_paid_lookup_limite,
           ttl_cache_dias: cfg.ttl_cache_dias,
           parada_min: cfg.parada_min,
+          janela_inicio: cfg.janela_inicio,
+          janela_fim: cfg.janela_fim,
+          janela_tz: cfg.janela_tz,
           alerta_email: cfg.alerta_email,
           crm_auto_global: cfg.crm_auto_global,
           crm_lookalike_auto: cfg.crm_lookalike_auto,
@@ -6666,7 +6669,87 @@ function Config() {
       marginTop: 12,
       lineHeight: 1.5
     }
-  }, "O ", /*#__PURE__*/React.createElement("b", null, "limite di\xE1rio"), " \xE9 o teto de leads novos que o motor capta por dia somando todos os radares \u2014 protege o or\xE7amento. Ao atingi-lo, a capta\xE7\xE3o pausa e retoma no dia seguinte. O motor tamb\xE9m divide esse n\xFAmero por 24h e respeita uma cota por hora, pra n\xE3o gastar o dia inteiro logo na primeira hora se o radar ficar ligado direto \u2014 a capta\xE7\xE3o fica espalhada ao longo do dia. 0 = sem teto."), DESCOBERTA_WEB_HABILITADA && /*#__PURE__*/React.createElement("div", {
+  }, "O ", /*#__PURE__*/React.createElement("b", null, "limite di\xE1rio"), " \xE9 o teto de leads novos que o motor capta por dia somando todos os radares \u2014 protege o or\xE7amento. Cada lead captado consome uma vaga ", /*#__PURE__*/React.createElement("b", null, "na hora em que nasce"), ": se ele for descartado depois (por exemplo, quando o enriquecimento n\xE3o acha telefone), a vaga ", /*#__PURE__*/React.createElement("b", null, "n\xE3o"), " volta \u2014 a consulta paga j\xE1 foi feita. Ao atingir o teto, a capta\xE7\xE3o pausa e retoma no dia seguinte. 0 = sem teto."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      borderTop: '1px solid var(--border)',
+      marginTop: 16,
+      paddingTop: 16
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 9
+    }
+  }, "Hor\xE1rio de funcionamento ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, "(o motor s\xF3 capta dentro da janela)")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("select", {
+    value: cfg.janela_inicio ?? 0,
+    onChange: e => set('janela_inicio', +e.target.value),
+    style: {
+      ...inp,
+      width: 'auto',
+      minWidth: 100
+    }
+  }, Array.from({
+    length: 24
+  }, (_, h) => /*#__PURE__*/React.createElement("option", {
+    key: h,
+    value: h
+  }, String(h).padStart(2, '0'), ":00"))), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 12.5,
+      color: 'var(--faint)'
+    }
+  }, "at\xE9"), /*#__PURE__*/React.createElement("select", {
+    value: cfg.janela_fim ?? 24,
+    onChange: e => set('janela_fim', +e.target.value),
+    style: {
+      ...inp,
+      width: 'auto',
+      minWidth: 100
+    }
+  }, Array.from({
+    length: 24
+  }, (_, i) => i + 1).map(h => /*#__PURE__*/React.createElement("option", {
+    key: h,
+    value: h
+  }, String(h).padStart(2, '0'), ":00"))), /*#__PURE__*/React.createElement("select", {
+    value: cfg.janela_tz || 'America/Sao_Paulo',
+    onChange: e => set('janela_tz', e.target.value),
+    style: {
+      ...inp,
+      width: 'auto',
+      minWidth: 170
+    }
+  }, [['America/Sao_Paulo', 'Brasília (GMT-3)'], ['America/Manaus', 'Manaus (GMT-4)'], ['America/Cuiaba', 'Cuiabá (GMT-4)'], ['America/Campo_Grande', 'Campo Grande (GMT-4)'], ['America/Belem', 'Belém (GMT-3)'], ['America/Fortaleza', 'Fortaleza (GMT-3)'], ['America/Recife', 'Recife (GMT-3)'], ['America/Bahia', 'Salvador (GMT-3)'], ['America/Porto_Velho', 'Porto Velho (GMT-4)'], ['America/Boa_Vista', 'Boa Vista (GMT-4)'], ['America/Rio_Branco', 'Rio Branco (GMT-5)'], ['America/Noronha', 'F. de Noronha (GMT-2)'], ['UTC', 'UTC (GMT-0)']].map(([v, t]) => /*#__PURE__*/React.createElement("option", {
+    key: v,
+    value: v
+  }, t)))), (() => {
+    const ini = cfg.janela_inicio ?? 0,
+      fim = cfg.janela_fim ?? 24;
+    const horas = ini === 0 && fim >= 24 ? 24 : fim > ini ? fim - ini : 24 - ini + fim;
+    const lim = +cfg.limite_diario || 0;
+    const porHora = lim ? Math.max(1, Math.ceil(lim / horas)) : 0;
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11.5,
+        color: 'var(--faint)',
+        marginTop: 10,
+        lineHeight: 1.5
+      }
+    }, ini === 0 && fim >= 24 ? /*#__PURE__*/React.createElement(React.Fragment, null, "O motor est\xE1 trabalhando ", /*#__PURE__*/React.createElement("b", null, "24 horas por dia"), ". Defina uma janela pra concentrar a capta\xE7\xE3o no hor\xE1rio comercial.") : /*#__PURE__*/React.createElement(React.Fragment, null, "O motor trabalha ", /*#__PURE__*/React.createElement("b", null, horas, "h por dia"), " (", String(ini).padStart(2, '0'), ":00 \xE0s ", String(fim).padStart(2, '0'), ":00", fim <= ini ? ' do dia seguinte' : '', ") e fica parado fora desse per\xEDodo."), lim > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, " O teto de ", lim, " leads/dia \xE9 dividido pelas horas da janela: ", /*#__PURE__*/React.createElement("b", null, "~", porHora, " leads por hora"), ". Sobra de um dia n\xE3o acumula pro dia seguinte."));
+  })()), DESCOBERTA_WEB_HABILITADA && /*#__PURE__*/React.createElement("div", {
     style: {
       borderTop: '1px solid var(--border)',
       marginTop: 16,
@@ -9170,4 +9253,3 @@ class ErrorBoundary extends React.Component {
   }
 }
 ReactDOM.createRoot(document.getElementById('root')).render(/*#__PURE__*/React.createElement(ErrorBoundary, null, /*#__PURE__*/React.createElement(App, null)));
-

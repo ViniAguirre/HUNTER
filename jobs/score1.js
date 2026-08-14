@@ -12,6 +12,7 @@
  */
 
 const perfilamento = require('../providers/perfil');
+const orcamento = require('./orcamento');
 
 const W = {
   CNAE_EXATO: 35,
@@ -66,15 +67,15 @@ module.exports = async function score1(job, pool, queues) {
   // Também respeita a cota DESTA hora (limite diário / 24) — sem isso, uma busca
   // ligada direto consumiria o dia inteiro na primeira hora em vez de espalhar
   // a captação ao longo do dia.
-  const [orcamentoDia, orcamentoDaHora] = await Promise.all([orcamentoHoje(pool), orcamentoHora(pool)]);
-  if (orcamentoDia <= 0 || orcamentoDaHora <= 0) {
+  const vagas = await orcamento.disponivel(pool);
+  if (vagas.dia <= 0 || vagas.hora <= 0) {
     const tentativas = (job.data.tentativa_orcamento || 0) + 1;
     if (tentativas <= MAX_TENTATIVAS_ORCAMENTO && queues?.score1) {
       await queues.score1.add('score1', { cnpj, busca_id, tentativa_orcamento: tentativas },
         { delay: 30 * 60 * 1000, removeOnComplete: { count: 50 }, removeOnFail: { count: 50 } });
     }
     return { cnpj, score, corte, passou: true, aguardando_orcamento: true, tentativas,
-      motivo: orcamentoDia <= 0 ? 'limite_diario' : 'cadencia_horaria' };
+      motivo: vagas.foraDaJanela ? 'fora_da_janela' : (vagas.dia <= 0 ? 'limite_diario' : 'cadencia_horaria') };
   }
 
   const breakdownJson = JSON.stringify(breakdown);
@@ -93,6 +94,12 @@ module.exports = async function score1(job, pool, queues) {
     // Corrida rara: essa busca já tinha criado o lead pra este CNPJ. Nada a fazer.
     return { cnpj, score, corte, passou: true, skipped: 'lead_ja_existe' };
   }
+
+  // Consome 1 vaga do teto do dia/hora. Fica registrado mesmo se o lead for
+  // apagado depois (ex.: validação não achou telefone) — o crédito de CNPJá e a
+  // busca de contato JÁ foram gastos, então a vaga não pode voltar pro caixa.
+  await orcamento.registrarLead(pool).catch(e =>
+    console.error(`[score1] falha ao registrar consumo do lead ${lead.id}: ${e.message}`));
 
   // Trava o CNPJ pra sempre: nenhuma outra busca (nem esta, de novo) volta a
   // criar lead pra ele. Só sobe o estado (nunca rebaixa de em_crm pra qualificado).
@@ -114,32 +121,6 @@ module.exports = async function score1(job, pool, queues) {
 
   return { cnpj, score, corte, passou: true, lead_id: lead.id };
 };
-
-// Mesma checagem usada pela descoberta (saída rápida); aqui é a fonte da verdade.
-async function orcamentoHoje(pool) {
-  const { rows: [cfg] } = await pool.query(`SELECT limite_diario FROM config`);
-  const limite = cfg?.limite_diario ?? 350;
-  if (!limite) return Number.MAX_SAFE_INTEGER;
-  const { rows: [{ n }] } = await pool.query(
-    `SELECT COUNT(*)::int n FROM leads WHERE criado_em >= date_trunc('day', now())`
-  );
-  return Math.max(0, limite - n);
-}
-
-// Cota da HORA atual (limite diário / 24, arredondado pra cima). Espalha a
-// captação ao longo do dia em vez de deixar o motor gastar tudo de uma vez
-// se a busca ficar ligada 24h. O teto diário acima continua valendo por cima
-// disso — o menor dos dois é quem trava.
-async function orcamentoHora(pool) {
-  const { rows: [cfg] } = await pool.query(`SELECT limite_diario FROM config`);
-  const limite = cfg?.limite_diario ?? 350;
-  if (!limite) return Number.MAX_SAFE_INTEGER;
-  const porHora = Math.max(1, Math.ceil(limite / 24));
-  const { rows: [{ n }] } = await pool.query(
-    `SELECT COUNT(*)::int n FROM leads WHERE criado_em >= date_trunc('hour', now())`
-  );
-  return Math.max(0, porHora - n);
-}
 
 function parseCriterios(criterios) {
   if (criterios?.params) return criterios.params;
