@@ -365,8 +365,22 @@ async function perfilarComLista(pool, criterios, busca_id, cnpjs) {
     return { erro: true, skipped: 'amostra_insuficiente', analisados: amostra.length, minimo: perfilamento.MIN_PERFIL };
   }
 
+  // Geografia escolhida na mão pelo usuário (opcional). A lista define O QUE
+  // procurar (atividade, porte, perfil); a geografia define ONDE. Sem isso, o
+  // radar só acha semelhantes nos estados onde o cliente JÁ vende — e é
+  // justamente pra abrir mercado novo que ele restringe/troca a região.
+  const geo = criterios.geo || {};
+  const ufsManuais = Array.isArray(geo.ufs) ? geo.ufs.filter(Boolean) : [];
+  const municipiosManuais = Array.isArray(geo.municipios_cod) ? geo.municipios_cod.filter(Boolean) : [];
+  const geoManual = ufsManuais.length > 0 || municipiosManuais.length > 0;
+
   const base = await baseRates.baseRates(pool);   // taxas do universo p/ peso de raridade
-  const { params } = perfilamento.construirPerfil(amostra, base, perfilamento.W);
+  const { params } = perfilamento.construirPerfil(amostra, base, perfilamento.W, { geoManual });
+  if (ufsManuais.length) params.ufs = ufsManuais;
+  if (municipiosManuais.length) {
+    params.municipios_cod = municipiosManuais;
+    params.municipios_rotulos = geo.municipios_rotulos || [];
+  }
   params.proposta_valor = criterios.proposta_valor || criterios.params?.proposta_valor || '';
   const novo = { ...criterios, params };
   await pool.query(`UPDATE buscas SET criterios=$2::jsonb WHERE id=$1`, [busca_id, JSON.stringify(novo)]);

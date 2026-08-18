@@ -116,10 +116,16 @@ function poderDimensao(dist, base, dim) {
 // dimensão sem poder nenhum cai pra 35% do peso original; com poder total,
 // fica com 100%. Depois normaliza pra a escala continuar 0–100 (o corte do
 // usuário significa a mesma coisa em qualquer radar).
-function calcularPesos(perfil, base, W) {
+function calcularPesos(perfil, base, W, opts = {}) {
+  // Geografia escolhida na mão: TODA empresa encontrada já está na UF pedida,
+  // então a UF não separa mais uma da outra — vira filtro, não sinal. Zera o
+  // poder dela e os pontos vão pras dimensões que ainda discriminam.
+  const poderUf = opts.geoManual
+    ? 0
+    : poderDimensao(perfil.ufs.map(x => ({ chave: x.uf, freq: x.freq })), base, 'uf');
   const dims = [
     ['CNAE',    W.CNAE_EXATO, poderDimensao(perfil.cnaes.map(x => ({ chave: x.c, freq: x.freq })), base, 'cnae')],
-    ['UF',      W.UF,         poderDimensao(perfil.ufs.map(x => ({ chave: x.uf, freq: x.freq })), base, 'uf')],
+    ['UF',      W.UF,         poderUf],
     ['PORTE',   W.PORTE,      poderDimensao(perfil.portes.map(x => ({ chave: x.porte, freq: x.freq })), null, 'porte')],
     ['CAPITAL', W.CAPITAL,    poderDimensao(perfil.capitais.map(x => ({ chave: x.faixa, freq: x.freq })), null, 'capital')],
     ['SIMPLES', W.SIMPLES,    perfil.simples_prop == null ? 0 : Math.abs(perfil.simples_prop - 0.5) * 2],
@@ -144,7 +150,7 @@ function calcularPesos(perfil, base, W) {
 // Monta o perfil + os parâmetros derivados (descoberta + Score 1) a partir da
 // firmografia das empresas da amostra. `base` (opcional) traz as taxas do universo
 // pra ponderar por RARIDADE (lift): CNAE/UF raro no país vale mais.
-function construirPerfil(empresas, base, W) {
+function construirPerfil(empresas, base, W, opts = {}) {
   const amostra = empresas.length;
   const peso = (dim, chave) => {
     if (!base) return 1;
@@ -179,7 +185,7 @@ function construirPerfil(empresas, base, W) {
   // não-comprador aqui. Fica gravado no perfil pra o Score 1 usar e pra a tela
   // conseguir explicar ao usuário o que definiu o perfil ideal.
   if (W) {
-    const { pesos, diagnostico } = calcularPesos(perfil, base, W);
+    const { pesos, diagnostico } = calcularPesos(perfil, base, W, opts);
     perfil.pesos = pesos;
     perfil.diagnostico = diagnostico;
   }
@@ -198,6 +204,7 @@ function construirPerfil(empresas, base, W) {
   const params = {
     origem: 'lookalike',
     perfil,
+    geo_manual: !!opts.geoManual,
     // parâmetros de descoberta (mesma forma que o ICP usa)
     ufs: ufsBusca,
     cnaes: cnaesBusca,

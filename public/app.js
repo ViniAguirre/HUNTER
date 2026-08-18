@@ -630,6 +630,10 @@ const NAV_MAIN = [{
   key: 'propostas',
   label: 'Propostas',
   icon: 'M9 12h6M9 16h6M9 8h2M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z'
+}, {
+  key: 'semelhantes',
+  label: 'Semelhantes',
+  icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 11l-3 3-1.5-1.5'
 }];
 // acesso: 'master' → só o login MASTER da Hunter (dados sigilosos: quais APIs
 // alimentam o produto). 'admin' → admin do cliente (gestão do próprio time).
@@ -3468,6 +3472,532 @@ function PropostaDropdown({
   }, "Gerencie suas varia\xE7\xF5es no menu ", /*#__PURE__*/React.createElement("b", null, "Propostas"), " \u2014 salve at\xE9 5 e escolha a mais adequada a cada radar."));
 }
 
+// ── Semelhantes: gestão das listas de clientes (criar / renomear / excluir) ────
+// A lista é a matéria-prima do radar "Semelhantes": o Hunter lê a firmografia
+// dessas empresas e destila o perfil de quem compra. Aqui ela vira um item
+// reaproveitável — sobe uma vez, usa em quantos radares quiser.
+function Semelhantes() {
+  const [listas, setListas] = useState(null);
+  const [criando, setCriando] = useState(false);
+  const [nome, setNome] = useState('');
+  const [texto, setTexto] = useState('');
+  const [erro, setErro] = useState(null);
+  const [salvando, setSalvando] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState(null);
+  const [editNome, setEditNome] = useState(null); // chave da lista em renomeação
+  const [editRotulo, setEditRotulo] = useState('');
+  const arquivoRef = useRef();
+  const carregar = () => {
+    fetch('/api/listas', {
+      credentials: 'same-origin'
+    }).then(r => r.ok ? r.json() : []).then(d => setListas(Array.isArray(d) ? d : [])).catch(() => setListas([]));
+  };
+  useEffect(() => {
+    carregar();
+  }, []);
+  const cnpjs = useMemo(() => {
+    const vistos = new Set(),
+      out = [];
+    for (const m of String(texto).matchAll(/\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}/g)) {
+      const d = m[0].replace(/\D/g, '');
+      if (d.length === 14 && !vistos.has(d)) {
+        vistos.add(d);
+        out.push(d);
+      }
+    }
+    return out;
+  }, [texto]);
+  const importarArquivo = async file => {
+    if (!file) return;
+    setUploadMsg(null);
+    const fd = new FormData();
+    fd.append('arquivo', file);
+    try {
+      const r = await fetch('/api/cnpjs/extrair', {
+        method: 'POST',
+        credentials: 'same-origin',
+        body: fd
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.erro || 'Não consegui ler o arquivo.');
+      const achados = Array.isArray(d.cnpjs) ? d.cnpjs : [];
+      if (!achados.length) {
+        setUploadMsg({
+          ok: false,
+          txt: 'Nenhum CNPJ encontrado no arquivo.'
+        });
+        return;
+      }
+      setTexto(t => (t.trim() ? t.trim() + '\n' : '') + achados.join('\n'));
+      setUploadMsg({
+        ok: true,
+        txt: `${achados.length} CNPJ(s) lidos de ${file.name}`
+      });
+      if (!nome.trim()) setNome(file.name.replace(/\.[^.]+$/, ''));
+    } catch (e) {
+      setUploadMsg({
+        ok: false,
+        txt: e.message
+      });
+    }
+    if (arquivoRef.current) arquivoRef.current.value = '';
+  };
+  const criar = async () => {
+    if (!nome.trim()) {
+      setErro('Dê um nome à lista.');
+      return;
+    }
+    if (cnpjs.length < 3) {
+      setErro(`Poucos CNPJs válidos (${cnpjs.length}). O mínimo são 3 — o recomendado é 15+.`);
+      return;
+    }
+    setSalvando(true);
+    setErro(null);
+    try {
+      const r = await fetch('/api/listas', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          nome: nome.trim(),
+          cnpjs
+        })
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.erro || 'Erro ao salvar a lista.');
+      setCriando(false);
+      setNome('');
+      setTexto('');
+      setUploadMsg(null);
+      carregar();
+    } catch (e) {
+      setErro(e.message);
+    } finally {
+      setSalvando(false);
+    }
+  };
+  const renomear = async l => {
+    const novo = editRotulo.trim();
+    if (!novo) return;
+    const r = await fetch('/api/listas/' + encodeURIComponent(l.nome), {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        rotulo: novo
+      })
+    });
+    if (r.ok) {
+      setEditNome(null);
+      carregar();
+    } else {
+      const d = await r.json().catch(() => ({}));
+      alert(d.erro || 'Erro ao renomear.');
+    }
+  };
+  const excluir = async l => {
+    if (!window.confirm(`Excluir a lista "${l.rotulo}" e suas ${l.n} empresas?`)) return;
+    const r = await fetch('/api/listas/' + encodeURIComponent(l.nome), {
+      method: 'DELETE',
+      credentials: 'same-origin'
+    });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok) {
+      carregar();
+      return;
+    }
+    if (r.status === 409) {
+      if (!window.confirm(`${d.erro}. Excluir mesmo assim? Esses radares param de se re-perfilar.`)) return;
+      const r2 = await fetch('/api/listas/' + encodeURIComponent(l.nome) + '?forcar=1', {
+        method: 'DELETE',
+        credentials: 'same-origin'
+      });
+      if (r2.ok) carregar();
+      return;
+    }
+    alert(d.erro || 'Erro ao excluir.');
+  };
+  const arr = listas || [];
+  const conf = n => n < 6 ? ['baixa', '#F59E0B'] : n < 15 ? ['média', C.gold] : ['alta', '#4ADE80'];
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      maxWidth: 820
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'flex-end',
+      marginBottom: 16,
+      gap: 12,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: 'var(--faint)',
+      lineHeight: 1.5,
+      maxWidth: 560
+    }
+  }, "Listas de clientes que j\xE1 compraram. O Hunter l\xEA a firmografia dessas empresas e monta o perfil de quem compra de voc\xEA \u2014 depois procura empresas parecidas. A mesma lista serve para v\xE1rios radares (regi\xF5es e cortes diferentes), e quanto maior, mais preciso o perfil."), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => {
+      setCriando(true);
+      setErro(null);
+    },
+    disabled: criando,
+    style: {
+      height: 38,
+      padding: '0 16px',
+      borderRadius: 9,
+      border: 'none',
+      background: criando ? 'var(--panel2)' : 'var(--gold)',
+      color: criando ? 'var(--faint)' : '#0E1936',
+      fontWeight: 600,
+      fontSize: 13,
+      fontFamily: 'inherit',
+      cursor: criando ? 'default' : 'pointer',
+      whiteSpace: 'nowrap',
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 7
+    }
+  }, /*#__PURE__*/React.createElement(Svg, {
+    d: "M12 5v14M5 12h14",
+    w: 15,
+    h: 15,
+    sw: 1.8
+  }), " Nova lista")), criando && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'var(--panel)',
+      border: `1px solid ${C.gold}`,
+      borderRadius: 13,
+      padding: 18,
+      marginBottom: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      fontWeight: 600,
+      marginBottom: 12
+    }
+  }, "Nova lista"), /*#__PURE__*/React.createElement("input", {
+    value: nome,
+    onChange: e => setNome(e.target.value),
+    autoFocus: true,
+    placeholder: "Nome da lista (ex.: Clientes 2025, Compradores linha refrigera\xE7\xE3o)",
+    style: {
+      width: '100%',
+      height: 40,
+      borderRadius: 9,
+      border: '1px solid var(--border)',
+      marginBottom: 11,
+      background: 'var(--panel2)',
+      color: 'var(--text)',
+      padding: '0 12px',
+      fontSize: 13,
+      fontFamily: 'inherit'
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      marginBottom: 10,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    ref: arquivoRef,
+    type: "file",
+    accept: ".txt,.csv,.pdf,text/plain,text/csv,application/pdf",
+    onChange: e => importarArquivo(e.target.files?.[0]),
+    style: {
+      display: 'none'
+    }
+  }), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => arquivoRef.current?.click(),
+    style: {
+      height: 34,
+      padding: '0 14px',
+      borderRadius: 9,
+      border: '1px dashed var(--border)',
+      background: 'transparent',
+      color: 'var(--text)',
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      cursor: 'pointer',
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 7
+    }
+  }, /*#__PURE__*/React.createElement(Svg, {
+    d: "M12 3v12M7 8l5-5 5 5M5 21h14",
+    w: 15,
+    h: 15,
+    sw: 1.7
+  }), "Enviar arquivo (.txt, .csv, .pdf)"), uploadMsg && /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11.5,
+      color: uploadMsg.ok ? 'var(--faint)' : '#F59E0B'
+    }
+  }, uploadMsg.txt)), /*#__PURE__*/React.createElement("textarea", {
+    value: texto,
+    onChange: e => setTexto(e.target.value),
+    placeholder: "Cole os CNPJs (um por linha ou separados por v\xEDrgula), ou envie um arquivo acima.",
+    style: {
+      width: '100%',
+      minHeight: 110,
+      borderRadius: 12,
+      border: '1px solid var(--border)',
+      background: 'var(--panel2)',
+      color: 'var(--text)',
+      padding: 12,
+      fontSize: 13,
+      fontFamily: 'inherit',
+      lineHeight: 1.6,
+      resize: 'vertical'
+    }
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      marginTop: 9,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 12,
+      fontWeight: 600,
+      color: cnpjs.length >= 3 ? 'var(--text)' : '#F59E0B'
+    }
+  }, cnpjs.length, " CNPJ", cnpjs.length === 1 ? '' : 's', " v\xE1lido", cnpjs.length === 1 ? '' : 's'), cnpjs.length > 0 && (() => {
+    const [rot, cor] = conf(cnpjs.length);
+    return /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 11,
+        padding: '2px 9px',
+        borderRadius: 20,
+        color: cor,
+        border: `1px solid ${cor}`
+      }
+    }, "confian\xE7a do perfil: ", rot);
+  })()), erro && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: '#F87171',
+      marginTop: 9
+    }
+  }, erro), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 9,
+      marginTop: 14
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: criar,
+    disabled: salvando,
+    style: {
+      height: 36,
+      padding: '0 16px',
+      borderRadius: 9,
+      border: 'none',
+      background: 'var(--gold)',
+      color: '#0E1936',
+      fontWeight: 600,
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, salvando ? 'Salvando…' : 'Salvar lista'), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => {
+      setCriando(false);
+      setErro(null);
+    },
+    style: {
+      height: 36,
+      padding: '0 16px',
+      borderRadius: 9,
+      border: '1px solid var(--border)',
+      background: 'transparent',
+      color: 'var(--dim)',
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, "Cancelar"))), listas === null ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      color: 'var(--faint)'
+    }
+  }, "Carregando\u2026") : arr.length === 0 && !criando ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      color: 'var(--faint)',
+      padding: '28px 18px',
+      textAlign: 'center',
+      border: '1px dashed var(--border)',
+      borderRadius: 12
+    }
+  }, "Nenhuma lista ainda. Clique em ", /*#__PURE__*/React.createElement("b", null, "Nova lista"), " pra subir seus clientes.") : /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 10
+    }
+  }, arr.map(l => {
+    const [rot, cor] = conf(l.n);
+    return /*#__PURE__*/React.createElement("div", {
+      key: l.nome,
+      style: {
+        display: 'flex',
+        gap: 13,
+        alignItems: 'center',
+        padding: '14px 16px',
+        borderRadius: 12,
+        background: 'var(--panel)',
+        border: '1px solid var(--border)'
+      }
+    }, /*#__PURE__*/React.createElement(Svg, {
+      d: l.automatica ? 'M21 12a9 9 0 1 1-6.2-8.6M21 3v6h-6' : 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
+      color: l.automatica ? C.gold : 'var(--faint)',
+      w: 18,
+      h: 18,
+      sw: 1.7,
+      extra: {
+        flexShrink: 0
+      }
+    }), /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1,
+        minWidth: 0
+      }
+    }, editNome === l.nome ? /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: 8,
+        alignItems: 'center'
+      }
+    }, /*#__PURE__*/React.createElement("input", {
+      value: editRotulo,
+      onChange: e => setEditRotulo(e.target.value),
+      autoFocus: true,
+      onKeyDown: e => {
+        if (e.key === 'Enter') renomear(l);
+        if (e.key === 'Escape') setEditNome(null);
+      },
+      style: {
+        flex: 1,
+        height: 32,
+        borderRadius: 8,
+        border: `1px solid ${C.gold}`,
+        background: 'var(--panel2)',
+        color: 'var(--text)',
+        padding: '0 10px',
+        fontSize: 13,
+        fontFamily: 'inherit'
+      }
+    }), /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      onClick: () => renomear(l),
+      style: {
+        height: 32,
+        padding: '0 12px',
+        borderRadius: 8,
+        border: 'none',
+        background: 'var(--gold)',
+        color: '#0E1936',
+        fontWeight: 600,
+        fontSize: 12,
+        fontFamily: 'inherit',
+        cursor: 'pointer'
+      }
+    }, "Salvar"), /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      onClick: () => setEditNome(null),
+      style: {
+        height: 32,
+        padding: '0 10px',
+        borderRadius: 8,
+        border: '1px solid var(--border)',
+        background: 'transparent',
+        color: 'var(--dim)',
+        fontSize: 12,
+        fontFamily: 'inherit',
+        cursor: 'pointer'
+      }
+    }, "Cancelar")) : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 13.5,
+        fontWeight: 600,
+        marginBottom: 3
+      }
+    }, l.rotulo), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        color: 'var(--faint)'
+      }
+    }, l.n, " empresa", l.n === 1 ? '' : 's', " \xB7 confian\xE7a ", /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: cor
+      }
+    }, rot), l.automatica && ' · alimentada pelo CRM automaticamente'))), editNome !== l.nome && /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: 7,
+        flexShrink: 0
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      onClick: () => {
+        setEditNome(l.nome);
+        setEditRotulo(l.rotulo);
+      },
+      title: "Renomear",
+      style: {
+        height: 32,
+        padding: '0 12px',
+        borderRadius: 8,
+        border: '1px solid var(--border)',
+        background: 'transparent',
+        color: 'var(--dim)',
+        fontSize: 12,
+        fontFamily: 'inherit',
+        cursor: 'pointer'
+      }
+    }, "Renomear"), !l.automatica && /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      onClick: () => excluir(l),
+      title: "Excluir",
+      style: {
+        height: 32,
+        padding: '0 12px',
+        borderRadius: 8,
+        border: '1px solid var(--border)',
+        background: 'transparent',
+        color: '#F87171',
+        fontSize: 12,
+        fontFamily: 'inherit',
+        cursor: 'pointer'
+      }
+    }, "Excluir")));
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--faint)',
+      marginTop: 16,
+      lineHeight: 1.55
+    }
+  }, "A lista marcada como ", /*#__PURE__*/React.createElement("b", null, "alimentada pelo CRM"), " cresce sozinha: cada cliente que o CRM marca como convertido entra nela, e os radares ligados a ela refazem o perfil automaticamente. Ela pode ser renomeada, mas n\xE3o exclu\xEDda. Para usar qualquer lista, crie um radar do tipo ", /*#__PURE__*/React.createElement("b", null, "Semelhantes"), " e escolha-a no menu suspenso."));
+}
+
 // Tela dedicada: gestão das até 5 propostas de valor (criar / editar / excluir).
 function Propostas() {
   const [lista, setLista] = useState(null);
@@ -4051,12 +4581,32 @@ function NovaBusca({
   const [crmQueue, setCrmQueue] = useState(inicial?.crm_queue_id ? String(inicial.crm_queue_id) : '');
   const [listaCnpj, setListaCnpj] = useState(Array.isArray(iniCrit.cnpjs) ? iniCrit.cnpjs.join('\n') : '');
   const [uploadMsg, setUploadMsg] = useState(null); // feedback do upload de arquivo
+  // Listas de semelhantes salvas (menu Semelhantes). O radar só ESCOLHE uma —
+  // criar/renomear/excluir vive na tela dedicada.
+  const [listas, setListas] = useState([]);
+  const [listaSel, setListaSel] = useState(inicial?.lista || '');
   const arquivoRef = useRef();
   const [iaCarregando, setIaCarregando] = useState(false);
   const [iaSug, setIaSug] = useState(null); // resultados da IA (ou null)
   const [iaErro, setIaErro] = useState(null);
   const nomeRef = useRef();
   const [propostaSel, setPropostaSel] = useState(iniProposta); // texto da variação de proposta escolhida
+
+  // Listas salvas (manuais + a automática do CRM), pra escolher em vez de
+  // re-subir o mesmo arquivo a cada radar novo.
+  const carregarListas = () => {
+    fetch('/api/listas', {
+      credentials: 'same-origin'
+    }).then(r => r.ok ? r.json() : []).then(d => {
+      const arr = Array.isArray(d) ? d : [];
+      setListas(arr);
+      // Uma lista só? já deixa escolhida — não faz sentido obrigar o clique.
+      if (arr.length === 1 && !inicial?.lista) setListaSel(arr[0].nome);
+    }).catch(() => {});
+  };
+  useEffect(() => {
+    carregarListas();
+  }, []);
 
   // CNPJs válidos (14 dígitos, sem repetição) colados na aba lista/lookalike.
   useEffect(() => {
@@ -4325,8 +4875,8 @@ function NovaBusca({
       alert('Informe o nome do radar.');
       return;
     }
-    if (tipo === 'lookalike' && cnpjsParsed.length < MIN_LOOKALIKE) {
-      alert(`Poucos CNPJs válidos (${cnpjsParsed.length}). ` + `Para o sistema traçar um perfil médio confiável, envie ao menos ${MIN_LOOKALIKE} (recomendado 15+).`);
+    if (tipo === 'lookalike' && !listaSel) {
+      alert('Escolha a lista de clientes. Se ainda não tem nenhuma, cadastre no menu "Semelhantes".');
       return;
     }
     if (tipo === 'cnpj' && cnpjsParsed.length < 1) {
@@ -4379,6 +4929,20 @@ function NovaBusca({
         cnpjs: cnpjsParsed,
         proposta_valor: propostaValor
       };
+
+      // Semelhantes: a lista fica GRAVADA e o radar aponta pra ela. Assim ela
+      // aparece na próxima vez e o radar re-perfila sozinho quando ela cresce.
+      let listaRadar = null;
+      if (tipo === 'lookalike') {
+        listaRadar = listaSel;
+        // Geografia escolhida na mão: onde procurar os semelhantes (a lista diz
+        // O QUE procurar). Vazio = usa as UFs onde os clientes da lista estão.
+        criterios.geo = {
+          ufs,
+          municipios_cod: municSel.map(m => m.c),
+          municipios_rotulos: municSel
+        };
+      }
       const r = await fetch('/api/buscas', {
         method: 'POST',
         credentials: 'same-origin',
@@ -4391,6 +4955,7 @@ function NovaBusca({
           corte_score: corte,
           crm_auto: crmAuto,
           crm_queue_id: crmQueue || null,
+          lista: listaRadar,
           criterios
         })
       });
@@ -5005,13 +5570,79 @@ function NovaBusca({
         padding: 20,
         marginBottom: 18
       }
-    }, /*#__PURE__*/React.createElement("div", {
+    }, tipo === 'lookalike' && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginBottom: 18
+      }
+    }, /*#__PURE__*/React.createElement("label", {
+      style: {
+        display: 'block',
+        fontSize: 12,
+        color: 'var(--dim)',
+        marginBottom: 7
+      }
+    }, "Lista de clientes ", /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: 'var(--faint)'
+      }
+    }, "(quem j\xE1 compra de voc\xEA)")), listas.length === 0 ? /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12.5,
+        color: 'var(--faint)',
+        padding: '12px 14px',
+        borderRadius: 10,
+        border: '1px dashed var(--border)',
+        lineHeight: 1.5
+      }
+    }, "Nenhuma lista cadastrada ainda. Suba seus clientes no menu ", /*#__PURE__*/React.createElement("b", null, "Semelhantes"), " e volte aqui pra escolher.") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("select", {
+      value: listaSel,
+      onChange: e => setListaSel(e.target.value),
+      style: {
+        width: '100%',
+        height: 40,
+        borderRadius: 9,
+        border: '1px solid var(--border)',
+        background: 'var(--panel2)',
+        color: 'var(--text)',
+        padding: '0 12px',
+        fontSize: 13,
+        fontFamily: 'inherit'
+      }
+    }, /*#__PURE__*/React.createElement("option", {
+      value: ""
+    }, "Escolha uma lista\u2026"), listas.map(l => /*#__PURE__*/React.createElement("option", {
+      key: l.nome,
+      value: l.nome
+    }, l.rotulo, " \u2014 ", l.n, " empresa", l.n === 1 ? '' : 's', l.automatica ? ' (do CRM)' : ''))), (() => {
+      const l = listas.find(x => x.nome === listaSel);
+      if (!l) return null;
+      const [rot, cor] = l.n < 6 ? ['baixa', '#F59E0B'] : l.n < 15 ? ['média', C.gold] : ['alta', '#4ADE80'];
+      return /*#__PURE__*/React.createElement("div", {
+        style: {
+          fontSize: 11.5,
+          color: 'var(--faint)',
+          marginTop: 8,
+          lineHeight: 1.5
+        }
+      }, "Confian\xE7a do perfil: ", /*#__PURE__*/React.createElement("span", {
+        style: {
+          color: cor
+        }
+      }, rot), " (", l.n, " empresas).", l.automatica && ' Esta lista cresce sozinha a cada conversão recebida do CRM, e o radar refaz o perfil junto.');
+    })(), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11.5,
+        color: 'var(--faint)',
+        marginTop: 8,
+        lineHeight: 1.5
+      }
+    }, "Gerencie suas listas no menu ", /*#__PURE__*/React.createElement("b", null, "Semelhantes"), " \u2014 suba, renomeie e reaproveite em quantos radares quiser."))), tipo !== 'lookalike' && /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 13,
         fontWeight: 600,
         marginBottom: 4
       }
-    }, tipo === 'lookalike' ? 'Suba sua lista de clientes que já converteram' : 'Cole a lista de CNPJs a importar'), /*#__PURE__*/React.createElement("div", {
+    }, tipo === 'lookalike' ? 'Empresas desta lista' : 'Cole a lista de CNPJs a importar'), tipo !== 'lookalike' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 12,
         color: 'var(--faint)',
@@ -5106,7 +5737,171 @@ function NovaBusca({
         fontSize: 11.5,
         color: '#F59E0B'
       }
-    }, "m\xEDnimo ", minimo, tipo === 'lookalike' ? ' · recomendado 15+' : '')), (tipo === 'lookalike' || tipo === 'cnpj') && /*#__PURE__*/React.createElement("div", {
+    }, "m\xEDnimo ", minimo, tipo === 'lookalike' ? ' · recomendado 15+' : ''))), tipo === 'lookalike' && /*#__PURE__*/React.createElement("div", {
+      style: {
+        marginTop: 18,
+        borderTop: '1px solid var(--border)',
+        paddingTop: 16
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 13,
+        fontWeight: 600,
+        marginBottom: 4
+      }
+    }, "Onde procurar os semelhantes"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        color: 'var(--faint)',
+        marginBottom: 12,
+        lineHeight: 1.45
+      }
+    }, "A lista define ", /*#__PURE__*/React.createElement("b", null, "o que"), " procurar (atividade, porte, perfil). Aqui voc\xEA define ", /*#__PURE__*/React.createElement("b", null, "onde"), ". Deixe em branco para procurar nos mesmos estados onde os clientes da lista j\xE1 est\xE3o."), /*#__PURE__*/React.createElement("label", {
+      style: {
+        display: 'block',
+        fontSize: 12,
+        color: 'var(--dim)',
+        marginBottom: 7
+      }
+    }, "Estados ", /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: 'var(--faint)'
+      }
+    }, "(opcional)")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: 6,
+        marginBottom: 16
+      }
+    }, UFS_BR.map(u => /*#__PURE__*/React.createElement("span", {
+      key: u,
+      onClick: () => toggle(ufs, setUfs, u),
+      style: {
+        cursor: 'pointer',
+        padding: '5px 10px',
+        borderRadius: 7,
+        fontSize: 11.5,
+        border: ufs.includes(u) ? `1px solid ${C.gold}` : '1px solid var(--border)',
+        background: ufs.includes(u) ? 'color-mix(in srgb, var(--accent) 13%, transparent)' : 'transparent',
+        color: ufs.includes(u) ? C.gold : 'var(--dim)'
+      }
+    }, u))), /*#__PURE__*/React.createElement("div", {
+      style: {
+        position: 'relative'
+      }
+    }, /*#__PURE__*/React.createElement("label", {
+      style: {
+        display: 'block',
+        fontSize: 12,
+        color: 'var(--dim)',
+        marginBottom: 7
+      }
+    }, "Cidades ", /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: 'var(--faint)'
+      }
+    }, "(opcional", ufs.length ? ` — dentro de ${ufs.join('/')}` : '', ")")), /*#__PURE__*/React.createElement("input", {
+      value: municBusca,
+      onChange: e => setMunicBusca(e.target.value),
+      onFocus: () => setMunicFoco(true),
+      onBlur: () => setTimeout(() => setMunicFoco(false), 150),
+      placeholder: "Ex: Curitiba, Joinville\u2026",
+      style: {
+        width: '100%',
+        height: 40,
+        borderRadius: 9,
+        border: '1px solid var(--border)',
+        background: 'var(--panel2)',
+        color: 'var(--text)',
+        padding: '0 12px',
+        fontSize: 13,
+        fontFamily: 'inherit'
+      }
+    }), municFoco && municBusca.trim().length >= 2 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        position: 'absolute',
+        zIndex: 30,
+        left: 0,
+        right: 0,
+        top: '100%',
+        marginTop: 4,
+        maxHeight: 248,
+        overflowY: 'auto',
+        background: 'var(--panel2)',
+        border: '1px solid var(--border)',
+        borderRadius: 9,
+        boxShadow: '0 10px 28px rgba(0,0,0,.45)'
+      }
+    }, municData.length === 0 ? /*#__PURE__*/React.createElement("div", {
+      style: {
+        padding: '10px 12px',
+        fontSize: 12.5,
+        color: 'var(--faint)'
+      }
+    }, "Carregando munic\xEDpios\u2026") : municResultados.length === 0 ? /*#__PURE__*/React.createElement("div", {
+      style: {
+        padding: '10px 12px',
+        fontSize: 12.5,
+        color: 'var(--faint)'
+      }
+    }, "Nenhuma cidade encontrada", ufs.length ? ' nessa(s) UF(s)' : '', ".") : municResultados.map(m => /*#__PURE__*/React.createElement("div", {
+      key: m.c,
+      onMouseDown: () => addMunic(m),
+      className: "row-hover",
+      style: {
+        padding: '9px 12px',
+        fontSize: 12.5,
+        cursor: 'pointer',
+        borderBottom: '1px solid var(--border)',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        gap: 10
+      }
+    }, /*#__PURE__*/React.createElement("span", null, m.n), /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: 'var(--faint)',
+        flexShrink: 0
+      }
+    }, m.uf)))), municSel.length > 0 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: 6,
+        marginTop: 9
+      }
+    }, municSel.map(m => /*#__PURE__*/React.createElement("span", {
+      key: m.c,
+      style: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 7,
+        padding: '5px 10px',
+        borderRadius: 7,
+        fontSize: 11.5,
+        border: `1px solid ${C.gold}`,
+        background: 'color-mix(in srgb, var(--accent) 13%, transparent)',
+        color: C.gold
+      }
+    }, m.n, " \xB7 ", m.uf, /*#__PURE__*/React.createElement("span", {
+      onClick: () => removeMunic(m.c),
+      title: "Remover",
+      style: {
+        cursor: 'pointer',
+        fontWeight: 700,
+        fontSize: 13,
+        lineHeight: 1,
+        opacity: .8
+      }
+    }, "\xD7"))))), (ufs.length > 0 || municSel.length > 0) && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11.5,
+        color: 'var(--faint)',
+        marginTop: 11,
+        lineHeight: 1.5
+      }
+    }, "Como voc\xEA fixou a regi\xE3o, o estado deixa de valer pontos no score (todas as empresas encontradas j\xE1 estar\xE3o a\xED) e esses pontos v\xE3o para atividade, porte e capital \u2014 o que de fato diferencia uma empresa da outra.")), (tipo === 'lookalike' || tipo === 'cnpj') && /*#__PURE__*/React.createElement("div", {
       style: {
         marginTop: 18,
         borderTop: '1px solid var(--border)',
@@ -8999,6 +9794,8 @@ function App() {
         });
       case 'propostas':
         return /*#__PURE__*/React.createElement(Propostas, null);
+      case 'semelhantes':
+        return /*#__PURE__*/React.createElement(Semelhantes, null);
       case 'agente':
         return /*#__PURE__*/React.createElement(AgenteSwot, null);
       case 'integracoes':

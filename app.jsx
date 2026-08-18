@@ -283,6 +283,7 @@ const NAV_MAIN = [
   { key:'buscas', label:'Radares', icon:'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-4.3-4.3' },
   { key:'leads', label:'Leads', icon:'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM12 3v3M12 18v3M3 12h3M18 12h3' },
   { key:'propostas', label:'Propostas', icon:'M9 12h6M9 16h6M9 8h2M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z' },
+  { key:'semelhantes', label:'Semelhantes', icon:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 11l-3 3-1.5-1.5' },
 ];
 // acesso: 'master' → só o login MASTER da Hunter (dados sigilosos: quais APIs
 // alimentam o produto). 'admin' → admin do cliente (gestão do próprio time).
@@ -1514,6 +1515,239 @@ function PropostaDropdown({ value, onChange, inicial }) {
   );
 }
 
+// ── Semelhantes: gestão das listas de clientes (criar / renomear / excluir) ────
+// A lista é a matéria-prima do radar "Semelhantes": o Hunter lê a firmografia
+// dessas empresas e destila o perfil de quem compra. Aqui ela vira um item
+// reaproveitável — sobe uma vez, usa em quantos radares quiser.
+function Semelhantes() {
+  const [listas, setListas] = useState(null);
+  const [criando, setCriando] = useState(false);
+  const [nome, setNome] = useState('');
+  const [texto, setTexto] = useState('');
+  const [erro, setErro] = useState(null);
+  const [salvando, setSalvando] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState(null);
+  const [editNome, setEditNome] = useState(null);     // chave da lista em renomeação
+  const [editRotulo, setEditRotulo] = useState('');
+  const arquivoRef = useRef();
+
+  const carregar = () => {
+    fetch('/api/listas', { credentials:'same-origin' })
+      .then(r => r.ok ? r.json() : [])
+      .then(d => setListas(Array.isArray(d) ? d : []))
+      .catch(() => setListas([]));
+  };
+  useEffect(() => { carregar(); }, []);
+
+  const cnpjs = useMemo(() => {
+    const vistos = new Set(), out = [];
+    for (const m of String(texto).matchAll(/\d{2}\.?\d{3}\.?\d{3}\/?\d{4}-?\d{2}/g)) {
+      const d = m[0].replace(/\D/g, '');
+      if (d.length === 14 && !vistos.has(d)) { vistos.add(d); out.push(d); }
+    }
+    return out;
+  }, [texto]);
+
+  const importarArquivo = async (file) => {
+    if (!file) return;
+    setUploadMsg(null);
+    const fd = new FormData(); fd.append('arquivo', file);
+    try {
+      const r = await fetch('/api/cnpjs/extrair', { method:'POST', credentials:'same-origin', body: fd });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.erro || 'Não consegui ler o arquivo.');
+      const achados = Array.isArray(d.cnpjs) ? d.cnpjs : [];
+      if (!achados.length) { setUploadMsg({ ok:false, txt:'Nenhum CNPJ encontrado no arquivo.' }); return; }
+      setTexto(t => (t.trim() ? t.trim() + '\n' : '') + achados.join('\n'));
+      setUploadMsg({ ok:true, txt:`${achados.length} CNPJ(s) lidos de ${file.name}` });
+      if (!nome.trim()) setNome(file.name.replace(/\.[^.]+$/, ''));
+    } catch (e) { setUploadMsg({ ok:false, txt:e.message }); }
+    if (arquivoRef.current) arquivoRef.current.value = '';
+  };
+
+  const criar = async () => {
+    if (!nome.trim()) { setErro('Dê um nome à lista.'); return; }
+    if (cnpjs.length < 3) { setErro(`Poucos CNPJs válidos (${cnpjs.length}). O mínimo são 3 — o recomendado é 15+.`); return; }
+    setSalvando(true); setErro(null);
+    try {
+      const r = await fetch('/api/listas', {
+        method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ nome: nome.trim(), cnpjs })
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.erro || 'Erro ao salvar a lista.');
+      setCriando(false); setNome(''); setTexto(''); setUploadMsg(null); carregar();
+    } catch (e) { setErro(e.message); }
+    finally { setSalvando(false); }
+  };
+
+  const renomear = async (l) => {
+    const novo = editRotulo.trim();
+    if (!novo) return;
+    const r = await fetch('/api/listas/' + encodeURIComponent(l.nome), {
+      method:'PATCH', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ rotulo: novo })
+    });
+    if (r.ok) { setEditNome(null); carregar(); }
+    else { const d = await r.json().catch(() => ({})); alert(d.erro || 'Erro ao renomear.'); }
+  };
+
+  const excluir = async (l) => {
+    if (!window.confirm(`Excluir a lista "${l.rotulo}" e suas ${l.n} empresas?`)) return;
+    const r = await fetch('/api/listas/' + encodeURIComponent(l.nome), { method:'DELETE', credentials:'same-origin' });
+    const d = await r.json().catch(() => ({}));
+    if (r.ok) { carregar(); return; }
+    if (r.status === 409) {
+      if (!window.confirm(`${d.erro}. Excluir mesmo assim? Esses radares param de se re-perfilar.`)) return;
+      const r2 = await fetch('/api/listas/' + encodeURIComponent(l.nome) + '?forcar=1', { method:'DELETE', credentials:'same-origin' });
+      if (r2.ok) carregar();
+      return;
+    }
+    alert(d.erro || 'Erro ao excluir.');
+  };
+
+  const arr = listas || [];
+  const conf = n => n < 6 ? ['baixa','#F59E0B'] : n < 15 ? ['média', C.gold] : ['alta','#4ADE80'];
+
+  return (
+    <div style={{ maxWidth:820 }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-end', marginBottom:16, gap:12, flexWrap:'wrap' }}>
+        <div style={{ fontSize:12.5, color:'var(--faint)', lineHeight:1.5, maxWidth:560 }}>
+          Listas de clientes que já compraram. O Hunter lê a firmografia dessas empresas e monta o perfil de quem
+          compra de você — depois procura empresas parecidas. A mesma lista serve para vários radares (regiões e
+          cortes diferentes), e quanto maior, mais preciso o perfil.
+        </div>
+        <button type="button" onClick={() => { setCriando(true); setErro(null); }} disabled={criando}
+          style={{ height:38, padding:'0 16px', borderRadius:9, border:'none', background: criando ? 'var(--panel2)' : 'var(--gold)',
+            color: criando ? 'var(--faint)' : '#0E1936', fontWeight:600, fontSize:13, fontFamily:'inherit',
+            cursor: criando ? 'default' : 'pointer', whiteSpace:'nowrap', display:'inline-flex', alignItems:'center', gap:7 }}>
+          <Svg d="M12 5v14M5 12h14" w={15} h={15} sw={1.8}/> Nova lista
+        </button>
+      </div>
+
+      {criando && (
+        <div style={{ background:'var(--panel)', border:`1px solid ${C.gold}`, borderRadius:13, padding:18, marginBottom:14 }}>
+          <div style={{ fontSize:13, fontWeight:600, marginBottom:12 }}>Nova lista</div>
+          <input value={nome} onChange={e => setNome(e.target.value)} autoFocus
+            placeholder="Nome da lista (ex.: Clientes 2025, Compradores linha refrigeração)"
+            style={{ width:'100%', height:40, borderRadius:9, border:'1px solid var(--border)', marginBottom:11,
+              background:'var(--panel2)', color:'var(--text)', padding:'0 12px', fontSize:13, fontFamily:'inherit' }}/>
+          <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:10, flexWrap:'wrap' }}>
+            <input ref={arquivoRef} type="file" accept=".txt,.csv,.pdf,text/plain,text/csv,application/pdf"
+              onChange={e => importarArquivo(e.target.files?.[0])} style={{ display:'none' }}/>
+            <button type="button" onClick={() => arquivoRef.current?.click()}
+              style={{ height:34, padding:'0 14px', borderRadius:9, border:'1px dashed var(--border)',
+                background:'transparent', color:'var(--text)', fontSize:12.5, fontFamily:'inherit', cursor:'pointer',
+                display:'inline-flex', alignItems:'center', gap:7 }}>
+              <Svg d="M12 3v12M7 8l5-5 5 5M5 21h14" w={15} h={15} sw={1.7}/>
+              Enviar arquivo (.txt, .csv, .pdf)
+            </button>
+            {uploadMsg && <span style={{ fontSize:11.5, color: uploadMsg.ok ? 'var(--faint)' : '#F59E0B' }}>{uploadMsg.txt}</span>}
+          </div>
+          <textarea value={texto} onChange={e => setTexto(e.target.value)}
+            placeholder="Cole os CNPJs (um por linha ou separados por vírgula), ou envie um arquivo acima."
+            style={{ width:'100%', minHeight:110, borderRadius:12, border:'1px solid var(--border)',
+              background:'var(--panel2)', color:'var(--text)', padding:12, fontSize:13,
+              fontFamily:'inherit', lineHeight:1.6, resize:'vertical' }}/>
+          <div style={{ display:'flex', alignItems:'center', gap:10, marginTop:9, flexWrap:'wrap' }}>
+            <span style={{ fontSize:12, fontWeight:600, color: cnpjs.length >= 3 ? 'var(--text)' : '#F59E0B' }}>
+              {cnpjs.length} CNPJ{cnpjs.length === 1 ? '' : 's'} válido{cnpjs.length === 1 ? '' : 's'}
+            </span>
+            {cnpjs.length > 0 && (() => { const [rot, cor] = conf(cnpjs.length); return (
+              <span style={{ fontSize:11, padding:'2px 9px', borderRadius:20, color:cor, border:`1px solid ${cor}` }}>
+                confiança do perfil: {rot}
+              </span>
+            ); })()}
+          </div>
+          {erro && <div style={{ fontSize:12, color:'#F87171', marginTop:9 }}>{erro}</div>}
+          <div style={{ display:'flex', gap:9, marginTop:14 }}>
+            <button type="button" onClick={criar} disabled={salvando}
+              style={{ height:36, padding:'0 16px', borderRadius:9, border:'none', background:'var(--gold)',
+                color:'#0E1936', fontWeight:600, fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>
+              {salvando ? 'Salvando…' : 'Salvar lista'}
+            </button>
+            <button type="button" onClick={() => { setCriando(false); setErro(null); }}
+              style={{ height:36, padding:'0 16px', borderRadius:9, border:'1px solid var(--border)',
+                background:'transparent', color:'var(--dim)', fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {listas === null ? (
+        <div style={{ fontSize:13, color:'var(--faint)' }}>Carregando…</div>
+      ) : arr.length === 0 && !criando ? (
+        <div style={{ fontSize:13, color:'var(--faint)', padding:'28px 18px', textAlign:'center',
+          border:'1px dashed var(--border)', borderRadius:12 }}>
+          Nenhuma lista ainda. Clique em <b>Nova lista</b> pra subir seus clientes.
+        </div>
+      ) : (
+        <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+          {arr.map(l => {
+            const [rot, cor] = conf(l.n);
+            return (
+              <div key={l.nome} style={{ display:'flex', gap:13, alignItems:'center', padding:'14px 16px',
+                borderRadius:12, background:'var(--panel)', border:'1px solid var(--border)' }}>
+                <Svg d={l.automatica
+                  ? 'M21 12a9 9 0 1 1-6.2-8.6M21 3v6h-6'
+                  : 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z'}
+                  color={l.automatica ? C.gold : 'var(--faint)'} w={18} h={18} sw={1.7} extra={{ flexShrink:0 }}/>
+                <div style={{ flex:1, minWidth:0 }}>
+                  {editNome === l.nome ? (
+                    <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                      <input value={editRotulo} onChange={e => setEditRotulo(e.target.value)} autoFocus
+                        onKeyDown={e => { if (e.key === 'Enter') renomear(l); if (e.key === 'Escape') setEditNome(null); }}
+                        style={{ flex:1, height:32, borderRadius:8, border:`1px solid ${C.gold}`,
+                          background:'var(--panel2)', color:'var(--text)', padding:'0 10px', fontSize:13, fontFamily:'inherit' }}/>
+                      <button type="button" onClick={() => renomear(l)}
+                        style={{ height:32, padding:'0 12px', borderRadius:8, border:'none', background:'var(--gold)',
+                          color:'#0E1936', fontWeight:600, fontSize:12, fontFamily:'inherit', cursor:'pointer' }}>Salvar</button>
+                      <button type="button" onClick={() => setEditNome(null)}
+                        style={{ height:32, padding:'0 10px', borderRadius:8, border:'1px solid var(--border)',
+                          background:'transparent', color:'var(--dim)', fontSize:12, fontFamily:'inherit', cursor:'pointer' }}>Cancelar</button>
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ fontSize:13.5, fontWeight:600, marginBottom:3 }}>{l.rotulo}</div>
+                      <div style={{ fontSize:12, color:'var(--faint)' }}>
+                        {l.n} empresa{l.n === 1 ? '' : 's'} · confiança <span style={{ color:cor }}>{rot}</span>
+                        {l.automatica && ' · alimentada pelo CRM automaticamente'}
+                      </div>
+                    </>
+                  )}
+                </div>
+                {editNome !== l.nome && (
+                  <div style={{ display:'flex', gap:7, flexShrink:0 }}>
+                    <button type="button" onClick={() => { setEditNome(l.nome); setEditRotulo(l.rotulo); }} title="Renomear"
+                      style={{ height:32, padding:'0 12px', borderRadius:8, border:'1px solid var(--border)',
+                        background:'transparent', color:'var(--dim)', fontSize:12, fontFamily:'inherit', cursor:'pointer' }}>
+                      Renomear
+                    </button>
+                    {!l.automatica && (
+                      <button type="button" onClick={() => excluir(l)} title="Excluir"
+                        style={{ height:32, padding:'0 12px', borderRadius:8, border:'1px solid var(--border)',
+                          background:'transparent', color:'#F87171', fontSize:12, fontFamily:'inherit', cursor:'pointer' }}>
+                        Excluir
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:16, lineHeight:1.55 }}>
+        A lista marcada como <b>alimentada pelo CRM</b> cresce sozinha: cada cliente que o CRM marca como convertido
+        entra nela, e os radares ligados a ela refazem o perfil automaticamente. Ela pode ser renomeada, mas não
+        excluída. Para usar qualquer lista, crie um radar do tipo <b>Semelhantes</b> e escolha-a no menu suspenso.
+      </div>
+    </div>
+  );
+}
+
 // Tela dedicada: gestão das até 5 propostas de valor (criar / editar / excluir).
 function Propostas() {
   const [lista, setLista] = useState(null);
@@ -1771,12 +2005,32 @@ function NovaBusca({ onSalvar, inicial }) {
   const [crmQueue, setCrmQueue] = useState(inicial?.crm_queue_id ? String(inicial.crm_queue_id) : '');
   const [listaCnpj, setListaCnpj] = useState(Array.isArray(iniCrit.cnpjs) ? iniCrit.cnpjs.join('\n') : '');
   const [uploadMsg, setUploadMsg] = useState(null);   // feedback do upload de arquivo
+  // Listas de semelhantes salvas (menu Semelhantes). O radar só ESCOLHE uma —
+  // criar/renomear/excluir vive na tela dedicada.
+  const [listas, setListas] = useState([]);
+  const [listaSel, setListaSel] = useState(inicial?.lista || '');
+
   const arquivoRef = useRef();
   const [iaCarregando, setIaCarregando] = useState(false);
   const [iaSug, setIaSug] = useState(null);   // resultados da IA (ou null)
   const [iaErro, setIaErro] = useState(null);
   const nomeRef = useRef();
   const [propostaSel, setPropostaSel] = useState(iniProposta);   // texto da variação de proposta escolhida
+
+  // Listas salvas (manuais + a automática do CRM), pra escolher em vez de
+  // re-subir o mesmo arquivo a cada radar novo.
+  const carregarListas = () => {
+    fetch('/api/listas', { credentials:'same-origin' })
+      .then(r => r.ok ? r.json() : [])
+      .then(d => {
+        const arr = Array.isArray(d) ? d : [];
+        setListas(arr);
+        // Uma lista só? já deixa escolhida — não faz sentido obrigar o clique.
+        if (arr.length === 1 && !inicial?.lista) setListaSel(arr[0].nome);
+      })
+      .catch(() => {});
+  };
+  useEffect(() => { carregarListas(); }, []);
 
   // CNPJs válidos (14 dígitos, sem repetição) colados na aba lista/lookalike.
   useEffect(() => {
@@ -1965,9 +2219,8 @@ function NovaBusca({ onSalvar, inicial }) {
   const salvar = async () => {
     const nome = nomeRef.current?.value?.trim();
     if (!nome) { alert('Informe o nome do radar.'); return; }
-    if (tipo === 'lookalike' && cnpjsParsed.length < MIN_LOOKALIKE) {
-      alert(`Poucos CNPJs válidos (${cnpjsParsed.length}). ` +
-        `Para o sistema traçar um perfil médio confiável, envie ao menos ${MIN_LOOKALIKE} (recomendado 15+).`);
+    if (tipo === 'lookalike' && !listaSel) {
+      alert('Escolha a lista de clientes. Se ainda não tem nenhuma, cadastre no menu "Semelhantes".');
       return;
     }
     if (tipo === 'cnpj' && cnpjsParsed.length < 1) {
@@ -2018,11 +2271,24 @@ function NovaBusca({ onSalvar, inicial }) {
             proposta_valor: propostaValor,
           }, proposta_valor: propostaValor }
         : { cnpjs: cnpjsParsed, proposta_valor: propostaValor };
+
+      // Semelhantes: a lista fica GRAVADA e o radar aponta pra ela. Assim ela
+      // aparece na próxima vez e o radar re-perfila sozinho quando ela cresce.
+      let listaRadar = null;
+      if (tipo === 'lookalike') {
+        listaRadar = listaSel;
+        // Geografia escolhida na mão: onde procurar os semelhantes (a lista diz
+        // O QUE procurar). Vazio = usa as UFs onde os clientes da lista estão.
+        criterios.geo = {
+          ufs, municipios_cod: municSel.map(m => m.c), municipios_rotulos: municSel,
+        };
+      }
+
       const r = await fetch('/api/buscas', {
         method:'POST', credentials:'same-origin',
         headers:{ 'Content-Type':'application/json' },
         body: JSON.stringify({ nome, tipo, corte_score: corte, crm_auto: crmAuto,
-          crm_queue_id: crmQueue || null, criterios })
+          crm_queue_id: crmQueue || null, lista: listaRadar, criterios })
       });
       if (!r.ok) { const d = await r.json().catch(()=>({})); throw new Error(d.erro || 'Erro ao criar radar.'); }
       onSalvar();
@@ -2292,9 +2558,53 @@ function NovaBusca({ onSalvar, inicial }) {
         const confCor = conf === 'alta' ? '#4ADE80' : conf === 'média' ? C.gold : '#F59E0B';
         return (
         <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:20, marginBottom:18 }}>
+          {tipo === 'lookalike' && (
+            <div style={{ marginBottom:18 }}>
+              <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>
+                Lista de clientes <span style={{ color:'var(--faint)' }}>(quem já compra de você)</span>
+              </label>
+              {listas.length === 0 ? (
+                <div style={{ fontSize:12.5, color:'var(--faint)', padding:'12px 14px', borderRadius:10,
+                  border:'1px dashed var(--border)', lineHeight:1.5 }}>
+                  Nenhuma lista cadastrada ainda. Suba seus clientes no menu <b>Semelhantes</b> e volte aqui pra escolher.
+                </div>
+              ) : (
+                <>
+                  <select value={listaSel} onChange={e => setListaSel(e.target.value)}
+                    style={{ width:'100%', height:40, borderRadius:9, border:'1px solid var(--border)',
+                      background:'var(--panel2)', color:'var(--text)', padding:'0 12px', fontSize:13, fontFamily:'inherit' }}>
+                    <option value="">Escolha uma lista…</option>
+                    {listas.map(l => (
+                      <option key={l.nome} value={l.nome}>
+                        {l.rotulo} — {l.n} empresa{l.n === 1 ? '' : 's'}{l.automatica ? ' (do CRM)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {(() => {
+                    const l = listas.find(x => x.nome === listaSel);
+                    if (!l) return null;
+                    const [rot, cor] = l.n < 6 ? ['baixa','#F59E0B'] : l.n < 15 ? ['média', C.gold] : ['alta','#4ADE80'];
+                    return (
+                      <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:8, lineHeight:1.5 }}>
+                        Confiança do perfil: <span style={{ color:cor }}>{rot}</span> ({l.n} empresas).
+                        {l.automatica && ' Esta lista cresce sozinha a cada conversão recebida do CRM, e o radar refaz o perfil junto.'}
+                      </div>
+                    );
+                  })()}
+                  <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:8, lineHeight:1.5 }}>
+                    Gerencie suas listas no menu <b>Semelhantes</b> — suba, renomeie e reaproveite em quantos radares quiser.
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {tipo !== 'lookalike' && (
           <div style={{ fontSize:13, fontWeight:600, marginBottom:4 }}>
-            {tipo === 'lookalike' ? 'Suba sua lista de clientes que já converteram' : 'Cole a lista de CNPJs a importar'}
+            {tipo === 'lookalike' ? 'Empresas desta lista' : 'Cole a lista de CNPJs a importar'}
           </div>
+          )}
+          {tipo !== 'lookalike' && (<>
           <div style={{ fontSize:12, color:'var(--faint)', marginBottom:12, lineHeight:1.45 }}>
             {tipo === 'lookalike'
               ? 'O sistema lê a firmografia dessas empresas (grátis), monta um perfil médio — CNAE, UF, porte, capital — e busca semelhantes na nossa base de empresas ativas. Quanto mais clientes, mais preciso o perfil.'
@@ -2335,6 +2645,77 @@ function NovaBusca({ onSalvar, inicial }) {
               </span>
             )}
           </div>
+          </>)}
+
+          {tipo === 'lookalike' && (
+            <div style={{ marginTop:18, borderTop:'1px solid var(--border)', paddingTop:16 }}>
+              <div style={{ fontSize:13, fontWeight:600, marginBottom:4 }}>Onde procurar os semelhantes</div>
+              <div style={{ fontSize:12, color:'var(--faint)', marginBottom:12, lineHeight:1.45 }}>
+                A lista define <b>o que</b> procurar (atividade, porte, perfil). Aqui você define <b>onde</b>.
+                Deixe em branco para procurar nos mesmos estados onde os clientes da lista já estão.
+              </div>
+              <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>
+                Estados <span style={{ color:'var(--faint)' }}>(opcional)</span>
+              </label>
+              <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginBottom:16 }}>
+                {UFS_BR.map(u => (
+                  <span key={u} onClick={() => toggle(ufs, setUfs, u)}
+                    style={{ cursor:'pointer', padding:'5px 10px', borderRadius:7, fontSize:11.5,
+                      border: ufs.includes(u) ? `1px solid ${C.gold}` : '1px solid var(--border)',
+                      background: ufs.includes(u) ? 'color-mix(in srgb, var(--accent) 13%, transparent)' : 'transparent',
+                      color: ufs.includes(u) ? C.gold : 'var(--dim)' }}>{u}</span>
+                ))}
+              </div>
+              <div style={{ position:'relative' }}>
+                <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>
+                  Cidades <span style={{ color:'var(--faint)' }}>(opcional{ufs.length ? ` — dentro de ${ufs.join('/')}` : ''})</span>
+                </label>
+                <input value={municBusca}
+                  onChange={e => setMunicBusca(e.target.value)}
+                  onFocus={() => setMunicFoco(true)}
+                  onBlur={() => setTimeout(() => setMunicFoco(false), 150)}
+                  placeholder="Ex: Curitiba, Joinville…"
+                  style={{ width:'100%', height:40, borderRadius:9, border:'1px solid var(--border)',
+                    background:'var(--panel2)', color:'var(--text)', padding:'0 12px', fontSize:13, fontFamily:'inherit' }}/>
+                {municFoco && municBusca.trim().length >= 2 && (
+                  <div style={{ position:'absolute', zIndex:30, left:0, right:0, top:'100%', marginTop:4,
+                    maxHeight:248, overflowY:'auto', background:'var(--panel2)', border:'1px solid var(--border)',
+                    borderRadius:9, boxShadow:'0 10px 28px rgba(0,0,0,.45)' }}>
+                    {municData.length === 0 ? (
+                      <div style={{ padding:'10px 12px', fontSize:12.5, color:'var(--faint)' }}>Carregando municípios…</div>
+                    ) : municResultados.length === 0 ? (
+                      <div style={{ padding:'10px 12px', fontSize:12.5, color:'var(--faint)' }}>Nenhuma cidade encontrada{ufs.length ? ' nessa(s) UF(s)' : ''}.</div>
+                    ) : municResultados.map(m => (
+                      <div key={m.c} onMouseDown={() => addMunic(m)} className="row-hover"
+                        style={{ padding:'9px 12px', fontSize:12.5, cursor:'pointer', borderBottom:'1px solid var(--border)',
+                          display:'flex', justifyContent:'space-between', alignItems:'center', gap:10 }}>
+                        <span>{m.n}</span>
+                        <span style={{ color:'var(--faint)', flexShrink:0 }}>{m.uf}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {municSel.length > 0 && (
+                  <div style={{ display:'flex', flexWrap:'wrap', gap:6, marginTop:9 }}>
+                    {municSel.map(m => (
+                      <span key={m.c} style={{ display:'inline-flex', alignItems:'center', gap:7, padding:'5px 10px',
+                        borderRadius:7, fontSize:11.5, border:`1px solid ${C.gold}`, background:'color-mix(in srgb, var(--accent) 13%, transparent)', color:C.gold }}>
+                        {m.n} · {m.uf}
+                        <span onClick={() => removeMunic(m.c)} title="Remover"
+                          style={{ cursor:'pointer', fontWeight:700, fontSize:13, lineHeight:1, opacity:.8 }}>×</span>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {(ufs.length > 0 || municSel.length > 0) && (
+                <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:11, lineHeight:1.5 }}>
+                  Como você fixou a região, o estado deixa de valer pontos no score (todas as empresas encontradas já
+                  estarão aí) e esses pontos vão para atividade, porte e capital — o que de fato diferencia uma empresa da outra.
+                </div>
+              )}
+            </div>
+          )}
 
           {(tipo === 'lookalike' || tipo === 'cnpj') && (
             <div style={{ marginTop:18, borderTop:'1px solid var(--border)', paddingTop:16 }}>
@@ -4050,6 +4431,7 @@ function App() {
       case 'buscaDetail': return <BuscaDetail buscaId={buscaDetailId} onBack={() => setScreen('buscas')} onOpenLead={setOpenLeadId} onDuplicar={duplicarBusca}/>;
       case 'nova': return <NovaBusca key={duplicarDe ? 'dup-'+duplicarDe.id : 'nova'} inicial={duplicarDe} onSalvar={() => navTo('buscas')}/>;
       case 'propostas': return <Propostas/>;
+      case 'semelhantes': return <Semelhantes/>;
       case 'agente': return <AgenteSwot/>;
       case 'integracoes': return <Integracoes/>;
       case 'usuarios': return <Usuarios user={user}/>;

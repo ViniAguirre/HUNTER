@@ -514,9 +514,17 @@ async function init() {
       texto      TEXT NOT NULL,
       criado_em  TIMESTAMPTZ NOT NULL DEFAULT now()
     );
+    -- Listas de semelhantes. A coluna nome e a CHAVE estavel (referenciada por
+    -- sementes.lista e buscas.lista); rotulo e o nome exibido, que o usuario
+    -- pode renomear a vontade sem quebrar radar nem a automacao do CRM.
+    CREATE TABLE IF NOT EXISTS listas_semelhantes (
+      nome       TEXT NOT NULL,
+      rotulo     TEXT NOT NULL,
+      criado_em  TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
   `);
 
-  for (const t of ['usuarios', 'buscas', 'leads', 'integracoes', 'sementes', 'contadores', 'contadores_hora', 'propostas_valor']) {
+  for (const t of ['usuarios', 'buscas', 'leads', 'integracoes', 'sementes', 'contadores', 'contadores_hora', 'propostas_valor', 'listas_semelhantes']) {
     await tenantizarTabela(pool, t);
   }
 
@@ -537,6 +545,18 @@ async function init() {
     ALTER TABLE sementes DROP CONSTRAINT IF EXISTS sementes_lista_cnpj_key;
     CREATE UNIQUE INDEX IF NOT EXISTS uq_sementes_tenant_lista_cnpj ON sementes(tenant_id, lista, cnpj);
   `);
+  await pool.query(
+    `CREATE UNIQUE INDEX IF NOT EXISTS uq_listas_tenant_nome ON listas_semelhantes(tenant_id, nome)`);
+  // Listas que já existiam só como `sementes.lista` ganham a linha de metadados
+  // (rótulo editável). Roda sempre: pega também a do CRM assim que ela nasce.
+  await pool.query(`
+    INSERT INTO listas_semelhantes (nome, rotulo)
+    SELECT DISTINCT s.lista,
+           CASE WHEN s.lista = 'conversoes_crm' THEN 'Clientes convertidos (CRM)' ELSE s.lista END
+    FROM sementes s
+    WHERE NOT EXISTS (SELECT 1 FROM listas_semelhantes l WHERE l.nome = s.lista)
+  `).catch(e => console.error('[migração] listas_semelhantes:', e.message));
+
   // contadores / contadores_hora: a PK precisa incluir tenant_id — cada cliente
   // tem teto diário/horário PRÓPRIO (senão um cliente estoura a cota do outro).
   await pool.query(`
@@ -900,11 +920,14 @@ app.post('/api/buscas', requireAuth, requireEditor, async (req, res) => {
   // Fila do CRM específica deste radar (opcional). Vazio = usa a fila padrão
   // configurada em Integrações.
   const crmQueueId = String(req.body.crm_queue_id || '').trim() || null;
+  // Lookalike ligado a uma LISTA salva: o radar re-perfila a partir dela (e
+  // acompanha quando ela cresce), em vez de congelar os CNPJs dentro do radar.
+  const lista = tipo === 'lookalike' ? (String(req.body.lista || '').trim() || null) : null;
   try {
     const { rows:[b] } = await pool.query(
-      `INSERT INTO buscas (nome, tipo, ritmo, criterios, corte_score, crm_auto, crm_queue_id, criador_id, ultima_ativ)
-       VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8,now()) RETURNING *`,
-      [nome, tipo, ritmo, JSON.stringify(criterios), corteScore, crmAuto, crmQueueId, req.user.id]
+      `INSERT INTO buscas (nome, tipo, ritmo, criterios, corte_score, crm_auto, crm_queue_id, lista, criador_id, ultima_ativ)
+       VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9,now()) RETURNING *`,
+      [nome, tipo, ritmo, JSON.stringify(criterios), corteScore, crmAuto, crmQueueId, lista, req.user.id]
     );
     res.status(201).json({ ...b, health: computeHealth(b), criador_nome: req.user.nome });
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
@@ -1663,6 +1686,81 @@ app.post('/api/webhooks/rotacionar-secret', requireAuth, requireMaster, async (r
 });
 
 // Situação da lista de semelhantes alimentada pelo CRM (pra tela de Config).
+// ── Listas de semelhantes (sementes agrupadas por `lista`) ────────────────────
+// A lista fica GRAVADA e reutilizável: um mesmo grupo de clientes pode virar
+// vários radares (regiões diferentes, cortes diferentes) sem re-subir o arquivo.
+// 'conversoes_crm' é a lista especial que o CRM alimenta sozinho.
+const LISTA_CRM = 'conversoes_crm';
+
+app.get('/api/listas', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT l.nome, l.rotulo, l.criado_em,
+             COUNT(s.id)::int AS n,
+             MAX(s.criado_em) AS atualizado_em,
+             COALESCE(BOOL_OR(s.origem = 'crm'), l.nome = $1) AS automatica
+      FROM listas_semelhantes l
+      LEFT JOIN sementes s ON s.lista = l.nome
+      GROUP BY l.nome, l.rotulo, l.criado_em
+      ORDER BY (l.nome = $1) DESC, COALESCE(MAX(s.criado_em), l.criado_em) DESC`, [LISTA_CRM]);
+    res.json(rows);
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// Renomeia só o RÓTULO. A chave (`nome`) nunca muda, então radares já criados e
+// a automação do CRM continuam apontando pro lugar certo.
+app.patch('/api/listas/:nome', requireAuth, requireEditor, async (req, res) => {
+  const nome = String(req.params.nome || '');
+  const rotulo = String(req.body.rotulo || '').trim().slice(0, 80);
+  if (!rotulo) return res.status(400).json({ erro: 'informe o novo nome' });
+  try {
+    const { rows: [l] } = await pool.query(
+      `UPDATE listas_semelhantes SET rotulo=$2 WHERE nome=$1 RETURNING nome, rotulo`, [nome, rotulo]);
+    if (!l) return res.status(404).json({ erro: 'lista não encontrada' });
+    res.json(l);
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+app.post('/api/listas', requireAuth, requireEditor, async (req, res) => {
+  const nome = String(req.body.nome || '').trim().slice(0, 80);
+  if (!nome) return res.status(400).json({ erro: 'informe o nome da lista' });
+  if (nome === LISTA_CRM) return res.status(400).json({ erro: 'esse nome é reservado para a lista automática do CRM' });
+  const cnpjs = [...new Set((Array.isArray(req.body.cnpjs) ? req.body.cnpjs : [])
+    .map(c => String(c).replace(/\D/g, '')).filter(c => c.length === 14))];
+  if (!cnpjs.length) return res.status(400).json({ erro: 'nenhum CNPJ válido na lista' });
+  try {
+    // Substituir = o usuário reenviou a lista inteira; senão só acrescenta.
+    if (req.body.substituir) await pool.query(`DELETE FROM sementes WHERE lista=$1`, [nome]);
+    await pool.query(
+      `INSERT INTO listas_semelhantes (nome, rotulo) VALUES ($1,$1)
+       ON CONFLICT (tenant_id, nome) DO NOTHING`, [nome]);
+    for (const cnpj of cnpjs) {
+      await pool.query(
+        `INSERT INTO sementes (cnpj, lista, origem) VALUES ($1,$2,'manual')
+         ON CONFLICT (tenant_id, lista, cnpj) DO NOTHING`, [cnpj, nome]);
+    }
+    const { rows: [{ n }] } = await pool.query(
+      `SELECT COUNT(*)::int n FROM sementes WHERE lista=$1`, [nome]);
+    res.status(201).json({ nome, rotulo: nome, n, enviados: cnpjs.length });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+app.delete('/api/listas/:nome', requireAuth, requireEditor, async (req, res) => {
+  const nome = String(req.params.nome || '');
+  if (nome === LISTA_CRM) return res.status(400).json({ erro: 'a lista do CRM não pode ser apagada' });
+  try {
+    // Radar que usa a lista pararia de re-perfilar — avisa em vez de quebrar.
+    const { rows: [{ n }] } = await pool.query(
+      `SELECT COUNT(*)::int n FROM buscas WHERE lista=$1`, [nome]);
+    if (n > 0 && !req.query.forcar) {
+      return res.status(409).json({ erro: `${n} radar(es) usam esta lista`, radares: n });
+    }
+    const { rowCount } = await pool.query(`DELETE FROM sementes WHERE lista=$1`, [nome]);
+    await pool.query(`DELETE FROM listas_semelhantes WHERE nome=$1`, [nome]);
+    res.json({ ok: true, removidos: rowCount });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
 app.get('/api/sementes/status', requireAuth, requireMaster, async (req, res) => {
   try {
     const { rows:[{ n }] } = await pool.query(`SELECT COUNT(*)::int n FROM sementes WHERE lista='conversoes_crm'`);
