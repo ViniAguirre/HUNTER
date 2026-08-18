@@ -2765,14 +2765,89 @@ function PerfilMedio({
       border: '1px solid var(--border)',
       color: 'var(--dim)'
     }
-  }, "Abertura: ", String(perfil.abertura.de).slice(0, 4), "\u2013", String(perfil.abertura.ate).slice(0, 4))), /*#__PURE__*/React.createElement("div", {
+  }, "Abertura: ", String(perfil.abertura.de).slice(0, 4), "\u2013", String(perfil.abertura.ate).slice(0, 4))), perfil.diagnostico?.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      borderTop: '1px solid var(--border)',
+      marginTop: 14,
+      paddingTop: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--faint)',
+      marginBottom: 4,
+      textTransform: 'uppercase',
+      letterSpacing: .4
+    }
+  }, "O que define esta lista"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--faint)',
+      marginBottom: 10,
+      lineHeight: 1.5
+    }
+  }, "Sua lista s\xF3 tem compradores, ent\xE3o o Hunter mede o quanto cada caracter\xEDstica \xE9 ", /*#__PURE__*/React.createElement("b", null, "concentrada"), " entre eles e ", /*#__PURE__*/React.createElement("b", null, "desproporcional"), " em rela\xE7\xE3o ao mercado. O que separa comprador de n\xE3o-comprador leva mais pontos no score; o que aparece espalhado pesa pouco."), [...perfil.diagnostico].sort((a, b) => b.peso - a.peso).map(d => {
+    const rot = {
+      CNAE: 'Atividade (CNAE)',
+      UF: 'Estado (UF)',
+      PORTE: 'Porte',
+      CAPITAL: 'Capital',
+      SIMPLES: 'Simples'
+    }[d.dim] || d.dim;
+    const forca = d.poder >= 0.5 ? 'define bem' : d.poder >= 0.2 ? 'ajuda a definir' : 'quase não define';
+    const cor = d.poder >= 0.5 ? C.green : d.poder >= 0.2 ? C.gold : 'var(--faint)';
+    return /*#__PURE__*/React.createElement("div", {
+      key: d.dim,
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        marginBottom: 6
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 12,
+        color: 'var(--text)',
+        width: 130
+      }
+    }, rot), /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: 1,
+        height: 5,
+        borderRadius: 3,
+        background: 'var(--panel2)'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        height: '100%',
+        borderRadius: 3,
+        width: `${Math.round(d.peso)}%`,
+        background: cor
+      }
+    })), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 11.5,
+        color: cor,
+        width: 104,
+        textAlign: 'right'
+      }
+    }, forca), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 11.5,
+        color: 'var(--faint)',
+        width: 52,
+        textAlign: 'right',
+        fontVariantNumeric: 'tabular-nums'
+      }
+    }, Math.round(d.peso), " pts"));
+  })), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: 'var(--faint)',
       marginTop: 12,
       lineHeight: 1.5
     }
-  }, "Esse perfil alimenta a descoberta (busca semelhantes na nossa base) e o Score 1 \u2014 quanto mais parecida com o n\xFAcleo desta lista, maior a nota do lead."));
+  }, "Esse perfil alimenta a descoberta (busca semelhantes na nossa base) e o Score 1 \u2014 quanto mais parecida com o n\xFAcleo desta lista, maior a nota do lead. O ", /*#__PURE__*/React.createElement("b", null, "corte de score"), " do radar \xE9 o quanto de proximidade voc\xEA exige: 100 \xE9 a c\xF3pia do seu cliente t\xEDpico, e cada caracter\xEDstica fora do padr\xE3o desconta os pontos da tabela acima."));
 }
 
 // ── BuscaDetail ───────────────────────────────────────────────────────────────

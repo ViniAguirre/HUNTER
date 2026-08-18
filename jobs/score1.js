@@ -14,15 +14,9 @@
 const perfilamento = require('../providers/perfil');
 const orcamento = require('./orcamento');
 
-const W = {
-  CNAE_EXATO: 35,
-  CNAE_GRUPO: 15,
-  UF: 25,
-  PORTE: 20,
-  CAPITAL: 10,
-  SIMPLES: 5,
-  SITUACAO_ATIVA: 5,
-};
+// Pesos vivem em providers/perfil.js — fonte única, usada tanto pelo ICP
+// (direto) quanto pelo lookalike (como prior dos pesos dinâmicos).
+const W = perfilamento.W;
 
 const MAX_TENTATIVAS_ORCAMENTO = 96; // ~48h em ciclos de 30min — evita ficar preso pra sempre
 
@@ -151,20 +145,20 @@ function computeScore1(emp, params) {
 
   if (/ativa/i.test(emp.situacao || 'Ativa')) add('Situação ativa', W.SITUACAO_ATIVA);
 
+  // NENHUM ponto por "dimensão sem filtro". Dar meio peso a um critério que o
+  // usuário não definiu inflava todo mundo: com só CNAE+UF preenchidos, QUALQUER
+  // empresa devolvida pela CNPJá somava 83 e passava em qualquer corte — por
+  // isso `fora_perfil` vivia zerado e o corte não filtrava nada.
   if (params.cnaes?.length && emp.cnae) {
     const cnaeClean = String(emp.cnae).replace(/\D/g, '');
     const exato = params.cnaes.some(c => c.replace(/\D/g, '') === cnaeClean);
     const grupo = !exato && params.cnaes.some(c => c.replace(/\D/g, '').slice(0, 4) === cnaeClean.slice(0, 4));
     if (exato) add(`CNAE exato (${emp.cnae})`, W.CNAE_EXATO);
     else if (grupo) add(`CNAE do mesmo grupo (${emp.cnae})`, W.CNAE_GRUPO);
-  } else if (!params.cnaes?.length) {
-    add('CNAE (sem filtro na busca)', Math.round(W.CNAE_EXATO * 0.5));
   }
 
   if (params.ufs?.length && emp.uf) {
     if (params.ufs.includes(emp.uf)) add(`UF ${emp.uf}`, W.UF);
-  } else if (!params.ufs?.length) {
-    add('UF (sem filtro na busca)', Math.round(W.UF * 0.5));
   }
 
   if (params.portes?.length && emp.porte) {
@@ -172,21 +166,26 @@ function computeScore1(emp, params) {
     if (params.portes.some(p => porteNorm.includes(p.toLowerCase()) || p.toLowerCase().includes(porteNorm))) {
       add(`Porte ${emp.porte}`, W.PORTE);
     }
-  } else if (!params.portes?.length) {
-    add('Porte (sem filtro na busca)', Math.round(W.PORTE * 0.5));
   }
 
-  if (!params.capital_min) {
-    add('Capital (sem filtro na busca)', Math.round(W.CAPITAL * 0.5));
-  } else if (emp.capital) {
-    add('Capital (faixa registrada)', Math.round(W.CAPITAL * 0.5));
+  if (params.capital_min && emp.capital) {
+    add('Capital dentro do pedido', W.CAPITAL);
   }
 
   if (params.simples != null && emp.opcao_simples != null) {
     if (params.simples === emp.opcao_simples) add(`Simples: ${emp.opcao_simples ? 'Sim' : 'Não'}`, W.SIMPLES);
-  } else {
-    add('Simples (sem filtro na busca)', Math.round(W.SIMPLES * 0.5));
   }
+
+  // A escala é RELATIVA ao que o radar realmente pediu: 100 = bateu tudo que
+  // foi definido. Sem isso, um radar com poucos critérios teria teto baixo e o
+  // mesmo corte significaria coisas diferentes em cada radar.
+  const possivel = W.SITUACAO_ATIVA
+    + (params.cnaes?.length ? W.CNAE_EXATO : 0)
+    + (params.ufs?.length ? W.UF : 0)
+    + (params.portes?.length ? W.PORTE : 0)
+    + (params.capital_min ? W.CAPITAL : 0)
+    + (params.simples != null ? W.SIMPLES : 0);
+  if (possivel > 0) score = Math.round(score / possivel * 100);
 
   return { score: Math.min(100, score), breakdown };
 }

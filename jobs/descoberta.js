@@ -366,7 +366,7 @@ async function perfilarComLista(pool, criterios, busca_id, cnpjs) {
   }
 
   const base = await baseRates.baseRates(pool);   // taxas do universo p/ peso de raridade
-  const { params } = perfilamento.construirPerfil(amostra, base);
+  const { params } = perfilamento.construirPerfil(amostra, base, perfilamento.W);
   params.proposta_valor = criterios.proposta_valor || criterios.params?.proposta_valor || '';
   const novo = { ...criterios, params };
   await pool.query(`UPDATE buscas SET criterios=$2::jsonb WHERE id=$1`, [busca_id, JSON.stringify(novo)]);

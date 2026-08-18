@@ -1177,8 +1177,38 @@ function PerfilMedio({ perfil }) {
           </span>
         )}
       </div>
+      {perfil.diagnostico?.length > 0 && (
+        <div style={{ borderTop:'1px solid var(--border)', marginTop:14, paddingTop:14 }}>
+          <div style={{ fontSize:11.5, color:'var(--faint)', marginBottom:4, textTransform:'uppercase', letterSpacing:.4 }}>
+            O que define esta lista
+          </div>
+          <div style={{ fontSize:11.5, color:'var(--faint)', marginBottom:10, lineHeight:1.5 }}>
+            Sua lista só tem compradores, então o Hunter mede o quanto cada característica é <b>concentrada</b> entre
+            eles e <b>desproporcional</b> em relação ao mercado. O que separa comprador de não-comprador leva mais
+            pontos no score; o que aparece espalhado pesa pouco.
+          </div>
+          {[...perfil.diagnostico].sort((a,b) => b.peso - a.peso).map(d => {
+            const rot = { CNAE:'Atividade (CNAE)', UF:'Estado (UF)', PORTE:'Porte', CAPITAL:'Capital', SIMPLES:'Simples' }[d.dim] || d.dim;
+            const forca = d.poder >= 0.5 ? 'define bem' : d.poder >= 0.2 ? 'ajuda a definir' : 'quase não define';
+            const cor = d.poder >= 0.5 ? C.green : d.poder >= 0.2 ? C.gold : 'var(--faint)';
+            return (
+              <div key={d.dim} style={{ display:'flex', alignItems:'center', gap:10, marginBottom:6 }}>
+                <span style={{ fontSize:12, color:'var(--text)', width:130 }}>{rot}</span>
+                <div style={{ flex:1, height:5, borderRadius:3, background:'var(--panel2)' }}>
+                  <div style={{ height:'100%', borderRadius:3, width:`${Math.round(d.peso)}%`, background:cor }}/>
+                </div>
+                <span style={{ fontSize:11.5, color:cor, width:104, textAlign:'right' }}>{forca}</span>
+                <span style={{ fontSize:11.5, color:'var(--faint)', width:52, textAlign:'right', fontVariantNumeric:'tabular-nums' }}>
+                  {Math.round(d.peso)} pts
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
       <div style={{ fontSize:11, color:'var(--faint)', marginTop:12, lineHeight:1.5 }}>
         Esse perfil alimenta a descoberta (busca semelhantes na nossa base) e o Score 1 — quanto mais parecida com o núcleo desta lista, maior a nota do lead.
+        O <b>corte de score</b> do radar é o quanto de proximidade você exige: 100 é a cópia do seu cliente típico, e cada característica fora do padrão desconta os pontos da tabela acima.
       </div>
     </div>
   );
