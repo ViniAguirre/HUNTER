@@ -1548,21 +1548,39 @@ function Semelhantes() {
     return out;
   }, [texto]);
 
+  // O endpoint recebe o arquivo em base64 dentro de um JSON (não multipart).
   const importarArquivo = async (file) => {
     if (!file) return;
-    setUploadMsg(null);
-    const fd = new FormData(); fd.append('arquivo', file);
+    if (file.size > 10 * 1024 * 1024) { setUploadMsg({ ok:false, txt:'Arquivo muito grande (máx. 10MB).' }); return; }
+    setUploadMsg({ ok:true, txt:'Lendo arquivo…' });
     try {
-      const r = await fetch('/api/cnpjs/extrair', { method:'POST', credentials:'same-origin', body: fd });
+      const base64 = await new Promise((res, rej) => {
+        const fr = new FileReader();
+        fr.onload = () => res(String(fr.result).split(',')[1] || '');
+        fr.onerror = () => rej(new Error('falha ao ler'));
+        fr.readAsDataURL(file);
+      });
+      const r = await fetch('/api/cnpjs/extrair', {
+        method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ nome: file.name, base64 })
+      });
       const d = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(d.erro || 'Não consegui ler o arquivo.');
+      if (!r.ok) throw new Error(d.erro || 'erro ao extrair');
       const achados = Array.isArray(d.cnpjs) ? d.cnpjs : [];
-      if (!achados.length) { setUploadMsg({ ok:false, txt:'Nenhum CNPJ encontrado no arquivo.' }); return; }
-      setTexto(t => (t.trim() ? t.trim() + '\n' : '') + achados.join('\n'));
-      setUploadMsg({ ok:true, txt:`${achados.length} CNPJ(s) lidos de ${file.name}` });
+      if (!achados.length) {
+        setUploadMsg({ ok:false, txt:'Nenhum CNPJ encontrado no arquivo. Se for PDF escaneado (imagem), use um .txt/.csv.' });
+        return;
+      }
+      const jaTem = new Set(texto.split(/[\s,;]+/).map(x => x.replace(/\D/g,'')).filter(x => x.length === 14));
+      const novos = achados.filter(c => !jaTem.has(c));
+      setTexto(prev => (prev.trim() ? prev.trim() + '\n' : '') + novos.join('\n'));
+      setUploadMsg({ ok:true, txt:`${achados.length} CNPJ(s) no arquivo · ${novos.length} novo(s) adicionado(s).` });
       if (!nome.trim()) setNome(file.name.replace(/\.[^.]+$/, ''));
-    } catch (e) { setUploadMsg({ ok:false, txt:e.message }); }
-    if (arquivoRef.current) arquivoRef.current.value = '';
+    } catch (e) {
+      setUploadMsg({ ok:false, txt:'Não consegui ler este arquivo. Tente um .txt, .csv ou PDF com texto.' });
+    } finally {
+      if (arquivoRef.current) arquivoRef.current.value = '';
+    }
   };
 
   const criar = async () => {
