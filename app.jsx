@@ -1030,6 +1030,9 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
                   <span title="Sem WhatsApp/telefone — não enviado ao CRM automaticamente"
                     style={{ ...badgeStyle(C.red), whiteSpace:'nowrap' }}>sem contato</span>
                 )}
+                <ForaDoPerfil leadId={l.id} compacto
+                  marcado={l.contato_status === 'fora_do_perfil'}
+                  onMudou={() => setTick(t => t + 1)}/>
               </div>
             </div>
           );
@@ -1212,6 +1215,54 @@ function PerfilMedio({ perfil }) {
         O <b>corte de score</b> do radar é o quanto de proximidade você exige: 100 é a cópia do seu cliente típico, e cada característica fora do padrão desconta os pontos da tabela acima.
       </div>
     </div>
+  );
+}
+
+// Joinha pra baixo: marca o lead como "fora do perfil". Além de descartar, vira
+// CONTRAEXEMPLO na lista de semelhantes do radar — o motor passa a saber o que
+// EVITAR, não só o que procurar.
+function ForaDoPerfil({ leadId, marcado, onMudou, compacto }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  const clicar = async (e) => {
+    e.stopPropagation();
+    if (busy) return;
+    setBusy(true); setMsg(null);
+    try {
+      const r = await fetch('/api/leads/' + leadId + '/fora-do-perfil', {
+        method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ desfazer: !!marcado })
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.erro || 'erro');
+      if (!marcado) {
+        setMsg(d.aprendeu
+          ? `Aprendido · ${d.negativos} exemplo(s) do que evitar`
+          : 'Descartado (este radar não usa lista, então não há perfil a corrigir)');
+        setTimeout(() => setMsg(null), 4000);
+      }
+      onMudou && onMudou();
+    } catch (_) { setMsg('Falhou'); setTimeout(() => setMsg(null), 3000); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <span style={{ display:'inline-flex', alignItems:'center', gap:7 }}>
+      <button type="button" onClick={clicar} disabled={busy}
+        title={marcado
+          ? 'Marcado como fora do perfil — clique pra desfazer'
+          : 'Fora do perfil: descarta e ensina o radar a evitar empresas assim'}
+        style={{ height: compacto ? 28 : 30, width: compacto ? 28 : 30, borderRadius:8, cursor: busy ? 'wait' : 'pointer',
+          display:'inline-flex', alignItems:'center', justifyContent:'center', padding:0,
+          border:'1px solid ' + (marcado ? C.red : 'var(--border)'),
+          background: marcado ? 'color-mix(in srgb, ' + C.red + ' 14%, transparent)' : 'transparent',
+          color: marcado ? C.red : 'var(--faint)' }}>
+        <Svg d="M17 14V2M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88z"
+          w={15} h={15} sw={1.7} color="currentColor"/>
+      </button>
+      {msg && <span style={{ fontSize:11, color:'var(--faint)' }}>{msg}</span>}
+    </span>
   );
 }
 
@@ -4517,6 +4568,14 @@ function DecisaoModal({ leads, onClose, onAbrirLead, onResolvido }) {
       if (!resto.length) onClose();
     } catch (_) {} finally { setBusy(null); }
   };
+  // O joinha já resolveu o lead pelo seu próprio endpoint — aqui é só tirar da
+  // fila do popup (chamar /decisao de novo mandaria uma ação inválida).
+  const removerDaLista = (id) => {
+    onResolvido && onResolvido();
+    const resto = lista.filter(l => l.id !== id);
+    setLista(resto);
+    if (!resto.length) onClose();
+  };
   const acharManual = async (id) => {
     try {
       await fetch(`/api/leads/${id}/decisao`, {
@@ -4565,6 +4624,7 @@ function DecisaoModal({ leads, onClose, onAbrirLead, onResolvido }) {
                 <button disabled={busy===l.id} onClick={() => resolver(l.id, 'enviar')} style={btn(C.gold, C.gold)}>Enviar assim mesmo</button>
                 <button disabled={busy===l.id} onClick={() => acharManual(l.id)} style={btn('var(--border)')}>Achar manualmente</button>
                 <button disabled={busy===l.id} onClick={() => resolver(l.id, 'descartar')} style={btn(C.red)}>Não qualificado</button>
+                <ForaDoPerfil leadId={l.id} marcado={false} onMudou={() => removerDaLista(l.id)}/>
               </div>
             </div>
           ))}

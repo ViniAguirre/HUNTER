@@ -334,14 +334,23 @@ async function resolverPorNome(nome, uf, cidade, cnpjaKey) {
 // Sementes vêm da lista colada (criterios.cnpjs) E da lista alimentada pelo CRM.
 async function perfilar(pool, criterios, busca_id, lista) {
   const cnpjs = new Set(perfilamento.parseCnpjs(criterios));
+  const negativos = [];
   if (lista) {
-    const { rows } = await pool.query(`SELECT cnpj FROM sementes WHERE lista=$1`, [lista]);
-    for (const r of rows) if (r.cnpj) cnpjs.add(r.cnpj);
+    const { rows } = await pool.query(
+      `SELECT cnpj, tipo FROM sementes WHERE lista=$1`, [lista]);
+    for (const r of rows) {
+      if (!r.cnpj) continue;
+      // Contraexemplo (joinha pra baixo): NÃO entra na amostra de compradores —
+      // entra do outro lado da conta, pra o motor saber o que evitar.
+      if (r.tipo === 'negativa') { negativos.push(r.cnpj); cnpjs.delete(r.cnpj); }
+      else cnpjs.add(r.cnpj);
+    }
   }
-  return perfilarComLista(pool, criterios, busca_id, [...cnpjs]);
+  for (const c of negativos) cnpjs.delete(c);
+  return perfilarComLista(pool, criterios, busca_id, [...cnpjs], negativos);
 }
 
-async function perfilarComLista(pool, criterios, busca_id, cnpjs) {
+async function perfilarComLista(pool, criterios, busca_id, cnpjs, negativos = []) {
   if (cnpjs.length < perfilamento.MIN_PERFIL) {
     await pool.query(`UPDATE buscas SET status='Esgotada', ultimo_heartbeat=now() WHERE id=$1`, [busca_id]);
     return { erro: true, skipped: 'lista_curta', minimo: perfilamento.MIN_PERFIL, enviados: cnpjs.length };
@@ -374,8 +383,17 @@ async function perfilarComLista(pool, criterios, busca_id, cnpjs) {
   const municipiosManuais = Array.isArray(geo.municipios_cod) ? geo.municipios_cod.filter(Boolean) : [];
   const geoManual = ufsManuais.length > 0 || municipiosManuais.length > 0;
 
+  // Firmografia dos contraexemplos (já está no cadastro: eles viraram lead antes
+  // de o usuário marcar). Nada de consulta paga aqui.
+  const amostraNeg = [];
+  for (const cnpj of negativos.slice(0, TETO_AMOSTRA)) {
+    const { rows: [e] } = await pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [cnpj]);
+    if (e) amostraNeg.push(e);
+  }
+
   const base = await baseRates.baseRates(pool);   // taxas do universo p/ peso de raridade
-  const { params } = perfilamento.construirPerfil(amostra, base, perfilamento.W, { geoManual });
+  const { params } = perfilamento.construirPerfil(amostra, base, perfilamento.W,
+    { geoManual, negativas: amostraNeg });
   if (ufsManuais.length) params.ufs = ufsManuais;
   if (municipiosManuais.length) {
     params.municipios_cod = municipiosManuais;

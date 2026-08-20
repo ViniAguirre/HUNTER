@@ -542,6 +542,7 @@ async function init() {
   `);
   // sementes (lista, cnpj) era UNIQUE global — idem.
   await pool.query(`
+    ALTER TABLE sementes ADD COLUMN IF NOT EXISTS tipo TEXT NOT NULL DEFAULT 'positiva';
     ALTER TABLE sementes DROP CONSTRAINT IF EXISTS sementes_lista_cnpj_key;
     CREATE UNIQUE INDEX IF NOT EXISTS uq_sementes_tenant_lista_cnpj ON sementes(tenant_id, lista, cnpj);
   `);
@@ -1022,7 +1023,7 @@ app.get('/api/leads', requireAuth, async (req, res) => {
     const [countRes, dataRes] = await Promise.all([
       pool.query(`SELECT COUNT(*)::int AS total FROM leads l ${where}`, vals),
       pool.query(`SELECT l.id, l.fantasia, l.razao, l.setor, l.porte, l.cidade, l.uf,
-        l.decisor, l.cargo, l.score, l.tem_email, l.tem_telefone, l.status, l.busca_id, l.contato_validado, l.contato_pendente
+        l.decisor, l.cargo, l.score, l.tem_email, l.tem_telefone, l.status, l.busca_id, l.contato_validado, l.contato_pendente, l.contato_status
         FROM leads l ${where} ORDER BY l.score DESC, l.id
         LIMIT $${vals.length+1} OFFSET $${vals.length+2}`,
         [...vals, perPage, (page-1)*perPage]),
@@ -1152,6 +1153,59 @@ app.post('/api/leads/:id/decisao', requireAuth, requireEditor, async (req, res) 
     }
     return res.status(400).json({ erro: 'ação inválida' });
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// "Fora do perfil" (joinha pra baixo): o usuário diz que aquele tipo de empresa
+// NÃO é cliente dele. Vira CONTRAEXEMPLO na lista de semelhantes do radar — é o
+// que permite ao motor separar "isso caracteriza meu comprador" de "isso é só o
+// comum do mercado", coisa que uma lista só de compradores nunca consegue dizer.
+app.post('/api/leads/:id/fora-do-perfil', requireAuth, requireEditor, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
+  const desfazer = !!req.body?.desfazer;
+  try {
+    const { rows: [l] } = await pool.query(
+      `SELECT l.cnpj, l.busca_id, b.lista FROM leads l
+       LEFT JOIN buscas b ON b.id = l.busca_id WHERE l.id=$1`, [id]);
+    if (!l) return res.status(404).json({ erro: 'lead não encontrado' });
+    const cnpj = String(l.cnpj || '').replace(/\D/g, '');
+
+    if (desfazer) {
+      if (l.lista) await pool.query(
+        `DELETE FROM sementes WHERE lista=$1 AND cnpj=$2 AND tipo='negativa'`, [l.lista, cnpj]);
+      await pool.query(
+        `UPDATE leads SET status='Novo', contato_status=NULL, atualizado_em=now() WHERE id=$1`, [id]);
+      return res.json({ ok: true, desfeito: true });
+    }
+
+    await pool.query(
+      `UPDATE leads SET status='Descartado', contato_status='fora_do_perfil',
+              contato_pendente=false, atualizado_em=now() WHERE id=$1`, [id]);
+
+    if (!l.lista) {
+      // Radar sem lista (ICP puro) não tem perfil pra corrigir — o descarte vale,
+      // mas não vira aprendizado. Avisa em vez de fingir que aprendeu.
+      return res.json({ ok: true, aprendeu: false, motivo: 'radar_sem_lista' });
+    }
+    if (cnpj.length === 14) {
+      await pool.query(
+        `INSERT INTO sementes (cnpj, lista, origem, tipo) VALUES ($1,$2,'fora_do_perfil','negativa')
+         ON CONFLICT (tenant_id, lista, cnpj) DO UPDATE SET tipo='negativa', origem='fora_do_perfil'`,
+        [cnpj, l.lista]);
+    }
+    // Zera o perfil dos radares que usam essa lista → re-perfilam já com o
+    // contraexemplo na próxima varredura.
+    const { rows: buscas } = await pool.query(
+      `SELECT id, criterios FROM buscas WHERE lista=$1`, [l.lista]);
+    for (const b of buscas) {
+      const crit = b.criterios || {};
+      delete crit.params;
+      await pool.query(`UPDATE buscas SET criterios=$2::jsonb WHERE id=$1`, [b.id, JSON.stringify(crit)]);
+    }
+    const { rows: [{ n }] } = await pool.query(
+      `SELECT COUNT(*)::int n FROM sementes WHERE lista=$1 AND tipo='negativa'`, [l.lista]);
+    res.json({ ok: true, aprendeu: true, lista: l.lista, negativos: n, radares: buscas.length });
+  } catch (e) { console.error('[fora-do-perfil]', e.message); res.status(500).json({ erro: 'erro interno' }); }
 });
 
 // Edição MANUAL do contato do lead (quando o usuário acha o dado por conta).
@@ -1696,7 +1750,8 @@ app.get('/api/listas', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT l.nome, l.rotulo, l.criado_em,
-             COUNT(s.id)::int AS n,
+             COUNT(s.id) FILTER (WHERE s.tipo <> 'negativa')::int AS n,
+             COUNT(s.id) FILTER (WHERE s.tipo = 'negativa')::int AS negativos,
              MAX(s.criado_em) AS atualizado_em,
              COALESCE(BOOL_OR(s.origem = 'crm'), l.nome = $1) AS automatica
       FROM listas_semelhantes l
@@ -1736,7 +1791,7 @@ app.post('/api/listas', requireAuth, requireEditor, async (req, res) => {
        ON CONFLICT (tenant_id, nome) DO NOTHING`, [nome]);
     for (const cnpj of cnpjs) {
       await pool.query(
-        `INSERT INTO sementes (cnpj, lista, origem) VALUES ($1,$2,'manual')
+        `INSERT INTO sementes (cnpj, lista, origem, tipo) VALUES ($1,$2,'manual','positiva')
          ON CONFLICT (tenant_id, lista, cnpj) DO NOTHING`, [cnpj, nome]);
     }
     const { rows: [{ n }] } = await pool.query(

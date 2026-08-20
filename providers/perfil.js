@@ -83,6 +83,45 @@ function confiancaDe(n) {
  * comprador de não-comprador fica com o peso, em vez de todo mundo carregar
  * um peso fixo decidido na mão.
  */
+/*
+ * EVIDÊNCIA de um valor, quando existem CONTRAEXEMPLOS (leads que o usuário
+ * marcou como "fora do perfil").
+ *
+ * Sem contraexemplo, a lista só diz "meus clientes são assim" — e não dá pra
+ * saber se aquilo caracteriza o comprador ou se é só o normal do mercado. Com
+ * os dois lados, a pergunta vira direta: entre quem eu quero e quem eu recusei,
+ * de que lado esse valor aparece?
+ *
+ *   0,5 = aparece igual nos dois lados  → não diz nada
+ *   → 1 = só aparece entre compradores  → sinal forte a favor
+ *   → 0 = só aparece entre os recusados → sinal forte contra
+ *
+ * Compara TAXAS, não contagens: "que fração dos meus clientes tem esse valor"
+ * contra "que fração dos recusados tem esse valor". Comparar contagem cru
+ * enviesaria pro lado maior — com 10 clientes e 4 recusados, um valor presente
+ * em 100% dos DOIS lados pareceria 70% a favor do cliente, quando na verdade
+ * não distingue nada.
+ *
+ * O +1 (Laplace) evita que UM caso isolado vire conclusão absoluta.
+ */
+function evidenciaDe(nPos, nNeg, totPos, totNeg) {
+  if (!totNeg) return null;                       // sem contraexemplo, sem evidência
+  const taxaPos = (nPos + 1) / (totPos + 2);
+  const taxaNeg = (nNeg + 1) / (totNeg + 2);
+  return taxaPos / (taxaPos + taxaNeg);
+}
+
+// Multiplicador aplicado aos pontos da dimensão. O joinha pra baixo só SUBTRAI:
+// derruba o que é típico de quem você recusou, e nunca infla o que é típico de
+// quem você quer (isso a frequência na lista já mede). Além de casar com o que
+// o botão significa, evita um artefato: com poucos contraexemplos, um valor
+// presente nos DOIS lados pendia pro positivo só por haver mais compradores que
+// recusados na amostra, e o lead ruim subia de nota em vez de cair.
+function ajusteDe(ev) {
+  if (ev == null) return 1;
+  return Math.max(0.25, Math.min(1, ev * 2));
+}
+
 function poderDimensao(dist, base, dim) {
   if (!dist || dist.length === 0) return 0;
 
@@ -116,6 +155,20 @@ function poderDimensao(dist, base, dim) {
 // dimensão sem poder nenhum cai pra 35% do peso original; com poder total,
 // fica com 100%. Depois normaliza pra a escala continuar 0–100 (o corte do
 // usuário significa a mesma coisa em qualquer radar).
+// O quanto esta dimensão SEPARA compradores de recusados. 0 = os dois lados
+// têm os mesmos valores (a dimensão não decide nada); 1 = cada valor pertence
+// claramente a um lado só. Só existe quando há contraexemplo marcado.
+function separacaoDimensao(arr) {
+  let acc = 0, tot = 0;
+  for (const x of arr || []) {
+    if (x.ev == null) continue;
+    const peso = (x.n || 0) + (x.nneg || 0);
+    acc += peso * Math.abs(2 * x.ev - 1);
+    tot += peso;
+  }
+  return tot > 0 ? acc / tot : null;
+}
+
 function calcularPesos(perfil, base, W, opts = {}) {
   // Geografia escolhida na mão: TODA empresa encontrada já está na UF pedida,
   // então a UF não separa mais uma da outra — vira filtro, não sinal. Zera o
@@ -131,7 +184,24 @@ function calcularPesos(perfil, base, W, opts = {}) {
     ['SIMPLES', W.SIMPLES,    perfil.simples_prop == null ? 0 : Math.abs(perfil.simples_prop - 0.5) * 2],
   ];
 
-  const bruto = dims.map(([nome, wBase, poder]) => ({ nome, poder, peso: wBase * (0.35 + 0.65 * poder) }));
+  // Com contraexemplos, o que MAIS importa é o que separa os dois lados — mais
+  // até que a concentração. O peso dessa evidência cresce conforme o usuário
+  // marca leads fora do perfil (satura em 60% com ~20 marcações), pra dois ou
+  // três cliques não virarem regra.
+  const nNeg = perfil.negativos || 0;
+  const wSep = Math.min(0.6, nNeg / 20);
+  const sepPor = {
+    CNAE: separacaoDimensao(perfil.cnaes),
+    UF: separacaoDimensao(perfil.ufs),
+    PORTE: separacaoDimensao(perfil.portes),
+    CAPITAL: separacaoDimensao(perfil.capitais),
+    SIMPLES: null,
+  };
+  const bruto = dims.map(([nome, wBase, poder]) => {
+    const sep = sepPor[nome];
+    const p = (sep != null && wSep > 0) ? (1 - wSep) * poder + wSep * sep : poder;
+    return { nome, poder: p, peso: wBase * (0.35 + 0.65 * p) };
+  });
   const disponivel = 100 - W.SITUACAO_ATIVA;
   const soma = bruto.reduce((s, d) => s + d.peso, 0) || 1;
 
@@ -152,6 +222,23 @@ function calcularPesos(perfil, base, W, opts = {}) {
 // pra ponderar por RARIDADE (lift): CNAE/UF raro no país vale mais.
 function construirPerfil(empresas, base, W, opts = {}) {
   const amostra = empresas.length;
+  // Contraexemplos: empresas que o usuário marcou como "fora do perfil".
+  const negativas = Array.isArray(opts.negativas) ? opts.negativas : [];
+  const temNeg = negativas.length > 0;
+  // Contagem por valor entre os recusados, pra cruzar com a dos compradores.
+  const contarNeg = (campo, norm = x => x) => {
+    const m = new Map();
+    for (const e of negativas) {
+      const v = norm(e[campo]);
+      if (v == null || v === '') continue;
+      m.set(v, (m.get(v) || 0) + 1);
+    }
+    return m;
+  };
+  const negCnae = contarNeg('cnae', v => String(v || '').replace(/\D/g, ''));
+  const negUf = contarNeg('uf');
+  const negPorte = contarNeg('porte');
+  const negCapital = contarNeg('capital');
   const peso = (dim, chave) => {
     if (!base) return 1;
     const { pesoRaridade } = require('./base');
@@ -173,13 +260,33 @@ function construirPerfil(empresas, base, W, opts = {}) {
   const perfil = {
     amostra,
     confianca: confiancaDe(amostra),
-    cnaes: cnae.lista.map(x => ({ c: x.chave, n: x.n, freq: +x.freq.toFixed(3), peso: peso('cnae', x.chave) })),
-    ufs: uf.lista.map(x => ({ uf: x.chave, n: x.n, freq: +x.freq.toFixed(3), peso: peso('uf', x.chave) })),
-    portes: porte.lista.map(x => ({ porte: x.chave, n: x.n, freq: +x.freq.toFixed(3) })),
-    capitais: capital.lista.map(x => ({ faixa: x.chave, n: x.n, freq: +x.freq.toFixed(3) })),
+    cnaes: cnae.lista.map(x => ({ c: x.chave, n: x.n, freq: +x.freq.toFixed(3), peso: peso('cnae', x.chave),
+      ...(temNeg ? { ev: +evidenciaDe(x.n, negCnae.get(x.chave) || 0, amostra, negativas.length).toFixed(3), nneg: negCnae.get(x.chave) || 0 } : {}) })),
+    ufs: uf.lista.map(x => ({ uf: x.chave, n: x.n, freq: +x.freq.toFixed(3), peso: peso('uf', x.chave),
+      ...(temNeg ? { ev: +evidenciaDe(x.n, negUf.get(x.chave) || 0, amostra, negativas.length).toFixed(3), nneg: negUf.get(x.chave) || 0 } : {}) })),
+    portes: porte.lista.map(x => ({ porte: x.chave, n: x.n, freq: +x.freq.toFixed(3),
+      ...(temNeg ? { ev: +evidenciaDe(x.n, negPorte.get(x.chave) || 0, amostra, negativas.length).toFixed(3) } : {}) })),
+    capitais: capital.lista.map(x => ({ faixa: x.chave, n: x.n, freq: +x.freq.toFixed(3),
+      ...(temNeg ? { ev: +evidenciaDe(x.n, negCapital.get(x.chave) || 0, amostra, negativas.length).toFixed(3) } : {}) })),
+    negativos: negativas.length,
     simples_prop: simplesProp != null ? +simplesProp.toFixed(3) : null,
     abertura: datas.length ? { de: datas[Math.floor(datas.length * 0.1)], ate: datas[Math.floor(datas.length * 0.9)] } : null,
   };
+
+  // Valor que aparece SÓ entre os recusados não está na lista de compradores —
+  // mas precisa entrar no perfil, senão o score não teria como penalizá-lo.
+  if (temNeg) {
+    const addSo = (arr, mapa, chave, campo) => {
+      for (const [v, nn] of mapa) {
+        if (arr.some(x => x[campo] === v)) continue;
+        arr.push({ [campo]: v, n: 0, freq: 0, ev: +evidenciaDe(0, nn, amostra, negativas.length).toFixed(3), nneg: nn, so_negativo: true });
+      }
+    };
+    addSo(perfil.cnaes, negCnae, 'c', 'c');
+    addSo(perfil.ufs, negUf, 'uf', 'uf');
+    addSo(perfil.portes, negPorte, 'porte', 'porte');
+    addSo(perfil.capitais, negCapital, 'faixa', 'faixa');
+  }
 
   // Pesos DESTA lista: quais dimensões realmente separam comprador de
   // não-comprador aqui. Fica gravado no perfil pra o Score 1 usar e pra a tela
@@ -223,6 +330,9 @@ function pontuarProximidade(emp, perfil, W) {
   let score = 0;
   const breakdown = [];
   const add = (item, pts) => { if (pts > 0) { pts = Math.round(pts); score += pts; breakdown.push({ item, pts }); } };
+  // Item de 0 ponto que existe só pra EXPLICAR: sem ele o usuário veria a nota
+  // cair depois de marcar leads como fora do perfil e não saberia o motivo.
+  const avisa = (item) => breakdown.push({ item, pts: 0 });
 
   // Pesos DESTA lista (perfis antigos, gravados antes desta versão, não têm o
   // campo — nesse caso cai nos pesos fixos de fábrica, sem quebrar radar vivo).
@@ -238,37 +348,52 @@ function pontuarProximidade(emp, perfil, W) {
   // acerto periférico valer quase tanto quanto o núcleo da lista.
   const PISO = 0.25;
   const maxFreq = (arr) => arr.reduce((m, x) => Math.max(m, x.freq), 0) || 1;
-  const afin = (freq, mf) => PISO + (1 - PISO) * (freq / mf);
+  // freq 0 = valor que só apareceu entre os RECUSADOS (entrou no perfil apenas
+  // pra o cálculo de peso enxergá-lo). Bater nele não vale ponto nenhum — antes
+  // rendia o piso, então marcar um lead como ruim dava +1 a quem era igual a ele.
+  const afin = (freq, mf) => (freq > 0 ? PISO + (1 - PISO) * (freq / mf) : 0);
 
   if (/ativa/i.test(emp.situacao || 'Ativa')) add('Situação ativa', P.SITUACAO_ATIVA);
 
   const raro = x => (x?.peso > 1.05) ? ' · raro no país' : '';
+  // Deixa VISÍVEL no breakdown quando o ajuste veio dos leads que o usuário
+  // marcou como fora do perfil — senão o score muda e ninguém sabe por quê.
+  const marca = x => {
+    if (x?.ev == null) return raro(x);
+    if (x.ev <= 0.35) return ` · comum entre os que você recusou${x.nneg ? ` (${x.nneg})` : ''}`;
+    if (x.ev >= 0.7) return ' · típico dos seus clientes' + raro(x);
+    return raro(x);
+  };
   const cnaeEmp = String(emp.cnae || '').replace(/\D/g, '');
   if (cnaeEmp && perfil.cnaes?.length) {
     const mf = maxFreq(perfil.cnaes);
     const exato = perfil.cnaes.find(x => x.c === cnaeEmp);
     const grupo = !exato && perfil.cnaes.find(x => x.c.slice(0, 4) === cnaeEmp.slice(0, 4));
-    if (exato) add(`CNAE no perfil (${cnaeEmp})${raro(exato)}`, P.CNAE * afin(exato.freq, mf) * (exato.peso || 1));
-    else if (grupo) add(`CNAE do mesmo grupo (${cnaeEmp})${raro(grupo)}`, P.CNAE_GRUPO * afin(grupo.freq, mf) * (grupo.peso || 1));
+    if (exato && exato.so_negativo) avisa(`Atividade ${cnaeEmp} — só aparece entre os que você recusou (${exato.nneg})`);
+    else if (exato) add(`CNAE no perfil (${cnaeEmp})${marca(exato)}`, P.CNAE * afin(exato.freq, mf) * (exato.peso || 1) * ajusteDe(exato.ev));
+    else if (grupo) add(`CNAE do mesmo grupo (${cnaeEmp})${marca(grupo)}`, P.CNAE_GRUPO * afin(grupo.freq, mf) * (grupo.peso || 1) * ajusteDe(grupo.ev));
   }
 
   if (emp.uf && perfil.ufs?.length) {
     const mf = maxFreq(perfil.ufs);
     const hit = perfil.ufs.find(x => x.uf === emp.uf);
-    if (hit) add(`UF ${emp.uf} (no perfil)${raro(hit)}`, P.UF * afin(hit.freq, mf) * (hit.peso || 1));
+    if (hit && hit.so_negativo) avisa(`Estado ${emp.uf} — só aparece entre os que você recusou (${hit.nneg})`);
+    else if (hit) add(`UF ${emp.uf} (no perfil)${marca(hit)}`, P.UF * afin(hit.freq, mf) * (hit.peso || 1) * ajusteDe(hit.ev));
   }
 
   if (emp.porte && perfil.portes?.length) {
     const mf = maxFreq(perfil.portes);
     const pn = emp.porte.toLowerCase();
     const hit = perfil.portes.find(x => x.porte.toLowerCase() === pn || x.porte.toLowerCase().includes(pn) || pn.includes(x.porte.toLowerCase()));
-    if (hit) add(`Porte ${emp.porte} (no perfil)`, P.PORTE * afin(hit.freq, mf));
+    if (hit && hit.so_negativo) avisa(`Porte ${emp.porte} — só aparece entre os que você recusou (${hit.nneg})`);
+    else if (hit) add(`Porte ${emp.porte} (no perfil)${marca(hit)}`, P.PORTE * afin(hit.freq, mf) * ajusteDe(hit.ev));
   }
 
   if (emp.capital && perfil.capitais?.length) {
     const mf = maxFreq(perfil.capitais);
     const hit = perfil.capitais.find(x => x.faixa === emp.capital);
-    if (hit) add(`Capital ${emp.capital} (no perfil)`, P.CAPITAL * afin(hit.freq, mf));
+    if (hit && hit.so_negativo) avisa(`Capital ${emp.capital} — só aparece entre os que você recusou (${hit.nneg})`);
+    else if (hit) add(`Capital ${emp.capital} (no perfil)${marca(hit)}`, P.CAPITAL * afin(hit.freq, mf) * ajusteDe(hit.ev));
   }
 
   if (perfil.simples_prop != null && emp.opcao_simples != null) {
