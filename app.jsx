@@ -1001,9 +1001,16 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
               Achei {varredura.candidatos.length} lead{varredura.candidatos.length!==1?'s':''} com o mesmo perfil
             </div>
             <div style={{ fontSize:12, color:'var(--faint)', lineHeight:1.5 }}>
-              Mesma atividade{varredura.criterio?.setor ? ` (${varredura.criterio.setor})` : ''}
-              {varredura.criterio?.porte ? ` e mesmo porte (${varredura.criterio.porte})` : ''}.
-              Marcar todos de uma vez economiza o clique um a um — e cada um vira exemplo do que evitar.
+              {varredura.criterio?.tipo === 'nome' ? (
+                <>Nome contém {varredura.criterio.palavras.map(p => <b key={p}>“{p}”</b>).reduce((a,b) => [a,', ',b])}.
+                  Marcar todos de uma vez poupa o clique um a um — e cada um vira exemplo do que evitar.</>
+              ) : (
+                <>Mesma atividade{varredura.criterio?.setor ? ` (${varredura.criterio.setor})` : ''}
+                  {varredura.criterio?.porte ? ` e mesmo porte (${varredura.criterio.porte})` : ''}.
+                  <b style={{ color:'#F59E0B' }}> Confira a lista antes:</b> o nome desta empresa não tinha palavra
+                  distintiva, então o critério aqui é só a firmografia — e dentro de um mesmo CNAE costuma haver
+                  cliente bom e ruim misturados.</>
+              )}
             </div>
             <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:6 }}>
               {varredura.candidatos.slice(0, 4).map(c => c.fantasia).join(' · ')}

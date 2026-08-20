@@ -27,9 +27,40 @@ const W = {
   UF: 25,
   PORTE: 20,
   CAPITAL: 10,
+  // Palavras do nome da empresa. Peso alto de propósito: em nicho que a CNAE
+  // não distingue, é o único sinal que separa cliente de não-cliente.
+  NOME: 18,
   SIMPLES: 5,
   SITUACAO_ATIVA: 5,
 };
+
+/*
+ * TOKENS DO NOME da empresa.
+ *
+ * O CNAE é grosso demais pra alguns nichos: "comércio varejista de
+ * eletrodomésticos" cobre tanto uma loja de filtros de água quanto uma loja de
+ * drones. Quem separa as duas é o NOME — "Mundo dos Filtros" e "Drone Vision"
+ * têm o mesmo CNAE e nada a ver uma com a outra.
+ *
+ * Fora as palavras que não dizem nada (LTDA, COMERCIO, SERVICOS...), o que
+ * sobra costuma ser o ramo real do negócio.
+ */
+const STOP_NOME = new Set([
+  'ltda','me','epp','eireli','sa','cia','filial','matriz','brasil','group','grupo',
+  'comercio','comercial','industria','industrial','servicos','servico','solucoes','solucao',
+  'representacoes','distribuidora','distribuidor','empresa','negocios','participacoes',
+  'geral','central','nacional','regional','ind','com','imp','exp','importacao','exportacao',
+]);
+
+function tokensNome(...partes) {
+  const txt = partes.filter(Boolean).join(' ');
+  const limpo = String(txt).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const out = new Set();
+  for (const t of limpo.split(/[^a-z0-9]+/)) {
+    if (t.length >= 3 && !STOP_NOME.has(t) && !/^\d+$/.test(t)) out.add(t);
+  }
+  return [...out];
+}
 
 // Extrai CNPJs limpos (14 dígitos) de uma lista colada (texto) ou de um array.
 function parseCnpjs(criterios = {}) {
@@ -169,6 +200,16 @@ function separacaoDimensao(arr) {
   return tot > 0 ? acc / tot : null;
 }
 
+// Poder da dimensão NOME: que fração dos clientes é coberta pelas palavras que
+// se repetem. Lista onde metade dos nomes tem "filtros"/"refrigeracao" tem sinal
+// forte; lista de nomes todos diferentes entre si não tem sinal nenhum.
+function coberturaNome(nomes) {
+  if (!nomes || !nomes.length) return 0;
+  const melhor = nomes.reduce((m, x) => Math.max(m, x.freq || 0), 0);
+  const soma = Math.min(1, nomes.reduce((s, x) => s + (x.freq || 0), 0));
+  return Math.max(0, Math.min(1, 0.5 * melhor + 0.5 * soma));
+}
+
 function calcularPesos(perfil, base, W, opts = {}) {
   // Geografia escolhida na mão: TODA empresa encontrada já está na UF pedida,
   // então a UF não separa mais uma da outra — vira filtro, não sinal. Zera o
@@ -176,12 +217,19 @@ function calcularPesos(perfil, base, W, opts = {}) {
   const poderUf = opts.geoManual
     ? 0
     : poderDimensao(perfil.ufs.map(x => ({ chave: x.uf, freq: x.freq })), base, 'uf');
+  // `temDados` = a dimensão existe nesta lista. Sem dado nenhum (ex.: nenhuma
+  // empresa tem nome cadastrado), ela sai da divisão de pontos em vez de ficar
+  // com o peso mínimo — senão consumiria pontos que ninguém consegue ganhar e o
+  // cliente perfeito nunca chegaria a 100.
   const dims = [
-    ['CNAE',    W.CNAE_EXATO, poderDimensao(perfil.cnaes.map(x => ({ chave: x.c, freq: x.freq })), base, 'cnae')],
-    ['UF',      W.UF,         poderUf],
-    ['PORTE',   W.PORTE,      poderDimensao(perfil.portes.map(x => ({ chave: x.porte, freq: x.freq })), null, 'porte')],
-    ['CAPITAL', W.CAPITAL,    poderDimensao(perfil.capitais.map(x => ({ chave: x.faixa, freq: x.freq })), null, 'capital')],
-    ['SIMPLES', W.SIMPLES,    perfil.simples_prop == null ? 0 : Math.abs(perfil.simples_prop - 0.5) * 2],
+    ['CNAE',    W.CNAE_EXATO, poderDimensao(perfil.cnaes.map(x => ({ chave: x.c, freq: x.freq })), base, 'cnae'), perfil.cnaes.length > 0],
+    ['UF',      W.UF,         poderUf, perfil.ufs.length > 0],
+    ['PORTE',   W.PORTE,      poderDimensao(perfil.portes.map(x => ({ chave: x.porte, freq: x.freq })), null, 'porte'), perfil.portes.length > 0],
+    ['CAPITAL', W.CAPITAL,    poderDimensao(perfil.capitais.map(x => ({ chave: x.faixa, freq: x.freq })), null, 'capital'), perfil.capitais.length > 0],
+    // O nome não é "distribuição de valores" como as outras: mede-se pela
+    // COBERTURA (que fatia dos clientes é alcançada pelas palavras repetidas).
+    ['NOME',    W.NOME,       coberturaNome(perfil.nomes), (perfil.nomes || []).length > 0],
+    ['SIMPLES', W.SIMPLES,    perfil.simples_prop == null ? 0 : Math.abs(perfil.simples_prop - 0.5) * 2, perfil.simples_prop != null],
   ];
 
   // Com contraexemplos, o que MAIS importa é o que separa os dois lados — mais
@@ -189,18 +237,27 @@ function calcularPesos(perfil, base, W, opts = {}) {
   // marca leads fora do perfil (satura em 60% com ~20 marcações), pra dois ou
   // três cliques não virarem regra.
   const nNeg = perfil.negativos || 0;
-  const wSep = Math.min(0.6, nNeg / 20);
+  const wSep = Math.min(0.7, nNeg / 8);
   const sepPor = {
     CNAE: separacaoDimensao(perfil.cnaes),
     UF: separacaoDimensao(perfil.ufs),
     PORTE: separacaoDimensao(perfil.portes),
     CAPITAL: separacaoDimensao(perfil.capitais),
+    NOME: separacaoDimensao(perfil.nomes),
     SIMPLES: null,
   };
-  const bruto = dims.map(([nome, wBase, poder]) => {
+  // O piso (fração do peso que a dimensão mantém mesmo sem poder nenhum) cai
+  // conforme ganhamos evidência dos contraexemplos. Sem evidência, 35% — uma
+  // aposta prudente. Com evidência de que a dimensão NÃO separa os dois lados
+  // (ex.: o mesmo CNAE aparece em clientes e recusados), ela desce quase a zero
+  // e os pontos vão pra quem de fato distingue. Sem isso, CNAE/UF/porte
+  // idênticos nos dois lados seguravam ~80 pontos e o lead ruim nunca caía.
+  const piso = 0.35 * (1 - wSep);
+  const bruto = dims.map(([nome, wBase, poder, temDados]) => {
+    if (!temDados) return { nome, poder: 0, peso: 0 };
     const sep = sepPor[nome];
     const p = (sep != null && wSep > 0) ? (1 - wSep) * poder + wSep * sep : poder;
-    return { nome, poder: p, peso: wBase * (0.35 + 0.65 * p) };
+    return { nome, poder: p, peso: wBase * (piso + (1 - piso) * p) };
   });
   const disponivel = 100 - W.SITUACAO_ATIVA;
   const soma = bruto.reduce((s, d) => s + d.peso, 0) || 1;
@@ -235,6 +292,16 @@ function construirPerfil(empresas, base, W, opts = {}) {
     }
     return m;
   };
+  // Tokens do nome: cada empresa contribui com o CONJUNTO dos seus tokens (sem
+  // repetir), então "freq" vira "em que fração das empresas essa palavra aparece".
+  const contarTokens = (lista) => {
+    const m = new Map();
+    for (const e of lista) for (const t of tokensNome(e.fantasia, e.razao)) m.set(t, (m.get(t) || 0) + 1);
+    return m;
+  };
+  const tokPos = contarTokens(empresas);
+  const tokNeg = contarTokens(negativas);
+
   const negCnae = contarNeg('cnae', v => String(v || '').replace(/\D/g, ''));
   const negUf = contarNeg('uf');
   const negPorte = contarNeg('porte');
@@ -268,6 +335,17 @@ function construirPerfil(empresas, base, W, opts = {}) {
       ...(temNeg ? { ev: +evidenciaDe(x.n, negPorte.get(x.chave) || 0, amostra, negativas.length).toFixed(3) } : {}) })),
     capitais: capital.lista.map(x => ({ faixa: x.chave, n: x.n, freq: +x.freq.toFixed(3),
       ...(temNeg ? { ev: +evidenciaDe(x.n, negCapital.get(x.chave) || 0, amostra, negativas.length).toFixed(3) } : {}) })),
+    // Só entram palavras que se repetem (>=2 empresas) de um dos lados. Palavra
+    // única costuma ser nome próprio da empresa ("Novoclima"), não o ramo.
+    nomes: [...new Set([...tokPos.keys(), ...tokNeg.keys()])]
+      .map(t => ({ t, n: tokPos.get(t) || 0, nneg: tokNeg.get(t) || 0 }))
+      .filter(x => x.n >= 2 || x.nneg >= 2)
+      .map(x => ({
+        t: x.t, n: x.n, freq: amostra ? +(x.n / amostra).toFixed(3) : 0,
+        ...(temNeg ? { ev: +evidenciaDe(x.n, x.nneg, amostra, negativas.length).toFixed(3), nneg: x.nneg } : {}),
+        ...(x.n === 0 ? { so_negativo: true } : {}),
+      }))
+      .sort((a, b) => b.n - a.n),
     negativos: negativas.length,
     simples_prop: simplesProp != null ? +simplesProp.toFixed(3) : null,
     abertura: datas.length ? { de: datas[Math.floor(datas.length * 0.1)], ate: datas[Math.floor(datas.length * 0.9)] } : null,
@@ -308,9 +386,17 @@ function construirPerfil(empresas, base, W, opts = {}) {
     if (cnaesBusca.length >= 10 || cobertura >= 0.9) break;
   }
 
+  // As palavras que caracterizam os clientes viram PALAVRA-CHAVE na busca da
+  // CNPJá (filtro por razão/fantasia). É o que faz o radar mirar "filtros" e
+  // "refrigeração" em vez de varrer todo o CNAE de eletrodomésticos.
+  const nomesFortes = (perfil.nomes || [])
+    .filter(x => !x.so_negativo && x.freq >= 0.15 && (x.ev == null || x.ev > 0.5))
+    .slice(0, 6).map(x => x.t);
+
   const params = {
     origem: 'lookalike',
     perfil,
+    keywords: nomesFortes,
     geo_manual: !!opts.geoManual,
     // parâmetros de descoberta (mesma forma que o ICP usa)
     ufs: ufsBusca,
@@ -338,7 +424,7 @@ function pontuarProximidade(emp, perfil, W) {
   // campo — nesse caso cai nos pesos fixos de fábrica, sem quebrar radar vivo).
   const P = perfil.pesos || {
     CNAE: W.CNAE_EXATO, CNAE_GRUPO: W.CNAE_GRUPO, UF: W.UF,
-    PORTE: W.PORTE, CAPITAL: W.CAPITAL, SIMPLES: W.SIMPLES,
+    PORTE: W.PORTE, CAPITAL: W.CAPITAL, NOME: W.NOME, SIMPLES: W.SIMPLES,
     SITUACAO_ATIVA: W.SITUACAO_ATIVA,
   };
 
@@ -396,6 +482,24 @@ function pontuarProximidade(emp, perfil, W) {
     else if (hit) add(`Capital ${emp.capital} (no perfil)${marca(hit)}`, P.CAPITAL * afin(hit.freq, mf) * ajusteDe(hit.ev));
   }
 
+  // NOME: a palavra do ramo. Pega a MELHOR palavra que casa (não soma várias —
+  // um nome comprido não deve valer mais que um nome certeiro).
+  if (perfil.nomes?.length) {
+    const meus = tokensNome(emp.fantasia, emp.razao);
+    let melhor = null;
+    for (const t of meus) {
+      const hit = perfil.nomes.find(x => x.t === t);
+      if (hit && (!melhor || (hit.freq || 0) > (melhor.freq || 0))) melhor = hit;
+    }
+    if (melhor && melhor.so_negativo) {
+      avisa(`Nome contém "${melhor.t}" — palavra dos que você recusou (${melhor.nneg})`);
+    } else if (melhor) {
+      const mf = perfil.nomes.reduce((m, x) => Math.max(m, x.freq || 0), 0) || 1;
+      add(`Nome contém "${melhor.t}" (${Math.round((melhor.freq || 0) * 100)}% dos seus clientes)`,
+        P.NOME * afin(melhor.freq, mf) * ajusteDe(melhor.ev));
+    }
+  }
+
   if (perfil.simples_prop != null && emp.opcao_simples != null) {
     const perfilSimples = perfil.simples_prop >= 0.5;
     if (perfilSimples === !!emp.opcao_simples) add(`Simples: ${emp.opcao_simples ? 'Sim' : 'Não'} (bate com o perfil)`, P.SIMPLES);
@@ -404,4 +508,4 @@ function pontuarProximidade(emp, perfil, W) {
   return { score: Math.min(100, score), breakdown };
 }
 
-module.exports = { MIN_PERFIL, W, parseCnpjs, construirPerfil, pontuarProximidade, poderDimensao, calcularPesos };
+module.exports = { MIN_PERFIL, W, parseCnpjs, construirPerfil, pontuarProximidade, poderDimensao, calcularPesos, tokensNome };

@@ -1217,22 +1217,54 @@ app.get('/api/leads/:id/mesmo-perfil', requireAuth, async (req, res) => {
   if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
   try {
     const { rows: [ref] } = await pool.query(
-      `SELECT cnae, porte, setor FROM leads WHERE id=$1`, [id]);
+      `SELECT cnae, porte, setor, fantasia, razao FROM leads WHERE id=$1`, [id]);
     if (!ref) return res.status(404).json({ erro: 'lead não encontrado' });
+
+    // Base comum: nunca reoferece o que já foi marcado, nem o que já foi ao CRM.
+    const naoElegivel = `coalesce(status,'') <> 'Enviado'
+                         AND coalesce(contato_status,'') <> 'fora_do_perfil'`;
+
+    /*
+     * A varredura se apoia no NOME, não no CNAE.
+     *
+     * Dentro de um mesmo CNAE convivem cliente ideal e empresa que não tem nada
+     * a ver: "Mundo dos Filtros" e "Drone Vision" são ambas "comércio varejista
+     * de eletrodomésticos". Oferecer por CNAE marcaria o melhor cliente junto
+     * com o lixo — e marcar em massa é difícil de desfazer. A palavra do nome
+     * ("drone") separa os dois com precisão.
+     */
+    const { tokensNome } = require('./providers/perfil');
+    const { rows: [{ n: totalLeads }] } = await pool.query(`SELECT COUNT(*)::int n FROM leads`);
+    const candidatos = [];
+    const usados = [];
+    for (const t of tokensNome(ref.fantasia, ref.razao).slice(0, 4)) {
+      const { rows } = await pool.query(`
+        SELECT id, fantasia, cidade, uf, porte, score FROM leads
+        WHERE id <> $1 AND ${naoElegivel} AND (fantasia ILIKE $2 OR razao ILIKE $2)
+        ORDER BY score DESC LIMIT 200`, [id, `%${t}%`]);
+      // Palavra genérica demais (sobrenome, "servicos") pegaria meia base junto.
+      if (!rows.length || (totalLeads > 20 && rows.length > totalLeads * 0.25)) continue;
+      usados.push(t);
+      for (const r of rows) if (!candidatos.some(c => c.id === r.id)) candidatos.push(r);
+    }
+
+    if (candidatos.length) {
+      return res.json({ candidatos, criterio: { palavras: usados, tipo: 'nome' } });
+    }
+
+    // Sem palavra distintiva no nome (ex.: "D P Maia"), sobra a firmografia —
+    // sinal mais fraco, então vai marcado como tal pra a tela poder avisar.
     const cnae = String(ref.cnae || '').replace(/\D/g, '');
     if (!cnae) return res.json({ candidatos: [], criterio: null });
     const { rows } = await pool.query(`
-      SELECT id, fantasia, cidade, uf, porte, score
-      FROM leads
-      WHERE id <> $1
+      SELECT id, fantasia, cidade, uf, porte, score FROM leads
+      WHERE id <> $1 AND ${naoElegivel}
         AND regexp_replace(coalesce(cnae,''),'\\D','','g') = $2
         AND coalesce(porte,'') = coalesce($3,'')
-        AND status <> 'Descartado'
-        AND coalesce(contato_status,'') <> 'fora_do_perfil'
-      ORDER BY score DESC LIMIT 200`, [id, cnae, ref.porte]);
+      ORDER BY score DESC LIMIT 200`, [id, cnae, ref.porte || '']);
     res.json({
       candidatos: rows,
-      criterio: { cnae, setor: ref.setor || null, porte: ref.porte || null },
+      criterio: { cnae, setor: ref.setor || null, porte: ref.porte || null, tipo: 'firmografia', fraco: true },
     });
   } catch (e) { console.error('[mesmo-perfil]', e.message); res.status(500).json({ erro: 'erro interno' }); }
 });

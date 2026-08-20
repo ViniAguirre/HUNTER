@@ -2232,7 +2232,13 @@ function Leads({
       color: 'var(--faint)',
       lineHeight: 1.5
     }
-  }, "Mesma atividade", varredura.criterio?.setor ? ` (${varredura.criterio.setor})` : '', varredura.criterio?.porte ? ` e mesmo porte (${varredura.criterio.porte})` : '', ". Marcar todos de uma vez economiza o clique um a um \u2014 e cada um vira exemplo do que evitar."), /*#__PURE__*/React.createElement("div", {
+  }, varredura.criterio?.tipo === 'nome' ? /*#__PURE__*/React.createElement(React.Fragment, null, "Nome cont\xE9m ", varredura.criterio.palavras.map(p => /*#__PURE__*/React.createElement("b", {
+    key: p
+  }, "\u201C", p, "\u201D")).reduce((a, b) => [a, ', ', b]), ". Marcar todos de uma vez poupa o clique um a um \u2014 e cada um vira exemplo do que evitar.") : /*#__PURE__*/React.createElement(React.Fragment, null, "Mesma atividade", varredura.criterio?.setor ? ` (${varredura.criterio.setor})` : '', varredura.criterio?.porte ? ` e mesmo porte (${varredura.criterio.porte})` : '', ".", /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: '#F59E0B'
+    }
+  }, " Confira a lista antes:"), " o nome desta empresa n\xE3o tinha palavra distintiva, ent\xE3o o crit\xE9rio aqui \xE9 s\xF3 a firmografia \u2014 e dentro de um mesmo CNAE costuma haver cliente bom e ruim misturados.")), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11.5,
       color: 'var(--faint)',
