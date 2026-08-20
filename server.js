@@ -1208,6 +1208,74 @@ app.post('/api/leads/:id/fora-do-perfil', requireAuth, requireEditor, async (req
   } catch (e) { console.error('[fora-do-perfil]', e.message); res.status(500).json({ erro: 'erro interno' }); }
 });
 
+// Dado um lead marcado como fora do perfil, acha os OUTROS leads com o mesmo
+// perfil firmográfico (mesma atividade + mesmo porte) — pra o usuário limpar de
+// uma vez em vez de clicar um por um. Só devolve; quem marca é a rota de lote,
+// depois da confirmação (marcar em massa sem confirmar seria destrutivo demais).
+app.get('/api/leads/:id/mesmo-perfil', requireAuth, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
+  try {
+    const { rows: [ref] } = await pool.query(
+      `SELECT cnae, porte, setor FROM leads WHERE id=$1`, [id]);
+    if (!ref) return res.status(404).json({ erro: 'lead não encontrado' });
+    const cnae = String(ref.cnae || '').replace(/\D/g, '');
+    if (!cnae) return res.json({ candidatos: [], criterio: null });
+    const { rows } = await pool.query(`
+      SELECT id, fantasia, cidade, uf, porte, score
+      FROM leads
+      WHERE id <> $1
+        AND regexp_replace(coalesce(cnae,''),'\\D','','g') = $2
+        AND coalesce(porte,'') = coalesce($3,'')
+        AND status <> 'Descartado'
+        AND coalesce(contato_status,'') <> 'fora_do_perfil'
+      ORDER BY score DESC LIMIT 200`, [id, cnae, ref.porte]);
+    res.json({
+      candidatos: rows,
+      criterio: { cnae, setor: ref.setor || null, porte: ref.porte || null },
+    });
+  } catch (e) { console.error('[mesmo-perfil]', e.message); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// Marca VÁRIOS leads como fora do perfil de uma vez (após o usuário confirmar).
+app.post('/api/leads/fora-do-perfil-lote', requireAuth, requireEditor, async (req, res) => {
+  const ids = (Array.isArray(req.body?.ids) ? req.body.ids : [])
+    .map(x => parseInt(x, 10)).filter(x => !isNaN(x)).slice(0, 500);
+  if (!ids.length) return res.status(400).json({ erro: 'nenhum lead informado' });
+  try {
+    const { rows } = await pool.query(`
+      SELECT l.id, l.cnpj, b.lista FROM leads l
+      LEFT JOIN buscas b ON b.id = l.busca_id WHERE l.id = ANY($1::int[])`, [ids]);
+    await pool.query(`
+      UPDATE leads SET status='Descartado', contato_status='fora_do_perfil',
+             contato_pendente=false, atualizado_em=now() WHERE id = ANY($1::int[])`, [ids]);
+
+    const listas = new Set();
+    for (const l of rows) {
+      const cnpj = String(l.cnpj || '').replace(/\D/g, '');
+      if (!l.lista || cnpj.length !== 14) continue;
+      listas.add(l.lista);
+      await pool.query(
+        `INSERT INTO sementes (cnpj, lista, origem, tipo) VALUES ($1,$2,'fora_do_perfil','negativa')
+         ON CONFLICT (tenant_id, lista, cnpj) DO UPDATE SET tipo='negativa', origem='fora_do_perfil'`,
+        [cnpj, l.lista]);
+    }
+    // Zera o perfil UMA vez por lista (e não por lead) — o re-perfilamento é o
+    // mesmo trabalho independente de quantos contraexemplos entraram.
+    let radares = 0;
+    for (const lista of listas) {
+      const { rows: bs } = await pool.query(`SELECT id, criterios FROM buscas WHERE lista=$1`, [lista]);
+      for (const b of bs) {
+        const crit = b.criterios || {};
+        delete crit.params;
+        await pool.query(`UPDATE buscas SET criterios=$2::jsonb WHERE id=$1`, [b.id, JSON.stringify(crit)]);
+        radares++;
+      }
+    }
+    res.json({ ok: true, marcados: ids.length, listas: [...listas], radares });
+  } catch (e) { console.error('[fora-do-perfil-lote]', e.message); res.status(500).json({ erro: 'erro interno' }); }
+});
+
 // Edição MANUAL do contato do lead (quando o usuário acha o dado por conta).
 app.patch('/api/leads/:id/contato', requireAuth, requireEditor, async (req, res) => {
   const id = parseInt(req.params.id, 10);

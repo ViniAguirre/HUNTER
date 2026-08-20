@@ -563,6 +563,14 @@ function ContactCell({
 }
 
 // ── API helpers ───────────────────────────────────────────────────────────────
+// Data e hora de criação, no fuso do navegador (ex.: "14/08 · 09:48").
+const dataHora = v => {
+  if (!v) return '—';
+  const d = new Date(v);
+  if (isNaN(d)) return '—';
+  const p = n => String(n).padStart(2, '0');
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} · ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
 function timeAgo(ts) {
   if (!ts) return '—';
   const diff = Date.now() - new Date(ts).getTime();
@@ -1830,6 +1838,51 @@ function Leads({
   const [loading, setLoading] = useState(false);
   const [exportIds, setExportIds] = useState(null);
   const [tick, setTick] = useState(0); // força recarregar a lista após ações em lote
+  const [varredura, setVarredura] = useState(null); // { criterio, candidatos } achados após um joinha
+
+  // Atualiza UMA linha no lugar, sem refazer a busca — evita o pisca e a perda
+  // da posição de rolagem quando o usuário marca vários leads seguidos.
+  const patchLead = (id, patch) => setLeads(ls => ls.map(l => l.id === id ? {
+    ...l,
+    ...patch
+  } : l));
+
+  // Depois de marcar um lead, procura os outros com o MESMO perfil (mesma
+  // atividade + mesmo porte) e oferece marcar todos de uma vez.
+  const varrerIguais = async id => {
+    try {
+      const r = await fetch('/api/leads/' + id + '/mesmo-perfil', {
+        credentials: 'same-origin'
+      });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok && d.candidatos?.length) setVarredura(d);
+    } catch (_) {}
+  };
+  const marcarLote = async () => {
+    const ids = (varredura?.candidatos || []).map(c => c.id);
+    if (!ids.length) return;
+    try {
+      const r = await fetch('/api/leads/fora-do-perfil-lote', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          ids
+        })
+      });
+      if (r.ok) {
+        const set = new Set(ids);
+        setLeads(ls => ls.map(l => set.has(l.id) ? {
+          ...l,
+          status: 'Descartado',
+          contato_status: 'fora_do_perfil'
+        } : l));
+      }
+    } catch (_) {}
+    setVarredura(null);
+  };
   const debRef = useRef(null);
   const locRef = useRef(null);
   const PER_PAGE = 20;
@@ -2149,7 +2202,70 @@ function Leads({
     rx: 2
   }), /*#__PURE__*/React.createElement("path", {
     d: "M3 7l9 6 9-6"
-  })), "S\xF3 e-mail v\xE1lido")), selected.length > 0 && /*#__PURE__*/React.createElement("div", {
+  })), "S\xF3 e-mail v\xE1lido")), varredura && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 14,
+      background: 'var(--panel2)',
+      border: `1px solid ${C.red}`,
+      borderRadius: 11,
+      padding: '12px 15px',
+      marginBottom: 14,
+      animation: 'hfade .2s ease',
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 260
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      fontWeight: 600,
+      marginBottom: 2
+    }
+  }, "Achei ", varredura.candidatos.length, " lead", varredura.candidatos.length !== 1 ? 's' : '', " com o mesmo perfil"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--faint)',
+      lineHeight: 1.5
+    }
+  }, "Mesma atividade", varredura.criterio?.setor ? ` (${varredura.criterio.setor})` : '', varredura.criterio?.porte ? ` e mesmo porte (${varredura.criterio.porte})` : '', ". Marcar todos de uma vez economiza o clique um a um \u2014 e cada um vira exemplo do que evitar."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--faint)',
+      marginTop: 6
+    }
+  }, varredura.candidatos.slice(0, 4).map(c => c.fantasia).join(' · '), varredura.candidatos.length > 4 ? ` · e mais ${varredura.candidatos.length - 4}` : '')), /*#__PURE__*/React.createElement("button", {
+    onClick: marcarLote,
+    style: {
+      height: 36,
+      padding: '0 15px',
+      borderRadius: 9,
+      border: 'none',
+      background: C.red,
+      color: '#fff',
+      fontWeight: 600,
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, "Marcar ", varredura.candidatos.length, " como fora do perfil"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setVarredura(null),
+    style: {
+      height: 36,
+      padding: '0 14px',
+      borderRadius: 9,
+      border: '1px solid var(--border)',
+      background: 'transparent',
+      color: 'var(--dim)',
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, "Agora n\xE3o")), selected.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -2402,7 +2518,8 @@ function Leads({
       leadId: l.id,
       compacto: true,
       marcado: l.contato_status === 'fora_do_perfil',
-      onMudou: () => setTick(t => t + 1)
+      onMudou: patch => patchLead(l.id, patch),
+      onVarrer: varrerIguais
     })));
   })), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -2535,7 +2652,7 @@ function Buscas({
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
-      gridTemplateColumns: '24px 2.2fr 1fr 1fr .8fr .8fr .8fr 1fr 40px',
+      gridTemplateColumns: '24px 2fr 1fr 1fr 1.1fr .8fr .8fr .8fr 1fr 40px',
       alignItems: 'center',
       gap: 10,
       padding: '12px 18px',
@@ -2546,7 +2663,7 @@ function Buscas({
       color: 'var(--faint)',
       textTransform: 'uppercase'
     }
-  }, /*#__PURE__*/React.createElement("div", null), /*#__PURE__*/React.createElement("div", null, "Nome"), /*#__PURE__*/React.createElement("div", null, "Status"), /*#__PURE__*/React.createElement("div", null, "Criada por"), /*#__PURE__*/React.createElement("div", null, "Encontr."), /*#__PURE__*/React.createElement("div", null, "Qualif."), /*#__PURE__*/React.createElement("div", null, "CRM"), /*#__PURE__*/React.createElement("div", null, "Atividade"), /*#__PURE__*/React.createElement("div", null)), buscas === null && /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", null), /*#__PURE__*/React.createElement("div", null, "Nome"), /*#__PURE__*/React.createElement("div", null, "Status"), /*#__PURE__*/React.createElement("div", null, "Criada por"), /*#__PURE__*/React.createElement("div", null, "Criada em"), /*#__PURE__*/React.createElement("div", null, "Encontr."), /*#__PURE__*/React.createElement("div", null, "Qualif."), /*#__PURE__*/React.createElement("div", null, "CRM"), /*#__PURE__*/React.createElement("div", null, "Atividade"), /*#__PURE__*/React.createElement("div", null)), buscas === null && /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '22px 18px',
       fontSize: 13,
@@ -2564,7 +2681,7 @@ function Buscas({
     className: "row-hover",
     style: {
       display: 'grid',
-      gridTemplateColumns: '24px 2.2fr 1fr 1fr .8fr .8fr .8fr 1fr 40px',
+      gridTemplateColumns: '24px 2fr 1fr 1fr 1.1fr .8fr .8fr .8fr 1fr 40px',
       alignItems: 'center',
       gap: 10,
       padding: '14px 18px',
@@ -2590,6 +2707,12 @@ function Buscas({
       color: 'var(--dim)'
     }
   }, b.criador_nome || b.criador || '—'), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--dim)',
+      lineHeight: 1.35
+    }
+  }, dataHora(b.criado_em)), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 13,
       fontWeight: 600
@@ -2866,6 +2989,7 @@ function ForaDoPerfil({
   leadId,
   marcado,
   onMudou,
+  onVarrer,
   compacto
 }) {
   const [busy, setBusy] = useState(false);
@@ -2888,11 +3012,20 @@ function ForaDoPerfil({
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.erro || 'erro');
+      // Atualiza SÓ esta linha. Recarregar a lista inteira fazia a página piscar
+      // e voltar pro topo — insuportável pra marcar vários leads em sequência.
+      onMudou && onMudou(marcado ? {
+        status: 'Novo',
+        contato_status: null
+      } : {
+        status: 'Descartado',
+        contato_status: 'fora_do_perfil'
+      });
       if (!marcado) {
-        setMsg(d.aprendeu ? `Aprendido · ${d.negativos} exemplo(s) do que evitar` : 'Descartado (este radar não usa lista, então não há perfil a corrigir)');
-        setTimeout(() => setMsg(null), 4000);
+        setMsg(d.aprendeu ? `Aprendido (${d.negativos})` : 'Descartado');
+        setTimeout(() => setMsg(null), 3500);
+        onVarrer && onVarrer(leadId); // procura outros iguais a este
       }
-      onMudou && onMudou();
     } catch (_) {
       setMsg('Falhou');
       setTimeout(() => setMsg(null), 3000);
