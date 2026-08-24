@@ -140,6 +140,7 @@ function hostBase(host) {
 // "encontrasorocaba" é a regra dos 2 tokens, não a exclusão.
 const COBERTURA_MIN = 0.85;      // token único explicando quase todo o domínio
 const COBERTURA_NOME_INTEIRO = 0.6;  // nome completo casou: régua mais folgada
+const RESTO_MAX = 4;                 // letras de enfeite toleradas no domínio ("pet"+mendes)
 // Casa o token no domínio tolerando plural/flexão: "eletronicos" acha
 // "casadoeletronico". Devolve o tamanho do trecho que casou (0 = não casou).
 function casaToken(h, t) {
@@ -155,12 +156,21 @@ function forcaDominio(nome, cidade, host) {
   let casados = 0, letras = 0;
   for (const t of toks) { const n = casaToken(h, t); if (n) { casados++; letras += n; } }
   const cobertura = letras / h.length;
+  const naoCasados = toks.length - casados;
+  const resto = h.length - letras;          // letras do domínio que o nome NÃO explica
+  const siglasOk = siglasDoNome(nome).every(s => h.includes(s));
   // Nome inteiro no domínio: todo token casou E toda sigla de 2 letras aparece.
-  const nomeInteiro = casados === toks.length && siglasDoNome(nome).every(s => h.includes(s));
+  const nomeInteiro = naoCasados === 0 && siglasOk;
+  // Quase inteiro: sobrou UMA palavra do nome (quase sempre a do ramo — "Mendes
+  // Serviços VETERINÁRIOS" em petmendes.com.br) e o domínio quase não tem letra
+  // estranha. É o que separa "petmendes" de "girardiautopecas": lá sobram 3
+  // letras de enfeite, aqui sobram 9 que são o nome de OUTRO negócio.
+  const quaseInteiro = casados >= 1 && naoCasados <= 1 && siglasOk && resto <= RESTO_MAX;
   const ok = casados >= 2
     || (nomeInteiro && cobertura >= COBERTURA_NOME_INTEIRO)
+    || quaseInteiro
     || (casados >= 1 && cobertura >= COBERTURA_MIN);
-  return { ok, casados, cobertura, nomeInteiro };
+  return { ok, casados, cobertura, nomeInteiro, resto };
 }
 
 // O perfil devolvido pelo Places é MESMO da empresa procurada? Vale nome OU cidade:
