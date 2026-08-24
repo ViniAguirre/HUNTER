@@ -7,20 +7,9 @@
  */
 const contato = require('../providers/contato');
 const google = require('../providers/google');
+const fontes = require('./fontes');
 
 const MAX_TENT_CONTATO = 1;   // 1 re-enriquecimento se o contato vier incompleto
-
-// Chave da busca web (Tavily), se houver integração ativa. Grátis por padrão.
-async function chaveBuscaWeb(pool) {
-  try {
-    const { rows: [ig] } = await pool.query(
-      `SELECT key_cifrada FROM integracoes
-       WHERE categoria='busca_web' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> ''
-       ORDER BY ordem LIMIT 1`
-    );
-    return ig?.key_cifrada || null;
-  } catch { return null; }
-}
 
 async function seguirParaSwot(queues, data) {
   if (queues?.swot) {
@@ -43,13 +32,13 @@ module.exports = async function validacao(job, pool, queues) {
      ORDER BY ordem LIMIT 1`
   );
 
-  const tavilyKey = await chaveBuscaWeb(pool);
+  const busca = await fontes.fontesBuscaWeb(pool);
   // O motor teve alguma fonte REAL de enriquecimento nesta rodada? Sem provedor
-  // de contato (Places/Econodata) e sem busca web (Tavily), sobra só o scraping
-  // grátis, que falha na maioria das empresas pequenas. Nesse cenário, "não
-  // achou telefone" fala da CONFIGURAÇÃO, não da qualidade da empresa — e
-  // descartar o lead apagaria a produção inteira do radar.
-  const temFonteEnriquecimento = !!ig || !!tavilyKey;
+  // de contato (Places/Econodata) e sem busca web (SearXNG/Tavily), sobra só o
+  // DuckDuckGo raspado, que falha na maioria das empresas pequenas. Nesse
+  // cenário, "não achou telefone" fala da CONFIGURAÇÃO, não da qualidade da
+  // empresa — e descartar o lead apagaria a produção inteira do radar.
+  const temFonteEnriquecimento = !!ig || fontes.temBuscaWeb(busca);
 
   try {
     const { rows: [emp] } = await pool.query(
@@ -99,7 +88,7 @@ module.exports = async function validacao(job, pool, queues) {
       // O CNPJ vai junto: quando o site imprime o CNPJ no rodapé, ele CONFIRMA
       // (ou desmente) que aquele site é mesmo desta empresa — prova mais forte
       // que qualquer semelhança de domínio.
-      const g = await google.buscarContatoGratis(nome, emp?.cidade, emp?.uf, { tavilyKey, cnpj }).catch(() => null);
+      const g = await google.buscarContatoGratis(nome, emp?.cidade, emp?.uf, { ...busca, cnpj }).catch(() => null);
       if (g && (g.website || g.email || g.telefone)) {
         if (!c) {
           c = g;

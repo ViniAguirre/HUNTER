@@ -12,6 +12,7 @@ const cnpja = require('../providers/cnpja');
 const perfilamento = require('../providers/perfil');
 const baseRates = require('../providers/base');
 const google = require('../providers/google');
+const fontes = require('./fontes');
 const orcamento = require('./orcamento');
 
 const TRAVADOS = ['qualificado', 'em_crm', 'descarte_duro'];
@@ -202,18 +203,6 @@ async function modoPadrao(pool) {
   catch { return 'cnpja'; }
 }
 
-// Chave da busca web (Tavily), se houver integração ativa. Grátis por padrão.
-async function chaveBuscaWeb(pool) {
-  try {
-    const { rows: [ig] } = await pool.query(
-      `SELECT key_cifrada FROM integracoes
-       WHERE categoria='busca_web' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> ''
-       ORDER BY ordem LIMIT 1`
-    );
-    return ig?.key_cifrada || null;
-  } catch { return null; }
-}
-
 // ── Descoberta WEB-FIRST ──────────────────────────────────────────────────────
 // Parte da internet (como o cliente pesquisaria no Google), pega o site, tenta o
 // CNPJ do rodapé (grátis) e confirma ativa/sócios na CNPJá. Só cai na CNPJá paga
@@ -246,9 +235,9 @@ async function descobrirWebFirst(pool, queues, busca_id, criterios, cnpjaKey) {
   // Chave de busca web (Tavily): quando ativa, o motor de busca fica mais estável;
   // sem ela, cai no DuckDuckGo grátis. Não é gasto pago da CNPJá — é só a camada
   // de "encontrar na web".
-  const tavilyKey = await chaveBuscaWeb(pool);
+  const busca = await fontes.fontesBuscaWeb(pool);
 
-  const candidatos = await google.buscarEmpresasWeb(termo, cidade, uf, 40, { tavilyKey });
+  const candidatos = await google.buscarEmpresasWeb(termo, cidade, uf, 40, busca);
   const counters = { novos: 0, pulados: 0, enfileirados: 0, total: candidatos.length, via_site: 0, via_cnpja: 0, via_cnpja_bloqueado: 0 };
 
   for (const cand of candidatos) {

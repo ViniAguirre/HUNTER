@@ -6439,9 +6439,15 @@ const INTEGRACOES_META = {
     editavel: true,
     placeholder: 'Colar x-api-token…'
   },
+  'busca_web|searxng': {
+    nome: 'Busca na web (grátis, própria)',
+    provedor: 'SearXNG — servidor próprio, sem cota. É tentado ANTES da Tavily, então o que ele achar não gasta crédito',
+    icon: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18M3 12h18',
+    editavel: false
+  },
   'busca_web|tavily': {
-    nome: 'Busca na web (enriquecimento)',
-    provedor: 'Tavily — acha site/contexto na internet (sem ela: busca grátis)',
+    nome: 'Busca na web (paga, reserva)',
+    provedor: 'Tavily — usada quando o SearXNG não acha (sem nenhuma das duas: busca grátis mais fraca)',
     icon: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18M3 12h18',
     editavel: true,
     placeholder: 'Colar chave da Tavily (tvly-…)…'
@@ -6490,7 +6496,7 @@ const INTEGRACOES_META = {
     modeloPlaceholder: 'modelo (ex.: meta-llama/llama-3.3-70b-instruct:free)'
   }
 };
-const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'contato|google', 'contato|econodata', 'busca_web|tavily', 'ia|openrouter', 'ia|openai', 'crm|gk', 'crm|webhook'];
+const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'contato|google', 'contato|econodata', 'busca_web|searxng', 'busca_web|tavily', 'ia|openrouter', 'ia|openai', 'crm|gk', 'crm|webhook'];
 
 // Card especial do CRM GK: fluxo em etapas (conexão → empresas → filas → salvar).
 function IntegracaoGK({

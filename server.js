@@ -603,6 +603,21 @@ async function init() {
     ON CONFLICT (tenant_id, categoria, provedor) DO NOTHING
   `);
 
+  // SearXNG: meta-buscador auto-hospedado, sem chave e sem cota. Entra ANTES da
+  // Tavily na ordem (numero menor = tentado primeiro), entao o que ele resolver
+  // nao gasta credito. Nasce ativo apontando pro nome do servico na rede interna;
+  // se o container nao existir, o provider devolve vazio e a busca cai na proxima
+  // fonte — nada quebra por ele estar configurado sem estar no ar.
+  await pool.query(`
+    INSERT INTO integracoes (categoria, provedor, ativo, ordem, config)
+    VALUES ('busca_web', 'searxng', true, 25, '{"url":"http://searxng:8080"}'::jsonb)
+    ON CONFLICT (tenant_id, categoria, provedor) DO NOTHING
+  `).catch(e => console.error('[migração] integracao searxng:', e.message));
+  // A Tavily fica depois dele (era 30 por padrão; garante a ordem se veio antes).
+  await pool.query(
+    `UPDATE integracoes SET ordem = 30 WHERE categoria='busca_web' AND provedor='tavily' AND ordem < 25`
+  ).catch(() => {});
+
   // Seed de demonstração: só roda se explicitamente pedido (SEED_DEMO=true).
   // Em produção fica desligado — o painel começa limpo e só mostra dado real.
   if (process.env.SEED_DEMO === 'true') {

@@ -8,6 +8,7 @@
  */
 const axios = require('axios');
 const tavily = require('./tavily');
+const searxng = require('./searxng');
 
 const PLACES_URL = 'https://places.googleapis.com/v1/places:searchText';
 const FIELD_MASK = [
@@ -399,28 +400,38 @@ function filtrarResultados(lista) {
   return out;
 }
 
-// Camada de busca web unificada: usa a Tavily quando há chave (mais estável e
-// já traz um trecho de conteúdo), senão cai no DuckDuckGo grátis. Retorna
-// sempre [{ site, titulo, conteudo? }].
+// Camada de busca web unificada. Ordem deliberada, do mais barato pro mais caro:
+//   1. SearXNG  — auto-hospedado, sem cota, alcança o índice do Google;
+//   2. Tavily   — API paga, estável, já traz trecho de conteúdo;
+//   3. DuckDuckGo raspado — último recurso, índice pobre pra PME brasileira.
+// Cada uma só é consultada se a anterior voltou vazia, então o que o SearXNG
+// resolver não gasta crédito. Nenhuma delas lança: cota estourada, chave
+// inválida ou container fora do ar caem pra próxima sem interromper a busca.
+// Devolve { resultados, fonte } — a fonte fica gravada no lead pra dar pra medir
+// qual camada está sustentando o enriquecimento.
 async function buscarResultados(termo, opts = {}) {
+  if (opts.searxngUrl) {
+    const r = filtrarResultados(await searxng.buscar(termo, { url: opts.searxngUrl, max: 40 }));
+    if (r.length) return { resultados: r, fonte: 'searxng' };
+  }
   if (opts.tavilyKey) {
     const r = filtrarResultados(await tavily.buscar(termo, { apiKey: opts.tavilyKey, max: 40 }));
-    if (r.length) return r;   // Tavily vazia (ex.: rate limit) → tenta o grátis
+    if (r.length) return { resultados: r, fonte: 'tavily' };
   }
-  return resultadosDDG(await buscarDDG(termo));
+  return { resultados: resultadosDDG(await buscarDDG(termo)), fonte: 'ddg' };
 }
 
 // Acha o site oficial (1º resultado) — usado no fallback de validação.
 async function acharSite(nome, cidade, uf, opts = {}) {
-  const r = await buscarResultados([nome, cidade, uf].filter(Boolean).join(' '), opts);
-  return r.length ? r[0].site : null;
+  const { resultados } = await buscarResultados([nome, cidade, uf].filter(Boolean).join(' '), opts);
+  return resultados.length ? resultados[0].site : null;
 }
 
 // Descoberta WEB-FIRST: lista negócios que aparecem na busca (como o cliente
 // pesquisaria no Google) pra depois confirmar CNPJ/ativa na CNPJá.
 async function buscarEmpresasWeb(termo, cidade, uf, max = 30, opts = {}) {
-  const r = await buscarResultados([termo, cidade, uf].filter(Boolean).join(' '), opts);
-  return r.slice(0, max);
+  const { resultados } = await buscarResultados([termo, cidade, uf].filter(Boolean).join(' '), opts);
+  return resultados.slice(0, max);
 }
 
 // A página se APRESENTA com o nome desta empresa? Compara os tokens do nome
@@ -445,7 +456,7 @@ function paginaSeApresentaComo(nome, cidade, identidade) {
 async function buscarContatoGratis(nome, cidade, uf, opts = {}) {
   const agora = new Date().toISOString();
   const cnpjAlvo = String(opts.cnpj || '').replace(/\D/g, '');
-  const r = await buscarResultados([nome, cidade, uf].filter(Boolean).join(' '), opts);
+  const { resultados: r, fonte: fonteBusca } = await buscarResultados([nome, cidade, uf].filter(Boolean).join(' '), opts);
 
   // TRÊS provas independentes de que o site é DESTA empresa, qualquer uma basta:
   //   1. o domínio explica o nome (forcaDominio);
@@ -484,6 +495,9 @@ async function buscarContatoGratis(nome, cidade, uf, opts = {}) {
       resumo_site: resumo,
       resumo_fonte: s.resumo ? s.resumo_fonte : (cand.conteudo ? 'busca' : null),
       fonte: 'busca_gratis',
+      // Qual camada de busca achou este site (searxng/tavily/ddg) — permite ver
+      // quanto cada uma sustenta sem depender de log.
+      fonte_busca: fonteBusca,
       // Como o site foi conferido — aparece no lead, pro usuário saber o quanto confiar.
       site_conferido: confereCnpj ? 'cnpj' : (f.ok ? 'dominio' : 'nome'),
       validado: !!(s.email || s.telefone || resumo),
@@ -492,7 +506,8 @@ async function buscarContatoGratis(nome, cidade, uf, opts = {}) {
   }
   // Nenhum resultado se PROVOU o site próprio da empresa → melhor não trazer
   // dado nenhum (fica vermelho "sem contato") do que trazer contato errado.
-  return { encontrado: false, fonte: 'busca_gratis', validado: false, validado_em: agora, motivo: 'sem_site_proprio' };
+  return { encontrado: false, fonte: 'busca_gratis', fonte_busca: fonteBusca, validado: false,
+    validado_em: agora, motivo: 'sem_site_proprio' };
 }
 
 // Busca o contato comercial da empresa no Google. Retorna também business_status
