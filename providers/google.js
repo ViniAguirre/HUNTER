@@ -49,6 +49,15 @@ function paragrafos(html, max) {
 }
 function titulo(html) { const m = html.match(/<title>([^<]{5,150})<\/title>/i); return m ? limpar(m[1]) : null; }
 
+// Como a PÁGINA se apresenta: título, descrição e os H1. É onde um site diz o
+// próprio nome. Deliberadamente NÃO é o corpo do texto — um diretório cita o
+// nome de centenas de empresas no meio da página, mas o título dele é o nome do
+// diretório. Por isso a conferência de identidade olha só aqui.
+function identidadeDa(html) {
+  const h1 = [...html.matchAll(/<h1[^>]*>([\s\S]*?)<\/h1>/gi)].map(m => limpar(m[1])).slice(0, 3);
+  return [titulo(html), metaDescricao(html), ...h1].filter(Boolean).join(' ').slice(0, 400) || null;
+}
+
 // Monta um resumo (meta description + parágrafos relevantes, sem duplicar).
 function resumoDe(html, maxParag) {
   const partes = [metaDescricao(html), ...paragrafos(html, maxParag)].filter(Boolean);
@@ -288,7 +297,7 @@ function extrairCnpjDe(html) {
 
 async function scrapeSite(site) {
   const home = await baixar(site);
-  if (!home) return { email: null, resumo: null, telefone: null, cnpj: null };
+  if (!home) return { email: null, resumo: null, telefone: null, cnpj: null, identidade: null };
 
   let email = extrairEmailDe(home);
   let telefone = extrairWhatsappDe(home) || extrairTelefoneDe(home);
@@ -322,7 +331,7 @@ async function scrapeSite(site) {
   for (const p of partes) if (p && !uniq.some(u => u.includes(p) || p.includes(u))) uniq.push(p);
   const resumo = (uniq.join(' ').slice(0, 600).trim()) || null;
   return { email, telefone, cnpj, resumo, resumo_fonte: fonte, paginas_lidas: lidas.size,
-    qtd_telefones: contarTelefones(home) };
+    identidade: identidadeDa(home), qtd_telefones: contarTelefones(home) };
 }
 
 // ── Fallback GRÁTIS: acha o site oficial via busca web sem chave (DuckDuckGo) ──
@@ -414,6 +423,22 @@ async function buscarEmpresasWeb(termo, cidade, uf, max = 30, opts = {}) {
   return r.slice(0, max);
 }
 
+// A página se APRESENTA com o nome desta empresa? Compara os tokens do nome
+// contra como o site se identifica (título + meta description + H1), nunca
+// contra o corpo do texto: um guia de empresas cita o nome de quem ele lista,
+// mas o título dele é o nome do guia.
+// Exige TODOS os tokens distintivos — meio nome é justamente o erro que a gente
+// passou o dia inteiro corrigindo. A cidade sai da conta (muito site põe a
+// cidade no título, e isso não prova identidade nenhuma).
+function paginaSeApresentaComo(nome, cidade, identidade) {
+  if (!identidade) return false;
+  const stopCidade = new Set(palavrasDoNome(cidade));
+  const toks = tokensNome(nome).filter(t => !stopCidade.has(t));
+  if (!toks.length) return false;
+  const txt = semAcento(String(identidade).toLowerCase()).replace(/[^a-z0-9]+/g, ' ');
+  return toks.every(t => casaToken(txt, t) > 0);
+}
+
 // Contato comercial SEM chave paga: acha o site (busca) e faz o scrape rico.
 // Se o scrape não render um resumo, usa o trecho de conteúdo da busca (Tavily)
 // como reserva — dá contexto ao SWOT mesmo em sites pobres em texto.
@@ -422,21 +447,28 @@ async function buscarContatoGratis(nome, cidade, uf, opts = {}) {
   const cnpjAlvo = String(opts.cnpj || '').replace(/\D/g, '');
   const r = await buscarResultados([nome, cidade, uf].filter(Boolean).join(' '), opts);
 
-  // Duas provas independentes de que o site é DESTA empresa, nesta ordem:
-  //   1. o domínio explica o nome (forcaDominio), ou
-  //   2. o CNPJ impresso na página (rodapé) é o mesmo do lead — prova definitiva.
+  // TRÊS provas independentes de que o site é DESTA empresa, qualquer uma basta:
+  //   1. o domínio explica o nome (forcaDominio);
+  //   2. o CNPJ impresso na página é o mesmo do lead — prova definitiva;
+  //   3. a página se APRESENTA com o nome da empresa (título/descrição/H1).
   // E uma VETO: se a página mostra um CNPJ DIFERENTE, é outra empresa — descarta
-  // mesmo que o domínio pareça bater. Sem nenhuma prova, não devolve nada.
+  // mesmo que as outras provas passem. Sem nenhuma prova, não devolve nada.
+  //
+  // A prova 3 existe porque a 2 rendeu pouco na prática: quase nenhum site de PME
+  // imprime CNPJ. Já o nome, quase todo site diz — mas só no título/H1 é que ele
+  // diz o nome DELE. No corpo do texto um diretório cita centenas de empresas.
   const olhar = r.slice(0, 6);
   for (const cand of olhar) {
     const f = forcaDominio(nome, cidade, hostDe(cand.site));
-    // Sem sinal no domínio e sem CNPJ pra conferir: não há como provar. Nem gasta scrape.
-    if (!f.ok && !cnpjAlvo) continue;
+    // Sem sinal no domínio, sem CNPJ pra conferir e sem nome pra procurar: não há
+    // como provar nada. Nem gasta scrape. (Com nome, sempre vale abrir a página.)
+    if (!f.ok && !cnpjAlvo && !tokensNome(nome).length) continue;
     const s = await scrapeSite(cand.site);
     const cnpjSite = String(s.cnpj || '').replace(/\D/g, '');
     if (cnpjAlvo && cnpjSite && cnpjSite !== cnpjAlvo) continue;   // veto: site de OUTRA empresa
     const confereCnpj = !!(cnpjAlvo && cnpjSite && cnpjSite === cnpjAlvo);
-    if (!f.ok && !confereCnpj) continue;                            // domínio fraco e sem confirmação
+    const confereNome = paginaSeApresentaComo(nome, cidade, s.identidade);
+    if (!f.ok && !confereCnpj && !confereNome) continue;            // nenhuma prova
 
     const resumo = s.resumo || cand.conteudo || null;
     // Pula se a página se descreve como diretório (guia/lista/consulta CNPJ) OU
@@ -453,7 +485,7 @@ async function buscarContatoGratis(nome, cidade, uf, opts = {}) {
       resumo_fonte: s.resumo ? s.resumo_fonte : (cand.conteudo ? 'busca' : null),
       fonte: 'busca_gratis',
       // Como o site foi conferido — aparece no lead, pro usuário saber o quanto confiar.
-      site_conferido: confereCnpj ? 'cnpj' : 'dominio',
+      site_conferido: confereCnpj ? 'cnpj' : (f.ok ? 'dominio' : 'nome'),
       validado: !!(s.email || s.telefone || resumo),
       validado_em: agora,
     };
@@ -522,4 +554,4 @@ async function buscarContato(nome, cidade, uf, apiKey) {
 }
 
 module.exports = { buscarContato, buscarContatoGratis, buscarEmpresasWeb, scrapeSite,
-  forcaDominio, confereLugar, tokensNome, hostBase };
+  forcaDominio, confereLugar, tokensNome, hostBase, paginaSeApresentaComo, identidadeDa };
