@@ -1067,23 +1067,36 @@ app.get('/api/leads/export', requireAuth, async (req, res) => {
       const ids = String(idsParam).split(',').map(x => parseInt(x,10)).filter(x => !isNaN(x));
       if (!ids.length) return res.status(400).json({ erro: 'ids inválidos' });
       const { rows:r } = await pool.query(
-        `SELECT fantasia,razao,cnpj,setor,porte,cidade,uf,decisor,cargo,score,status,tem_email,tem_telefone
+        `SELECT fantasia,razao,cnpj,setor,porte,cidade,uf,decisor,cargo,score,status,tem_email,tem_telefone,contato_validado
          FROM leads WHERE id = ANY($1::int[]) ORDER BY score DESC`, [ids]);
       rows = r;
     } else {
       const { conditions, vals } = buildLeadsFilter(req.query);
       const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
       const { rows:r } = await pool.query(
-        `SELECT fantasia,razao,cnpj,setor,porte,cidade,uf,decisor,cargo,score,status,tem_email,tem_telefone
+        `SELECT fantasia,razao,cnpj,setor,porte,cidade,uf,decisor,cargo,score,status,tem_email,tem_telefone,contato_validado
          FROM leads l ${where} ORDER BY score DESC`, vals);
       rows = r;
     }
     const esc = v => `"${String(v||'').replace(/"/g,'""')}"`;
+    // As colunas tem_email/tem_telefone da tabela nunca são atualizadas pelo
+    // enriquecimento (o contato vive em contato_validado), então liam sempre
+    // false e o CSV saía "Não" pra todo lead, mesmo os com telefone. O contato
+    // vale mais exportado do que resumido a Sim/Não — vai o valor também.
+    const contatoDe = r => {
+      const cv = r.contato_validado || {};
+      return { email: cv.email || null, telefone: cv.telefone || cv.whatsapp || null };
+    };
     const csv = [
-      ['Empresa','Razão Social','CNPJ','Setor','Porte','Cidade','UF','Decisor','Cargo','Score','Status','Tem E-mail','Tem Telefone'].join(';'),
-      ...rows.map(r => [esc(r.fantasia),esc(r.razao),esc(r.cnpj),esc(r.setor),esc(r.porte),
-        esc(r.cidade),esc(r.uf),esc(r.decisor),esc(r.cargo),r.score,esc(r.status),
-        r.tem_email?'Sim':'Não',r.tem_telefone?'Sim':'Não'].join(';')),
+      ['Empresa','Razão Social','CNPJ','Setor','Porte','Cidade','UF','Decisor','Cargo','Score','Status',
+       'Tem E-mail','Tem Telefone','E-mail','Telefone'].join(';'),
+      ...rows.map(r => {
+        const c = contatoDe(r);
+        const temEmail = !!c.email || !!r.tem_email, temTel = !!c.telefone || !!r.tem_telefone;
+        return [esc(r.fantasia),esc(r.razao),esc(r.cnpj),esc(r.setor),esc(r.porte),
+          esc(r.cidade),esc(r.uf),esc(r.decisor),esc(r.cargo),r.score,esc(r.status),
+          temEmail?'Sim':'Não', temTel?'Sim':'Não', esc(c.email), esc(c.telefone)].join(';');
+      }),
     ].join('\r\n');
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename="leads.csv"');
