@@ -85,10 +85,21 @@ function extrairEmailDe(html) {
 // site de terceiro.
 const NOME_STOP = new Set(['ltda','me','epp','eireli','mei','cia','sa','comercio','comercial','servicos',
   'servico','industria','industrias','the','and','das','dos','representacoes','distribuidora']);
+function palavrasDoNome(nome) {
+  return semAcento(String(nome || '').toLowerCase()).replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
+}
 function tokensNome(nome) {
-  const toks = semAcento(String(nome || '').toLowerCase()).replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/).filter(t => t.length >= 3 && !NOME_STOP.has(t));
+  // Puro dígito fora: MEI carrega o CNPJ no nome ("60.114.929 ALEX MORAES"), e
+  // número solto casa com qualquer coisa por acaso.
+  const toks = palavrasDoNome(nome).filter(t => t.length >= 3 && !NOME_STOP.has(t) && !/^\d+$/.test(t));
   return [...new Set(toks)];
+}
+// Siglas de 2 letras ("SG" Refrigeração, "FC" Filtro, "CL" Refrigeração). Curtas
+// demais pra casar por substring sem dar falso positivo, mas são justamente o que
+// identifica a empresa quando o resto do nome é a palavra do ramo. Entram só como
+// CONFERÊNCIA: se a sigla não está no domínio, o nome não casou por inteiro.
+function siglasDoNome(nome) {
+  return [...new Set(palavrasDoNome(nome).filter(t => t.length === 2 && /^[a-z]{2}$/.test(t) && !NOME_STOP.has(t)))];
 }
 function hostDe(u) { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } }
 
@@ -103,29 +114,53 @@ function hostBase(host) {
 }
 
 // Quão forte é a evidência de que `host` é o site DA empresa `nome`?
-// Antes bastava UM token aparecer como substring — e isso trazia empresa errada
-// o tempo todo: "Paiva E Paiva" casava com paivaadvogados.com.br, "J. K.
-// Aparelhos" com aparelhosauditivos.com.br, "D P Maia" com maiaconstrutora.com.br.
-// Um pedaço do nome dentro de um domínio grande NÃO é a empresa; é coincidência.
-// Agora exige uma de duas provas:
-//   • 2+ tokens do nome no domínio  (fit + purificadores → fitpurificadores), ou
-//   • 1 token que explique QUASE TODO o domínio (voatec.com.br pra "Drone Voatec").
-// A régua alta no caso de token único é o que separa a marca da palavra do ramo:
-// "AWJ Comércio de Purificadores" casa "purificadores" em purificadores-brasil.
-// .com.br, mas sobra "brasil" — e o que identifica a empresa ("awj") não está
-// lá. Domínio sobrando = é outra empresa DO MESMO RAMO, o erro mais comum aqui.
-// Exclui o nome da cidade dos tokens (senão "encontrasorocaba" casaria com
-// "…de Sorocaba"). Sem token distintivo → força 0: não dá pra provar, não passa.
-const COBERTURA_MIN = 0.85;
+// Bastava UM token aparecer como substring — e isso trazia empresa errada o tempo
+// todo: "Paiva E Paiva" casava com paivaadvogados.com.br, "J. K. Aparelhos" com
+// aparelhosauditivos.com.br, "D P Maia" com maiaconstrutora.com.br. Um pedaço do
+// nome dentro de um domínio grande NÃO é a empresa; é coincidência.
+//
+// Três provas, qualquer uma basta:
+//   1. 2+ tokens do nome no domínio           (fit + purificadores → fitpurificadores)
+//   2. o nome INTEIRO casou e explica 60%+    (kservice → kserviceone, myshop → myshopbr)
+//   3. 1 token só, mas explicando 85%+        (voatec.com.br pra "Drone Voatec")
+//
+// A prova 2 é o que separa marca de palavra-do-ramo. "AWJ Comércio de
+// Purificadores" casa "purificadores" em purificadores-brasil.com.br, mas "awj" —
+// o que identifica a empresa — não está lá: nome incompleto, não passa. Já
+// "Kservice" em kserviceone.com.br casou por inteiro; o que sobra do domínio é
+// enfeite, não outra empresa.
+//
+// Sigla de 2 letras conta na prova 2 (sem somar cobertura): "SG Refrigeração" só
+// tem "refrigeracao" como token, e sem exigir o "sg" ela casaria com
+// sulrefrigeracao.com.br — outra empresa do mesmo ramo.
+//
+// A cidade NÃO é mais descartada do nome: "Araguaína Purificadores" tem a cidade
+// no próprio nome, e removê-la fazia o casamento perfeito com
+// araguainapurificadores.com.br ser recusado. Quem protege contra
+// "encontrasorocaba" é a regra dos 2 tokens, não a exclusão.
+const COBERTURA_MIN = 0.85;      // token único explicando quase todo o domínio
+const COBERTURA_NOME_INTEIRO = 0.6;  // nome completo casou: régua mais folgada
+// Casa o token no domínio tolerando plural/flexão: "eletronicos" acha
+// "casadoeletronico". Devolve o tamanho do trecho que casou (0 = não casou).
+function casaToken(h, t) {
+  if (h.includes(t)) return t.length;
+  if (t.length >= 6 && h.includes(t.slice(0, -1))) return t.length - 1;
+  if (t.length >= 7 && h.includes(t.slice(0, -2))) return t.length - 2;
+  return 0;
+}
 function forcaDominio(nome, cidade, host) {
-  const stopCidade = new Set(semAcento(String(cidade || '').toLowerCase()).split(/\s+/).filter(Boolean));
-  const toks = tokensNome(nome).filter(t => !stopCidade.has(t));
+  const toks = tokensNome(nome);
   const h = hostBase(host);
-  if (!toks.length || !h) return { ok: false, casados: 0, cobertura: 0 };
+  if (!toks.length || !h) return { ok: false, casados: 0, cobertura: 0, nomeInteiro: false };
   let casados = 0, letras = 0;
-  for (const t of toks) if (h.includes(t)) { casados++; letras += t.length; }
+  for (const t of toks) { const n = casaToken(h, t); if (n) { casados++; letras += n; } }
   const cobertura = letras / h.length;
-  return { ok: casados >= 2 || (casados >= 1 && cobertura >= COBERTURA_MIN), casados, cobertura };
+  // Nome inteiro no domínio: todo token casou E toda sigla de 2 letras aparece.
+  const nomeInteiro = casados === toks.length && siglasDoNome(nome).every(s => h.includes(s));
+  const ok = casados >= 2
+    || (nomeInteiro && cobertura >= COBERTURA_NOME_INTEIRO)
+    || (casados >= 1 && cobertura >= COBERTURA_MIN);
+  return { ok, casados, cobertura, nomeInteiro };
 }
 
 // O perfil devolvido pelo Places é MESMO da empresa procurada? Vale nome OU cidade:
