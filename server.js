@@ -558,6 +558,18 @@ async function init() {
     WHERE NOT EXISTS (SELECT 1 FROM listas_semelhantes l WHERE l.nome = s.lista)
   `).catch(e => console.error('[migração] listas_semelhantes:', e.message));
 
+  // GUARDRAIL retroativo (uma vez, na subida): empresa que está numa lista de
+  // semelhantes é MODELO da busca, não alvo — mas antes do guardrail elas podiam
+  // ter virado lead. Tira da esteira o que já estava lá. Casa tenant a tenant
+  // (a lista de um cliente não pode descartar o lead de outro).
+  await pool.query(`
+    UPDATE leads l SET status='Descartado', contato_status='ja_e_cliente',
+           contato_pendente=false, atualizado_em=now()
+    WHERE l.status NOT IN ('Enviado','Descartado')
+      AND EXISTS (SELECT 1 FROM sementes s WHERE s.cnpj = l.cnpj AND s.tenant_id = l.tenant_id)
+  `).then(r => { if (r.rowCount) console.log(`[migração] ${r.rowCount} lead(s) que já eram clientes saíram da esteira`); })
+    .catch(e => console.error('[migração] guardrail sementes:', e.message));
+
   // contadores / contadores_hora: a PK precisa incluir tenant_id — cada cliente
   // tem teto diário/horário PRÓPRIO (senão um cliente estoura a cota do outro).
   await pool.query(`
@@ -1743,6 +1755,8 @@ app.post('/api/webhooks/crm/conversao', webhookLimiter, async (req, res) => {
        ON CONFLICT (tenant_id, lista, cnpj) DO NOTHING`, [cnpj, tag]
     );
     const { rows:[{ n }] } = await pool.query(`SELECT COUNT(*)::int n FROM sementes WHERE lista='conversoes_crm'`);
+    // Converteu no CRM = virou cliente. Sai da esteira de prospecção na hora.
+    await retirarClientesDaEsteira([cnpj]);
 
     let busca_auto = null;
     if (cfg.crm_lookalike_auto) busca_auto = await garantirBuscaLookalikeAuto(n);
@@ -1846,6 +1860,21 @@ app.post('/api/webhooks/rotacionar-secret', requireAuth, requireMaster, async (r
 // 'conversoes_crm' é a lista especial que o CRM alimenta sozinho.
 const LISTA_CRM = 'conversoes_crm';
 
+// GUARDRAIL retroativo. Entrar numa lista de semelhantes é dizer "esta empresa
+// JÁ É minha cliente" — ela vira modelo da busca, nunca alvo. Os portões de
+// descoberta/score barram daqui pra frente; esta função limpa o que já estava na
+// esteira quando a lista chegou: leads da mesma empresa saem da fila de trabalho.
+// Não mexe em 'Enviado' (já foi pro CRM — é histórico, não fila).
+async function retirarClientesDaEsteira(cnpjs) {
+  const validos = (cnpjs || []).map(c => String(c).replace(/\D/g, '')).filter(c => c.length === 14);
+  if (!validos.length) return 0;
+  const { rowCount } = await pool.query(
+    `UPDATE leads SET status='Descartado', contato_status='ja_e_cliente',
+            contato_pendente=false, atualizado_em=now()
+     WHERE cnpj = ANY($1) AND status <> 'Enviado' AND status <> 'Descartado'`, [validos]);
+  return rowCount;
+}
+
 app.get('/api/listas', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(`
@@ -1896,7 +1925,9 @@ app.post('/api/listas', requireAuth, requireEditor, async (req, res) => {
     }
     const { rows: [{ n }] } = await pool.query(
       `SELECT COUNT(*)::int n FROM sementes WHERE lista=$1`, [nome]);
-    res.status(201).json({ nome, rotulo: nome, n, enviados: cnpjs.length });
+    // Se alguma dessas empresas já tinha virado lead, ela sai da esteira agora.
+    const retirados = await retirarClientesDaEsteira(cnpjs);
+    res.status(201).json({ nome, rotulo: nome, n, enviados: cnpjs.length, retirados });
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 

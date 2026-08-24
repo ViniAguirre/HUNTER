@@ -449,10 +449,15 @@ async function processarOffice(pool, queues, busca_id, office, counters) {
 
   // Trava é POR TENANT (empresa_tenant_estado); o cadastro em si (empresas) é
   // global e compartilhado — por isso são duas checagens separadas.
-  const { rows: [travaTenant] } = await pool.query(
-    `SELECT estado_global FROM empresa_tenant_estado WHERE cnpj=$1`, [office.cnpj]
+  // GUARDRAIL: quem está numa lista de semelhantes do cliente é MODELO, não
+  // alvo — é cliente dele (positiva) ou foi reprovado por ele (negativa). Em
+  // nenhum dos casos pode virar lead. `sementes` já é escopada por tenant (RLS).
+  const { rows: [trava] } = await pool.query(
+    `SELECT (SELECT estado_global FROM empresa_tenant_estado WHERE cnpj=$1) AS estado,
+            EXISTS (SELECT 1 FROM sementes WHERE cnpj=$1) AS semente`, [office.cnpj]
   );
-  if (travaTenant && TRAVADOS.includes(travaTenant.estado_global)) { counters.pulados++; return; }
+  if (trava?.semente) { counters.pulados++; return; }
+  if (trava?.estado && TRAVADOS.includes(trava.estado)) { counters.pulados++; return; }
 
   const { rows: [existente] } = await pool.query(
     `SELECT 1 FROM empresas WHERE cnpj=$1`, [office.cnpj]
@@ -503,6 +508,11 @@ async function buscarLocal(pool, params, limite) {
   // Já processadas POR ESTE cliente ficam de fora (a RLS de empresa_tenant_estado
   // já escopa no tenant atual).
   conds.push(`NOT EXISTS (SELECT 1 FROM empresa_tenant_estado ete WHERE ete.cnpj = e.cnpj)`);
+  // GUARDRAIL: as empresas das listas de semelhantes são o MODELO da busca —
+  // nunca o resultado dela. Sem isso, o cadastro global devolvia o próprio
+  // cliente do usuário como se fosse lead novo (elas entram em `empresas` na
+  // hora de montar o perfil).
+  conds.push(`NOT EXISTS (SELECT 1 FROM sementes sm WHERE sm.cnpj = e.cnpj)`);
 
   vals.push(Math.max(1, limite));
   const sql = `

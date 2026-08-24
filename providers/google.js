@@ -79,27 +79,67 @@ function extrairEmailDe(html) {
 }
 
 // Tokens distintivos do nome da empresa (sem sufixos jurídicos e termos genéricos),
-// pra checar se um site achado é REALMENTE dela.
+// pra checar se um site achado é REALMENTE dela. Aceita a partir de 3 letras:
+// muita empresa é uma sigla ("AWJ Comércio de Purificadores"), e ignorar a sigla
+// deixava o nome SEM token nenhum — que era justamente o buraco por onde entrava
+// site de terceiro.
 const NOME_STOP = new Set(['ltda','me','epp','eireli','mei','cia','sa','comercio','comercial','servicos',
   'servico','industria','industrias','the','and','das','dos','representacoes','distribuidora']);
 function tokensNome(nome) {
-  return semAcento(String(nome || '').toLowerCase()).replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/).filter(t => t.length >= 4 && !NOME_STOP.has(t));
+  const toks = semAcento(String(nome || '').toLowerCase()).replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/).filter(t => t.length >= 3 && !NOME_STOP.has(t));
+  return [...new Set(toks)];
 }
 function hostDe(u) { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } }
 
-// O site é DA PRÓPRIA empresa? Sinal forte: um token distintivo do nome aparece
-// no DOMÍNIO (fitpurificadores.com.br, casadospurificadores.com…). Diretórios
-// que listam a empresa (applocal, eguias, todosnegocios, raizlegal, encontra…)
-// não têm o nome no domínio → caem fora. Exclui o nome da cidade dos tokens
-// (senão "encontrasorocaba" casaria com "…de Sorocaba"). Sem token distintivo
-// → não dá pra checar → lenient (não barra).
-function siteDaEmpresa(nome, cidade, host) {
+// Só o "miolo" do domínio, sem sufixo público: purificadores-brasil.com.br →
+// "purificadoresbrasil". É contra esse miolo que se mede quanto do domínio o
+// nome da empresa realmente explica.
+const SUFIXO_PUB = /^(com|net|org|gov|edu|ind|adv|eng|med|art|agr|esp|tur|br|io|co|app|dev|me|info|biz|tv|shop|store|site|online|xyz|pt|us)$/;
+function hostBase(host) {
+  const partes = String(host || '').toLowerCase().replace(/^www\./, '').split('.');
+  while (partes.length > 1 && SUFIXO_PUB.test(partes[partes.length - 1])) partes.pop();
+  return semAcento(partes.join('')).replace(/[^a-z0-9]/g, '');
+}
+
+// Quão forte é a evidência de que `host` é o site DA empresa `nome`?
+// Antes bastava UM token aparecer como substring — e isso trazia empresa errada
+// o tempo todo: "Paiva E Paiva" casava com paivaadvogados.com.br, "J. K.
+// Aparelhos" com aparelhosauditivos.com.br, "D P Maia" com maiaconstrutora.com.br.
+// Um pedaço do nome dentro de um domínio grande NÃO é a empresa; é coincidência.
+// Agora exige uma de duas provas:
+//   • 2+ tokens do nome no domínio  (fit + purificadores → fitpurificadores), ou
+//   • 1 token que explique QUASE TODO o domínio (voatec.com.br pra "Drone Voatec").
+// A régua alta no caso de token único é o que separa a marca da palavra do ramo:
+// "AWJ Comércio de Purificadores" casa "purificadores" em purificadores-brasil.
+// .com.br, mas sobra "brasil" — e o que identifica a empresa ("awj") não está
+// lá. Domínio sobrando = é outra empresa DO MESMO RAMO, o erro mais comum aqui.
+// Exclui o nome da cidade dos tokens (senão "encontrasorocaba" casaria com
+// "…de Sorocaba"). Sem token distintivo → força 0: não dá pra provar, não passa.
+const COBERTURA_MIN = 0.85;
+function forcaDominio(nome, cidade, host) {
   const stopCidade = new Set(semAcento(String(cidade || '').toLowerCase()).split(/\s+/).filter(Boolean));
   const toks = tokensNome(nome).filter(t => !stopCidade.has(t));
-  if (!toks.length) return true;
-  const h = semAcento(String(host || '').toLowerCase()).replace(/[^a-z0-9]/g, '');
-  return toks.some(t => h.includes(t));
+  const h = hostBase(host);
+  if (!toks.length || !h) return { ok: false, casados: 0, cobertura: 0 };
+  let casados = 0, letras = 0;
+  for (const t of toks) if (h.includes(t)) { casados++; letras += t.length; }
+  const cobertura = letras / h.length;
+  return { ok: casados >= 2 || (casados >= 1 && cobertura >= COBERTURA_MIN), casados, cobertura };
+}
+
+// O perfil devolvido pelo Places é MESMO da empresa procurada? Vale nome OU cidade:
+// o Places mostra a fantasia (que pode não lembrar a razão social), e a razão
+// social pode não lembrar a fantasia — mas errar as DUAS coisas ao mesmo tempo
+// (nome nada a ver E cidade errada) significa que casou com outro negócio.
+function confereLugar(nome, cidade, p) {
+  const disp = semAcento(String(p.displayName?.text || '').toLowerCase());
+  const stopCidade = new Set(semAcento(String(cidade || '').toLowerCase()).split(/\s+/).filter(Boolean));
+  const toks = tokensNome(nome).filter(t => !stopCidade.has(t));
+  if (toks.some(t => disp.includes(t))) return true;
+  const cid = semAcento(String(cidade || '').toLowerCase()).trim();
+  const end = semAcento(String(p.formattedAddress || '').toLowerCase());
+  return !!cid && end.includes(cid);
 }
 
 // Página com "cara" de diretório/agregador (consulta de CNPJ, guia de empresas,
@@ -334,13 +374,25 @@ async function buscarEmpresasWeb(termo, cidade, uf, max = 30, opts = {}) {
 // como reserva — dá contexto ao SWOT mesmo em sites pobres em texto.
 async function buscarContatoGratis(nome, cidade, uf, opts = {}) {
   const agora = new Date().toISOString();
+  const cnpjAlvo = String(opts.cnpj || '').replace(/\D/g, '');
   const r = await buscarResultados([nome, cidade, uf].filter(Boolean).join(' '), opts);
-  // Só considera resultados cujo DOMÍNIO parece ser da própria empresa — descarta
-  // diretórios/agregadores que citam a empresa mas não são ela. Varre até 3
-  // candidatos (o site real às vezes não é o 1º resultado).
-  const candidatos = r.filter(x => siteDaEmpresa(nome, cidade, hostDe(x.site))).slice(0, 3);
-  for (const cand of candidatos) {
+
+  // Duas provas independentes de que o site é DESTA empresa, nesta ordem:
+  //   1. o domínio explica o nome (forcaDominio), ou
+  //   2. o CNPJ impresso na página (rodapé) é o mesmo do lead — prova definitiva.
+  // E uma VETO: se a página mostra um CNPJ DIFERENTE, é outra empresa — descarta
+  // mesmo que o domínio pareça bater. Sem nenhuma prova, não devolve nada.
+  const olhar = r.slice(0, 6);
+  for (const cand of olhar) {
+    const f = forcaDominio(nome, cidade, hostDe(cand.site));
+    // Sem sinal no domínio e sem CNPJ pra conferir: não há como provar. Nem gasta scrape.
+    if (!f.ok && !cnpjAlvo) continue;
     const s = await scrapeSite(cand.site);
+    const cnpjSite = String(s.cnpj || '').replace(/\D/g, '');
+    if (cnpjAlvo && cnpjSite && cnpjSite !== cnpjAlvo) continue;   // veto: site de OUTRA empresa
+    const confereCnpj = !!(cnpjAlvo && cnpjSite && cnpjSite === cnpjAlvo);
+    if (!f.ok && !confereCnpj) continue;                            // domínio fraco e sem confirmação
+
     const resumo = s.resumo || cand.conteudo || null;
     // Pula se a página se descreve como diretório (guia/lista/consulta CNPJ) OU
     // se lista MUITOS negócios (muitos telefones distintos) — um catálogo, não a
@@ -355,11 +407,13 @@ async function buscarContatoGratis(nome, cidade, uf, opts = {}) {
       resumo_site: resumo,
       resumo_fonte: s.resumo ? s.resumo_fonte : (cand.conteudo ? 'busca' : null),
       fonte: 'busca_gratis',
+      // Como o site foi conferido — aparece no lead, pro usuário saber o quanto confiar.
+      site_conferido: confereCnpj ? 'cnpj' : 'dominio',
       validado: !!(s.email || s.telefone || resumo),
       validado_em: agora,
     };
   }
-  // Nenhum resultado parece ser o site próprio da empresa → melhor não trazer
+  // Nenhum resultado se PROVOU o site próprio da empresa → melhor não trazer
   // dado nenhum (fica vermelho "sem contato") do que trazer contato errado.
   return { encontrado: false, fonte: 'busca_gratis', validado: false, validado_em: agora, motivo: 'sem_site_proprio' };
 }
@@ -388,6 +442,16 @@ async function buscarContato(nome, cidade, uf, apiKey) {
   const p = data?.places?.[0];
   if (!p) return { encontrado: false, fonte: 'google', validado: false, validado_em: new Date().toISOString() };
 
+  // O Places SEMPRE devolve o "melhor" resultado — mesmo quando não achou nada
+  // parecido. Sem conferir, o telefone de um negócio qualquer virava o contato do
+  // lead. Exige uma âncora: ou o nome do perfil bate com o da empresa (o Places
+  // costuma mostrar a fantasia, então basta 1 token), ou o endereço é na cidade
+  // certa. Nenhuma das duas → é outro negócio, e não devolvemos nada.
+  if (!confereLugar(nome, cidade, p)) {
+    return { encontrado: false, fonte: 'google', validado: false, validado_em: new Date().toISOString(),
+      motivo: 'lugar_nao_confere', nome_google: p.displayName?.text || null };
+  }
+
   const telefone = (p.nationalPhoneNumber || p.internationalPhoneNumber || '').replace(/\D/g, '');
   // Descarta site institucional/gov mesmo vindo do Places (ex.: casou com a
   // prefeitura). O telefone do Places segue valendo (é do estabelecimento).
@@ -412,4 +476,5 @@ async function buscarContato(nome, cidade, uf, apiKey) {
   };
 }
 
-module.exports = { buscarContato, buscarContatoGratis, buscarEmpresasWeb, scrapeSite };
+module.exports = { buscarContato, buscarContatoGratis, buscarEmpresasWeb, scrapeSite,
+  forcaDominio, confereLugar, tokensNome, hostBase };

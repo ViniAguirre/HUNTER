@@ -96,7 +96,10 @@ module.exports = async function validacao(job, pool, queues) {
     //    pro SWOT). Se houver chave de busca web (Tavily), ela torna essa busca mais
     //    estável; senão, DuckDuckGo grátis.
     if (!c || !c.website || !c.resumo_site) {
-      const g = await google.buscarContatoGratis(nome, emp?.cidade, emp?.uf, { tavilyKey }).catch(() => null);
+      // O CNPJ vai junto: quando o site imprime o CNPJ no rodapé, ele CONFIRMA
+      // (ou desmente) que aquele site é mesmo desta empresa — prova mais forte
+      // que qualquer semelhança de domínio.
+      const g = await google.buscarContatoGratis(nome, emp?.cidade, emp?.uf, { tavilyKey, cnpj }).catch(() => null);
       if (g && (g.website || g.email || g.telefone)) {
         if (!c) {
           c = g;

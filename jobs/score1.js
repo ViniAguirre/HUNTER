@@ -61,6 +61,20 @@ module.exports = async function score1(job, pool, queues) {
   // Também respeita a cota DESTA hora (limite diário / 24) — sem isso, uma busca
   // ligada direto consumiria o dia inteiro na primeira hora em vez de espalhar
   // a captação ao longo do dia.
+  // GUARDRAIL final: empresa que está numa lista de semelhantes do cliente nunca
+  // vira lead. Ela é o MODELO da busca (cliente dele) ou um contraexemplo que ele
+  // já reprovou. Esta é a última porta antes do lead existir — as anteriores
+  // (descoberta local e CNPJá) barram mais cedo; esta cobre qualquer caminho novo.
+  // Importação por CNPJ escapa: ali o usuário pediu ESTA empresa, de propósito.
+  if (!importacao) {
+    const { rows: [sem] } = await pool.query(
+      `SELECT lista FROM sementes WHERE cnpj=$1 LIMIT 1`, [cnpj]);
+    if (sem) {
+      await pool.query(`UPDATE buscas SET fora_perfil = fora_perfil + 1 WHERE id=$1`, [busca_id]);
+      return { cnpj, score, corte, passou: false, motivo: 'na_lista_de_semelhantes', lista: sem.lista };
+    }
+  }
+
   const vagas = await orcamento.disponivel(pool);
   if (vagas.dia <= 0 || vagas.hora <= 0) {
     const tentativas = (job.data.tentativa_orcamento || 0) + 1;

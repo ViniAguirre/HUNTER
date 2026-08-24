@@ -3707,6 +3707,7 @@ function Semelhantes() {
   const [erro, setErro] = useState(null);
   const [salvando, setSalvando] = useState(false);
   const [uploadMsg, setUploadMsg] = useState(null);
+  const [aviso, setAviso] = useState(null); // guardrail: clientes que saíram da esteira
   const [editNome, setEditNome] = useState(null); // chave da lista em renomeação
   const [editRotulo, setEditRotulo] = useState('');
   const arquivoRef = useRef();
@@ -3815,6 +3816,7 @@ function Semelhantes() {
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.erro || 'Erro ao salvar a lista.');
+      setAviso(d.retirados > 0 ? `${d.retirados} lead(s) da sua base eram empresas desta lista e saíram da esteira — elas são o modelo da busca, não alvo.` : null);
       setCriando(false);
       setNome('');
       setTexto('');
@@ -3891,7 +3893,7 @@ function Semelhantes() {
       lineHeight: 1.5,
       maxWidth: 560
     }
-  }, "Listas de clientes que j\xE1 compraram. O Hunter l\xEA a firmografia dessas empresas e monta o perfil de quem compra de voc\xEA \u2014 depois procura empresas parecidas. A mesma lista serve para v\xE1rios radares (regi\xF5es e cortes diferentes), e quanto maior, mais preciso o perfil."), /*#__PURE__*/React.createElement("button", {
+  }, "Listas de clientes que j\xE1 compraram. O Hunter l\xEA a firmografia dessas empresas e monta o perfil de quem compra de voc\xEA \u2014 depois procura empresas parecidas. A mesma lista serve para v\xE1rios radares (regi\xF5es e cortes diferentes), e quanto maior, mais preciso o perfil. As empresas da lista nunca voltam como lead: elas s\xE3o o modelo da busca, n\xE3o o alvo."), /*#__PURE__*/React.createElement("button", {
     type: "button",
     onClick: () => {
       setCriando(true);
@@ -3919,7 +3921,35 @@ function Semelhantes() {
     w: 15,
     h: 15,
     sw: 1.8
-  }), " Nova lista")), criando && /*#__PURE__*/React.createElement("div", {
+  }), " Nova lista")), aviso && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'var(--panel)',
+      border: '1px solid #4ADE80',
+      borderRadius: 11,
+      padding: '11px 14px',
+      marginBottom: 14,
+      fontSize: 12.5,
+      color: 'var(--text)',
+      display: 'flex',
+      gap: 10,
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      flex: 1
+    }
+  }, aviso), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => setAviso(null),
+    style: {
+      background: 'none',
+      border: 'none',
+      color: 'var(--faint)',
+      cursor: 'pointer',
+      fontSize: 16,
+      fontFamily: 'inherit'
+    }
+  }, "\xD7")), criando && /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'var(--panel)',
       border: `1px solid ${C.gold}`,

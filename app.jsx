@@ -1662,6 +1662,7 @@ function Semelhantes() {
   const [erro, setErro] = useState(null);
   const [salvando, setSalvando] = useState(false);
   const [uploadMsg, setUploadMsg] = useState(null);
+  const [aviso, setAviso] = useState(null);   // guardrail: clientes que saíram da esteira
   const [editNome, setEditNome] = useState(null);     // chave da lista em renomeação
   const [editRotulo, setEditRotulo] = useState('');
   const arquivoRef = useRef();
@@ -1729,6 +1730,9 @@ function Semelhantes() {
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.erro || 'Erro ao salvar a lista.');
+      setAviso(d.retirados > 0
+        ? `${d.retirados} lead(s) da sua base eram empresas desta lista e saíram da esteira — elas são o modelo da busca, não alvo.`
+        : null);
       setCriando(false); setNome(''); setTexto(''); setUploadMsg(null); carregar();
     } catch (e) { setErro(e.message); }
     finally { setSalvando(false); }
@@ -1768,7 +1772,8 @@ function Semelhantes() {
         <div style={{ fontSize:12.5, color:'var(--faint)', lineHeight:1.5, maxWidth:560 }}>
           Listas de clientes que já compraram. O Hunter lê a firmografia dessas empresas e monta o perfil de quem
           compra de você — depois procura empresas parecidas. A mesma lista serve para vários radares (regiões e
-          cortes diferentes), e quanto maior, mais preciso o perfil.
+          cortes diferentes), e quanto maior, mais preciso o perfil. As empresas da lista nunca voltam como lead:
+          elas são o modelo da busca, não o alvo.
         </div>
         <button type="button" onClick={() => { setCriando(true); setErro(null); }} disabled={criando}
           style={{ height:38, padding:'0 16px', borderRadius:9, border:'none', background: criando ? 'var(--panel2)' : 'var(--gold)',
@@ -1777,6 +1782,15 @@ function Semelhantes() {
           <Svg d="M12 5v14M5 12h14" w={15} h={15} sw={1.8}/> Nova lista
         </button>
       </div>
+
+      {aviso && (
+        <div style={{ background:'var(--panel)', border:'1px solid #4ADE80', borderRadius:11, padding:'11px 14px',
+          marginBottom:14, fontSize:12.5, color:'var(--text)', display:'flex', gap:10, alignItems:'center' }}>
+          <span style={{ flex:1 }}>{aviso}</span>
+          <button type="button" onClick={() => setAviso(null)}
+            style={{ background:'none', border:'none', color:'var(--faint)', cursor:'pointer', fontSize:16, fontFamily:'inherit' }}>×</button>
+        </div>
+      )}
 
       {criando && (
         <div style={{ background:'var(--panel)', border:`1px solid ${C.gold}`, borderRadius:13, padding:18, marginBottom:14 }}>
