@@ -50,7 +50,22 @@ const STOP_NOME = new Set([
   'comercio','comercial','industria','industrial','servicos','servico','solucoes','solucao',
   'representacoes','distribuidora','distribuidor','empresa','negocios','participacoes',
   'geral','central','nacional','regional','ind','com','imp','exp','importacao','exportacao',
+  // Palavras gramaticais. Sem elas, "dos" virava padrão: aparecia em 14% de uma
+  // lista (porque 14% eram MEI com nome de pessoa — "João DOS Santos") e valia
+  // 15 dos 100 pontos. Duas empresas idênticas separadas por uma preposição, uma
+  // passando o corte e a outra não.
+  'dos','das','aos','nas','nos','uma','uns','umas','para','pela','pelo','pelas','pelos',
+  'sem','sob','sobre','entre','ate','apos','the','and','and','ltd','inc',
 ]);
+
+// A "empresa" é uma pessoa física registrada (MEI, empresário individual)? A
+// Receita põe o nome do titular na razão social, e alguns ainda trazem o próprio
+// CNPJ na frente ("66.254.456 CLAUDEIR DOS SANTOS SALVADOR").
+function pessoaFisica(e) {
+  const nat = String(e?.natureza_juridica || '').toLowerCase();
+  if (/empres[áa]rio|individual|mei\b/.test(nat)) return true;
+  return /^\s*\d{2}[.\s]?\d{3}[.\s]?\d{3}\b/.test(String(e?.razao || ''));
+}
 
 function tokensNome(...partes) {
   const txt = partes.filter(Boolean).join(' ');
@@ -302,7 +317,15 @@ function construirPerfil(empresas, base, W, opts = {}) {
   // repetir), então "freq" vira "em que fração das empresas essa palavra aparece".
   const contarTokens = (lista) => {
     const m = new Map();
-    for (const e of lista) for (const t of tokensNome(e.fantasia, e.razao)) m.set(t, (m.get(t) || 0) + 1);
+    for (const e of lista) {
+      // Empresário individual / MEI tem NOME DE PESSOA na razão social. Sobrenome
+      // não diz nada sobre o negócio — mas repete entre clientes ("Santos",
+      // "Silva") e viraria padrão por acaso. Se houver fantasia, ela é o nome
+      // comercial de verdade e conta; sem fantasia, esta empresa não contribui
+      // com nome nenhum.
+      const nome = pessoaFisica(e) ? e.fantasia : [e.fantasia, e.razao].filter(Boolean).join(' ');
+      for (const t of tokensNome(nome)) m.set(t, (m.get(t) || 0) + 1);
+    }
     return m;
   };
   const tokPos = contarTokens(empresas);
