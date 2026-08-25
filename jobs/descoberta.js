@@ -345,17 +345,29 @@ async function perfilarComLista(pool, criterios, busca_id, cnpjs, negativos = []
     return { erro: true, skipped: 'lista_curta', minimo: perfilamento.MIN_PERFIL, enviados: cnpjs.length };
   }
 
+  // O endpoint aberto da CNPJá é grátis mas limita 5 consultas/min. Antes um 429
+  // caía no mesmo `catch` do CNPJ inválido e a empresa era DESCARTADA em
+  // silêncio — numa lista de 126, o perfil acabava montado com as poucas que
+  // couberam no primeiro minuto. `enrichComRetry` espera e tenta de novo, igual
+  // já fazia a importação por CNPJ. Uma lista grande leva ~25 min pra perfilar,
+  // e é uma vez só: o resultado fica no cadastro pra sempre.
   const amostra = [];
+  let lidas = 0;
   for (const cnpj of cnpjs.slice(0, TETO_AMOSTRA)) {
     let { rows: [emp] } = await pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [cnpj]);
     if (!emp) {
       try {
-        const f = await cnpja.enrichCnpj(cnpj);   // endpoint aberto, grátis
+        const f = await enrichComRetry(cnpj);      // espera o rate limit passar
         await upsertEmpresa(pool, f);              // cache; NÃO cria lead
         emp = f;
-      } catch (_) { continue; }                    // CNPJ inválido/indisponível → ignora
+      } catch (_) { continue; }                    // CNPJ inválido de verdade → ignora
     }
     if (emp) amostra.push(emp);
+    // Sinal de vida: sem isso o painel acusa "busca sem atividade" durante a
+    // espera do rate limit, que numa lista grande passa de 20 minutos.
+    if (++lidas % 5 === 0) {
+      await pool.query(`UPDATE buscas SET ultimo_heartbeat=now() WHERE id=$1`, [busca_id]);
+    }
   }
 
   if (amostra.length < perfilamento.MIN_PERFIL) {
