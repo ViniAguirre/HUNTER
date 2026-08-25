@@ -223,7 +223,13 @@ function calcularPesos(perfil, base, W, opts = {}) {
   // cliente perfeito nunca chegaria a 100.
   const dims = [
     ['CNAE',    W.CNAE_EXATO, poderDimensao(perfil.cnaes.map(x => ({ chave: x.c, freq: x.freq })), base, 'cnae'), perfil.cnaes.length > 0],
-    ['UF',      W.UF,         poderUf, perfil.ufs.length > 0],
+    // Geografia na mão: a UF sai da divisão de pontos INTEIRA, não só com poder
+    // zero. Com `temDados` true ela ainda levava o peso mínimo (~13 de 100) — e
+    // como o filtro leva a busca pra uma UF que quase nunca está na lista de
+    // clientes, TODA empresa encontrada tirava zero nesses pontos. Não por ser
+    // ruim: por não haver com o que comparar. Todo lead nascia com 13 pontos de
+    // desconto e o corte ficava desalinhado com o que o usuário pediu.
+    ['UF',      W.UF,         poderUf, !opts.geoManual && perfil.ufs.length > 0],
     ['PORTE',   W.PORTE,      poderDimensao(perfil.portes.map(x => ({ chave: x.porte, freq: x.freq })), null, 'porte'), perfil.portes.length > 0],
     ['CAPITAL', W.CAPITAL,    poderDimensao(perfil.capitais.map(x => ({ chave: x.faixa, freq: x.freq })), null, 'capital'), perfil.capitais.length > 0],
     // O nome não é "distribuição de valores" como as outras: mede-se pela

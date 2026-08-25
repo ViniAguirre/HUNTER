@@ -461,6 +461,32 @@ async function buscarEmpresasWeb(termo, cidade, uf, max = 30, opts = {}) {
   return resultados.slice(0, max);
 }
 
+// DDD → UF. É a única informação de LUGAR que a busca web nos dá de graça, e
+// lugar é justamente o que as provas de nome não cobrem: "Teixeira Refrigeração"
+// existe em BH e em São Paulo, e o domínio não distingue as duas.
+const DDD_UF = {
+  11:'SP',12:'SP',13:'SP',14:'SP',15:'SP',16:'SP',17:'SP',18:'SP',19:'SP',
+  21:'RJ',22:'RJ',24:'RJ',27:'ES',28:'ES',
+  31:'MG',32:'MG',33:'MG',34:'MG',35:'MG',37:'MG',38:'MG',
+  41:'PR',42:'PR',43:'PR',44:'PR',45:'PR',46:'PR',
+  47:'SC',48:'SC',49:'SC',51:'RS',53:'RS',54:'RS',55:'RS',
+  61:'DF',62:'GO',64:'GO',63:'TO',65:'MT',66:'MT',67:'MS',
+  68:'AC',69:'RO',71:'BA',73:'BA',74:'BA',75:'BA',77:'BA',
+  79:'SE',81:'PE',87:'PE',82:'AL',83:'PB',84:'RN',85:'CE',88:'CE',
+  86:'PI',89:'PI',91:'PA',93:'PA',94:'PA',92:'AM',97:'AM',95:'RR',96:'AP',98:'MA',99:'MA',
+};
+// O telefone achado no site DESMENTE a UF da empresa? Só responde `true` quando
+// há contradição clara — sem telefone, sem UF ou DDD desconhecido devolve false
+// (na dúvida não acusa). 0800 e 4004 não têm DDD e passam batido, que é o certo:
+// número nacional não diz nada sobre localização.
+function telefoneDesmenteUf(telefone, uf) {
+  const d = String(telefone || '').replace(/\D/g, '');
+  const estado = String(uf || '').trim().toUpperCase();
+  if (!estado || d.length < 10 || /^(0800|4004|4003|3003)/.test(d)) return false;
+  const ufDoDdd = DDD_UF[parseInt(d.slice(0, 2), 10)];
+  return !!ufDoDdd && ufDoDdd !== estado;
+}
+
 // A página se APRESENTA com o nome desta empresa? Compara os tokens do nome
 // contra como o site se identifica (título + meta description + H1), nunca
 // contra o corpo do texto: um guia de empresas cita o nome de quem ele lista,
@@ -516,6 +542,21 @@ async function buscarContatoGratis(nome, cidade, uf, opts = {}) {
     const confereCnpj = !!(cnpjAlvo && cnpjSite && cnpjSite === cnpjAlvo);
     const confereNome = paginaSeApresentaComo(nome, cidade, h0.identidade);
     if (!f.ok && !confereCnpj && !confereNome) continue;            // nenhuma prova
+
+    // Domínio curto que casa com UMA palavra do nome é evidência fraca demais
+    // sozinha: "ASPEN Refrigeração" (MG) casou com aspentech.com (software
+    // americano), "Teixeira Refrigeração" com teixeira.com.br. O token existe no
+    // domínio e explica ele quase todo — mas é sobrenome ou palavra comum, não
+    // marca. Nesses casos exige que a PÁGINA também confirme o nome. Com 2+
+    // tokens no domínio a coincidência já é improvável e o domínio basta.
+    if (f.ok && f.casados < 2 && !confereCnpj && !confereNome) continue;
+
+    // O telefone do site desmente a UF do cadastro? Então é outra empresa de
+    // mesmo nome noutro estado — caso clássico em nome genérico de refrigeração,
+    // que se repete em toda cidade do país. O CNPJ conferido é prova definitiva e
+    // passa por cima disso (empresa pode ter número de outro estado); as provas
+    // de nome, não. Nenhuma delas fala de LUGAR — o DDD é a única que fala.
+    if (!confereCnpj && telefoneDesmenteUf(h0.telefone, uf)) continue;
 
     // Descarta diretório ANTES de aprofundar: a página se descreve como guia/
     // lista/consulta de CNPJ, ou lista muitos negócios (muitos telefones
@@ -609,4 +650,5 @@ async function buscarContato(nome, cidade, uf, apiKey) {
 }
 
 module.exports = { buscarContato, buscarContatoGratis, buscarEmpresasWeb, scrapeSite,
-  forcaDominio, confereLugar, tokensNome, hostBase, paginaSeApresentaComo, identidadeDa };
+  forcaDominio, confereLugar, tokensNome, hostBase, paginaSeApresentaComo, identidadeDa,
+  telefoneDesmenteUf };
