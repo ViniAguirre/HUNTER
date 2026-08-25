@@ -63,6 +63,12 @@ module.exports = async function validacao(job, pool, queues) {
         email: cvWeb.email || null, website: cvWeb.website || null,
         resumo_site: cvWeb.resumo_site || null, resumo_fonte: cvWeb.resumo_fonte || null,
         fonte: cvWeb.fonte || 'cache', validado: !!(cvWeb.email || cvWeb.telefone),
+        // COMO o site foi provado viaja junto com o contato. Sem isso o cache
+        // entregava o dado e perdia a procedência: o lead ficava sem etiqueta e
+        // era impossível saber se aquele telefone tinha sido conferido por CNPJ
+        // ou apenas por semelhança de domínio.
+        site_conferido: cvWeb.site_conferido || null,
+        fonte_busca: cvWeb.fonte_busca || null,
         validado_em: new Date().toISOString(),
       };
     }
@@ -99,6 +105,10 @@ module.exports = async function validacao(job, pool, queues) {
           c.telefone = c.telefone || g.telefone;
           c.whatsapp = c.whatsapp || g.whatsapp;
           if (!c.resumo_site) { c.resumo_site = g.resumo_site; c.resumo_fonte = g.resumo_fonte; }
+          // O site veio do grátis? Então a prova dele vem junto — senão o lead
+          // fica com dado do grátis e sem procedência nenhuma registrada.
+          c.site_conferido = c.site_conferido || g.site_conferido || null;
+          c.fonte_busca = c.fonte_busca || g.fonte_busca || null;
           c.validado = c.validado || g.validado;
           c.fonte = c.fonte && c.fonte !== 'busca_gratis' ? `${c.fonte}+gratis` : 'busca_gratis';
         }
@@ -123,6 +133,9 @@ module.exports = async function validacao(job, pool, queues) {
             telefone: c.telefone, email: c.email, website: c.website || null,
             resumo_site: c.resumo_site || null, resumo_fonte: c.resumo_fonte || null,
             fonte: c.fonte,
+            // Guarda a prova junto com o contato — é o que permite auditar
+            // depois, e o que faltava pra saber a procedência de 113 leads.
+            site_conferido: c.site_conferido || null, fonte_busca: c.fonte_busca || null,
           })]
         );
       }
