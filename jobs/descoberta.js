@@ -40,7 +40,7 @@ module.exports = async function descoberta(job, pool, queues) {
   // qualifica por intenção no Score 1 (o enriquecimento acontece no laço abaixo,
   // respeitando o limite grátis de 5/min da Receita).
   if (tipo === 'lookalike' && !(criterios.params && criterios.params.perfil)) {
-    const resultado = await perfilar(pool, criterios, busca_id, busca.lista);
+    const resultado = await perfilar(pool, criterios, busca_id, busca.lista, ig?.key_cifrada || null);
     if (resultado.erro) return resultado;
     criterios = resultado.criterios;
   }
@@ -321,7 +321,7 @@ async function resolverPorNome(nome, uf, cidade, cnpjaKey) {
 
 // ── Perfilamento: baixa firmografia (grátis) dos CNPJs da lista e monta o perfil.
 // Sementes vêm da lista colada (criterios.cnpjs) E da lista alimentada pelo CRM.
-async function perfilar(pool, criterios, busca_id, lista) {
+async function perfilar(pool, criterios, busca_id, lista, apiKey = null) {
   const cnpjs = new Set(perfilamento.parseCnpjs(criterios));
   const negativos = [];
   if (lista) {
@@ -336,28 +336,32 @@ async function perfilar(pool, criterios, busca_id, lista) {
     }
   }
   for (const c of negativos) cnpjs.delete(c);
-  return perfilarComLista(pool, criterios, busca_id, [...cnpjs], negativos);
+  return perfilarComLista(pool, criterios, busca_id, [...cnpjs], negativos, apiKey);
 }
 
-async function perfilarComLista(pool, criterios, busca_id, cnpjs, negativos = []) {
+async function perfilarComLista(pool, criterios, busca_id, cnpjs, negativos = [], apiKey = null) {
   if (cnpjs.length < perfilamento.MIN_PERFIL) {
     await pool.query(`UPDATE buscas SET status='Esgotada', ultimo_heartbeat=now() WHERE id=$1`, [busca_id]);
     return { erro: true, skipped: 'lista_curta', minimo: perfilamento.MIN_PERFIL, enviados: cnpjs.length };
   }
 
-  // O endpoint aberto da CNPJá é grátis mas limita 5 consultas/min. Antes um 429
-  // caía no mesmo `catch` do CNPJ inválido e a empresa era DESCARTADA em
-  // silêncio — numa lista de 126, o perfil acabava montado com as poucas que
-  // couberam no primeiro minuto. `enrichComRetry` espera e tenta de novo, igual
-  // já fazia a importação por CNPJ. Uma lista grande leva ~25 min pra perfilar,
-  // e é uma vez só: o resultado fica no cadastro pra sempre.
+  // Firmografia da lista. Com a chave da CNPJá são 50 consultas/min (126
+  // empresas em ~3 min); sem ela, o endpoint aberto faz 5/min e a mesma lista
+  // leva ~25 min. Vale o crédito porque o perfil é o dado de maior alavancagem
+  // do sistema: ele define TODAS as buscas seguintes daquele radar. O teto é
+  // TETO_AMOSTRA (120), então o gasto é limitado e acontece uma vez por lista —
+  // a firmografia fica no cadastro global e a próxima lista que repetir empresa
+  // não paga de novo.
+  // O 429 antes caía no mesmo `catch` do CNPJ inválido e a empresa era
+  // DESCARTADA em silêncio: numa lista de 126, o perfil nascia com as poucas que
+  // couberam no primeiro minuto. `enrichComRetry` espera e tenta de novo.
   const amostra = [];
   let lidas = 0;
   for (const cnpj of cnpjs.slice(0, TETO_AMOSTRA)) {
     let { rows: [emp] } = await pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [cnpj]);
     if (!emp) {
       try {
-        const f = await enrichComRetry(cnpj);      // espera o rate limit passar
+        const f = await enrichComRetry(cnpj, 6, apiKey);   // chave paga = 50/min; sem ela, 5/min
         await upsertEmpresa(pool, f);              // cache; NÃO cria lead
         emp = f;
       } catch (_) { continue; }                    // CNPJ inválido de verdade → ignora
@@ -409,10 +413,10 @@ async function perfilarComLista(pool, criterios, busca_id, cnpjs, negativos = []
 // Enriquecimento individual (endpoint aberto, grátis) tolerante ao limite de
 // 5/min: no 429, espera o retry-after (limitado) e tenta de novo, até 6 vezes.
 // Assim uma lista longa vinda de upload vai sendo consumida ~5/min sem descartar.
-async function enrichComRetry(cnpj, maxTentativas = 6) {
+async function enrichComRetry(cnpj, maxTentativas = 6, apiKey = null) {
   for (let i = 1; ; i++) {
     try {
-      return await cnpja.enrichCnpj(cnpj);
+      return await cnpja.enrichCnpj(cnpj, apiKey);
     } catch (e) {
       if (e.code === 'RATE_LIMIT' && i < maxTentativas) {
         const espera = Math.min(Math.max((e.retryAfter || 60), 5), 70) * 1000;

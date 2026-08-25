@@ -65,13 +65,28 @@ async function search(params, apiKey) {
 
 // Enriquecimento individual — usa endpoint aberto (grátis, rate-limited) se
 // não houver chave configurada; usa a base paga (sem limite agressivo) se houver.
-async function enrichCnpj(cnpj) {
-  // Fallback raro (empresa sem dados vindos da busca): usa SEMPRE o endpoint
-  // aberto (grátis, rate-limited). Nunca gasta crédito pago — a única consulta
-  // paga do fluxo é a descoberta filtrada.
+// Cadastro de UM CNPJ.
+// Sem chave: endpoint aberto, grátis, limitado a 5 consultas/min. É o padrão —
+// a importação por CNPJ passa por aqui e pode ter milhares de linhas, então
+// nunca gasta crédito.
+// Com chave: endpoint pago, 50/min. Usado SÓ pra montar o perfil de uma lista de
+// semelhantes, onde o teto é 120 empresas e a espera de 25 min no grátis parecia
+// travamento. `simples=true` porque o pago não devolve a opção pelo Simples por
+// padrão, e ela é uma das dimensões do perfil (o aberto já manda de graça).
+// Se a paga falhar por qualquer motivo que não seja rate limit — chave sem
+// permissão, saldo no fim, parâmetro recusado — cai no aberto em vez de perder a
+// empresa. Perfil incompleto é pior que perfil lento.
+async function enrichCnpj(cnpj, apiKey) {
   const clean = String(cnpj).replace(/\D/g, '').padStart(14, '0');
-  const data = await request(`${OPEN_BASE}/office/${clean}`, null);
-  return parseCompany(data);
+  if (apiKey) {
+    try {
+      return parseCompany(await request(`${PAID_BASE}/office/${clean}?simples=true`, apiKey));
+    } catch (e) {
+      if (e.code === 'RATE_LIMIT') throw e;   // quem chamou tem retry pra isso
+      console.warn(`[cnpja] consulta paga falhou (${e.message}) — usando endpoint aberto`);
+    }
+  }
+  return parseCompany(await request(`${OPEN_BASE}/office/${clean}`, null));
 }
 
 function normalizeOffice(o) {
