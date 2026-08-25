@@ -66,8 +66,40 @@ async function postChat(url, body, apiKey) {
 // Parser tolerante: aceita JSON puro, JSON em cerca de código (```json … ```),
 // ou JSON no meio de texto. Necessário pra modelos que não têm JSON mode e às
 // vezes embrulham a resposta. Lança se não achar objeto algum.
+// Fecha um JSON cortado no meio. Modelo que estoura o limite de tokens devolve
+// algo como {"resumo":"...","forcas":["a","b"  — estruturalmente válido até ali,
+// só faltando o fechamento. Recuperar isso salva o briefing inteiro em vez de
+// jogar fora por causa de dois caracteres. Corta pela última vírgula/aspas
+// completa e fecha o que ficou aberto, na ordem inversa da abertura.
+function repararJsonCortado(txt) {
+  let s = String(txt || '').trim();
+  const ini = s.indexOf('{');
+  if (ini === -1) return null;
+  s = s.slice(ini);
+  // Descarta um valor pela metade no fim ("forcas":["compl
+  const ultimaVirgula = Math.max(s.lastIndexOf('",'), s.lastIndexOf('],'), s.lastIndexOf('},'));
+  const ultimoFecha = Math.max(s.lastIndexOf('"'), s.lastIndexOf(']'), s.lastIndexOf('}'));
+  s = s.slice(0, Math.max(ultimaVirgula >= 0 ? ultimaVirgula + 1 : 0, ultimoFecha + 1));
+  if (s.endsWith(',')) s = s.slice(0, -1);
+  // Fecha o que ficou aberto, ignorando chaves/colchetes dentro de string.
+  const pilha = [];
+  let emString = false, escape = false;
+  for (const ch of s) {
+    if (escape) { escape = false; continue; }
+    if (ch === '\\') { escape = true; continue; }
+    if (ch === '"') { emString = !emString; continue; }
+    if (emString) continue;
+    if (ch === '{' || ch === '[') pilha.push(ch);
+    else if (ch === '}' || ch === ']') pilha.pop();
+  }
+  if (emString) s += '"';
+  while (pilha.length) s += pilha.pop() === '{' ? '}' : ']';
+  try { return JSON.parse(s); } catch (_) { return null; }
+}
+
 function extrairJson(txt) {
   const s = String(txt || '').trim();
+  if (!s) throw new Error('a IA devolveu resposta VAZIA (modelo sem crédito, sobrecarregado ou recusou o pedido)');
   try { return JSON.parse(s); } catch (_) {}
   const semCerca = s.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
   try { return JSON.parse(semCerca); } catch (_) {}
@@ -75,7 +107,13 @@ function extrairJson(txt) {
   if (ini !== -1 && fim > ini) {
     try { return JSON.parse(semCerca.slice(ini, fim + 1)); } catch (_) {}
   }
-  throw new Error('resposta da IA não veio em JSON válido');
+  const reparado = repararJsonCortado(semCerca);
+  if (reparado) return reparado;
+  // A mensagem PRECISA mostrar o que veio. Sem isso, "não veio em JSON válido"
+  // é indistinguível entre resposta vazia, prosa, erro do provedor e JSON
+  // cortado — e cada um desses tem conserto diferente.
+  const amostra = s.replace(/\s+/g, ' ').slice(0, 180);
+  throw new Error(`resposta da IA não veio em JSON válido — veio: "${amostra}${s.length > 180 ? '…' : ''}"`);
 }
 
 const SYSTEM = `Você é um analista de inteligência comercial B2B brasileiro. A partir dos dados de
