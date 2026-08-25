@@ -149,6 +149,9 @@ function hostBase(host) {
 // araguainapurificadores.com.br ser recusado. Quem protege contra
 // "encontrasorocaba" é a regra dos 2 tokens, não a exclusão.
 const COBERTURA_MIN = 0.85;      // token único explicando quase todo o domínio
+// Teto de tempo pra avaliar os candidatos de UM lead. Sem ele, um lead cujos
+// candidatos são todos sites lentos segura o worker e a fila inteira atrás.
+const PRAZO_CANDIDATOS_MS = 45000;
 const COBERTURA_NOME_INTEIRO = 0.6;  // nome completo casou: régua mais folgada
 const RESTO_MAX = 4;                 // letras de enfeite toleradas no domínio ("pet"+mendes)
 // Casa o token no domínio tolerando plural/flexão: "eletronicos" acha
@@ -296,18 +299,37 @@ function extrairCnpjDe(html) {
   return d.length === 14 ? d : null;
 }
 
-async function scrapeSite(site) {
+// UMA requisição: a home. É tudo que a decisão de identidade precisa — o CNPJ do
+// rodapé e o título/H1 estão aqui. Separado do scrape profundo de propósito:
+// avaliar um candidato custa 1 página, não 3. Guarda o HTML pra quem for
+// aprofundar não ter que baixar de novo.
+async function lerHome(site) {
   const home = await baixar(site);
-  if (!home) return { email: null, resumo: null, telefone: null, cnpj: null, identidade: null };
+  if (!home) return null;
+  return {
+    html: home,
+    email: extrairEmailDe(home),
+    telefone: extrairWhatsappDe(home) || extrairTelefoneDe(home),
+    cnpj: extrairCnpjDe(home),
+    resumo: resumoDe(home, 2),
+    resumo_fonte: 'home',
+    identidade: identidadeDa(home),
+    qtd_telefones: contarTelefones(home),
+    paginas_lidas: 1,
+  };
+}
 
-  let email = extrairEmailDe(home);
-  let telefone = extrairWhatsappDe(home) || extrairTelefoneDe(home);
-  let cnpj = extrairCnpjDe(home);
-  const partes = [resumoDe(home, 2)].filter(Boolean);
+// Só depois que o site FOI ACEITO como sendo da empresa: segue "sobre" e
+// "contato" pra completar resumo, e-mail, telefone e CNPJ. Antes desta separação
+// todo candidato pagava essas páginas, mesmo os que seriam recusados — o que
+// fazia um lead sem site provável custar até 18 requisições.
+async function aprofundar(site, h0) {
+  const home = h0.html;
+  let { email, telefone, cnpj } = h0;
+  const partes = [h0.resumo].filter(Boolean);
   let fonte = 'home';
   const lidas = new Set([site]);
 
-  // 1) Segue UMA página institucional/serviços pra enriquecer o resumo.
   const sobre = acharLinks(home, site, PALAVRAS_SOBRE).find(u => !lidas.has(u));
   if (sobre) {
     const h = await baixar(sobre); lidas.add(sobre);
@@ -318,7 +340,6 @@ async function scrapeSite(site) {
     if (!cnpj) cnpj = extrairCnpjDe(h);
   }
 
-  // 2) Se ainda faltar e-mail/telefone/CNPJ, tenta a página de contato (rodapé/CNPJ costumam estar lá).
   if (!email || !telefone || !cnpj) {
     const contato = acharLinks(home, site, PALAVRAS_CONTATO).find(u => !lidas.has(u));
     if (contato) {
@@ -327,12 +348,18 @@ async function scrapeSite(site) {
     }
   }
 
-  // Combina/dedupe num resumo único e limitado.
   const uniq = [];
   for (const p of partes) if (p && !uniq.some(u => u.includes(p) || p.includes(u))) uniq.push(p);
-  const resumo = (uniq.join(' ').slice(0, 600).trim()) || null;
-  return { email, telefone, cnpj, resumo, resumo_fonte: fonte, paginas_lidas: lidas.size,
-    identidade: identidadeDa(home), qtd_telefones: contarTelefones(home) };
+  return { email, telefone, cnpj, resumo: (uniq.join(' ').slice(0, 600).trim()) || null,
+    resumo_fonte: fonte, paginas_lidas: lidas.size,
+    identidade: h0.identidade, qtd_telefones: h0.qtd_telefones };
+}
+
+// Scrape completo (home + sobre + contato). Mantido pra quem já usa assim.
+async function scrapeSite(site) {
+  const h0 = await lerHome(site);
+  if (!h0) return { email: null, resumo: null, telefone: null, cnpj: null, identidade: null };
+  return aprofundar(site, h0);
 }
 
 // ── Fallback GRÁTIS: acha o site oficial via busca web sem chave (DuckDuckGo) ──
@@ -468,24 +495,37 @@ async function buscarContatoGratis(nome, cidade, uf, opts = {}) {
   // A prova 3 existe porque a 2 rendeu pouco na prática: quase nenhum site de PME
   // imprime CNPJ. Já o nome, quase todo site diz — mas só no título/H1 é que ele
   // diz o nome DELE. No corpo do texto um diretório cita centenas de empresas.
+  // Avaliar um candidato custa UMA página (a home). Só o vencedor paga o scrape
+  // profundo. Sem essa separação, um lead cujos 6 candidatos são todos de outras
+  // empresas gastava até 18 requisições e travava a fila — foi o que aconteceu
+  // quando o SearXNG passou a devolver resultado pra todo mundo.
+  const prazo = Date.now() + PRAZO_CANDIDATOS_MS;
   const olhar = r.slice(0, 6);
   for (const cand of olhar) {
+    // Teto de tempo do laço: um lead nunca pode segurar o worker indefinidamente.
+    // Sai pelo que já tem em vez de arrastar a fila inteira.
+    if (Date.now() > prazo) break;
     const f = forcaDominio(nome, cidade, hostDe(cand.site));
     // Sem sinal no domínio, sem CNPJ pra conferir e sem nome pra procurar: não há
-    // como provar nada. Nem gasta scrape. (Com nome, sempre vale abrir a página.)
+    // como provar nada. Nem gasta requisição.
     if (!f.ok && !cnpjAlvo && !tokensNome(nome).length) continue;
-    const s = await scrapeSite(cand.site);
-    const cnpjSite = String(s.cnpj || '').replace(/\D/g, '');
+    const h0 = await lerHome(cand.site);
+    if (!h0) continue;
+    const cnpjSite = String(h0.cnpj || '').replace(/\D/g, '');
     if (cnpjAlvo && cnpjSite && cnpjSite !== cnpjAlvo) continue;   // veto: site de OUTRA empresa
     const confereCnpj = !!(cnpjAlvo && cnpjSite && cnpjSite === cnpjAlvo);
-    const confereNome = paginaSeApresentaComo(nome, cidade, s.identidade);
+    const confereNome = paginaSeApresentaComo(nome, cidade, h0.identidade);
     if (!f.ok && !confereCnpj && !confereNome) continue;            // nenhuma prova
 
+    // Descarta diretório ANTES de aprofundar: a página se descreve como guia/
+    // lista/consulta de CNPJ, ou lista muitos negócios (muitos telefones
+    // distintos). Ambos os sinais já estão na home — não vale ler mais páginas
+    // de um catálogo pra depois jogar fora.
+    if (pareceDiretorio(h0.resumo) || pareceDiretorio(cand.titulo) || (h0.qtd_telefones || 0) >= 10) continue;
+
+    // Passou em tudo: agora sim vale ler "sobre" e "contato".
+    const s = await aprofundar(cand.site, h0);
     const resumo = s.resumo || cand.conteudo || null;
-    // Pula se a página se descreve como diretório (guia/lista/consulta CNPJ) OU
-    // se lista MUITOS negócios (muitos telefones distintos) — um catálogo, não a
-    // empresa. Ambos são niche-agnósticos: valem pra qualquer segmento.
-    if (pareceDiretorio(resumo) || pareceDiretorio(cand.titulo) || (s.qtd_telefones || 0) >= 10) continue;
     return {
       encontrado: true,
       telefone: s.telefone || null,
