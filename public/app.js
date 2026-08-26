@@ -1987,6 +1987,37 @@ function Leads({
     }
   };
 
+  // Refazer análise: só o agente SWOT. Não encosta em telefone/e-mail/site —
+  // é o botão pra usar quando o contato já está certo e só o briefing ficou
+  // vazio ou ruim (o "Re-enriquecer" refaria a busca e sobrescreveria o bom).
+  const [regSwot, setRegSwot] = useState(false);
+  const regerarSwotLote = async () => {
+    if (!selected.length || regSwot) return;
+    setRegSwot(true);
+    try {
+      const r = await fetch('/api/leads/acoes', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          ids: selected,
+          acao: 'regerar_swot'
+        })
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        window.alert(d.erro || 'Não foi possível refazer a análise agora.');
+        return;
+      }
+      setSelected([]);
+      window.alert(`Análise sendo refeita para ${d.reenfileirados ?? selected.length} empresa(s). Os contatos NÃO são alterados. O briefing aparece em alguns instantes — abra o lead para ver.`);
+    } finally {
+      setRegSwot(false);
+    }
+  };
+
   // PDF em lote: busca o detalhe completo de cada lead selecionado e gera uma
   // folha com todos (1 empresa por página), mesma info do PDF individual.
   const [gerandoPdf, setGerandoPdf] = useState(false);
@@ -2326,6 +2357,21 @@ function Leads({
     h: 14,
     sw: 1.7
   }), reenriq ? 'Enviando…' : 'Re-enriquecer'), /*#__PURE__*/React.createElement("button", {
+    onClick: regerarSwotLote,
+    disabled: regSwot,
+    style: selBtnStyle('normal'),
+    title: "Refaz s\xF3 o briefing da IA. Telefone, e-mail e site ficam como est\xE3o."
+  }, /*#__PURE__*/React.createElement(SvgMulti, {
+    w: 14,
+    h: 14,
+    sw: 1.7
+  }, /*#__PURE__*/React.createElement("path", {
+    d: "M12 3v2M12 19v2M5 12H3M21 12h-2M7 7L5.5 5.5M18.5 18.5L17 17M17 7l1.5-1.5M5.5 18.5L7 17"
+  }), /*#__PURE__*/React.createElement("circle", {
+    cx: 12,
+    cy: 12,
+    r: 4
+  })), regSwot ? 'Enviando…' : 'Refazer análise'), /*#__PURE__*/React.createElement("button", {
     onClick: () => batchAction('aprovar'),
     style: selBtnStyle('normal')
   }, "Aprovar"), /*#__PURE__*/React.createElement("button", {
@@ -8849,6 +8895,49 @@ function LeadDetailPanel({
       setSalvandoContato(false);
     }
   };
+
+  // Refaz SÓ o briefing da IA deste lead. Contato/telefone/e-mail/site ficam
+  // intactos — é a diferença pro "Re-enriquecer", que refaz a busca inteira e
+  // sobrescreve dado bom. Depois de enfileirar, fica olhando o lead até o
+  // briefing mudar: sem isso o usuário clica, nada acontece na tela e parece
+  // que quebrou (a IA leva alguns segundos).
+  const [regSwot, setRegSwot] = useState(false);
+  const regerarSwot = async () => {
+    if (regSwot) return;
+    setRegSwot(true);
+    const antes = JSON.stringify(lead?.swot || {});
+    try {
+      const r = await fetch('/api/leads/acoes', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          ids: [leadId],
+          acao: 'regerar_swot'
+        })
+      });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        window.alert(d.erro || 'Não foi possível refazer a análise agora.');
+        return;
+      }
+      for (let i = 0; i < 12; i++) {
+        await new Promise(res => setTimeout(res, 4000));
+        const novo = await fetch('/api/leads/' + leadId, {
+          credentials: 'same-origin'
+        }).then(x => x.ok ? x.json() : null).catch(() => null);
+        if (novo && JSON.stringify(novo.swot || {}) !== antes) {
+          setLead(novo);
+          return;
+        }
+      }
+      window.alert('A análise foi enfileirada, mas ainda não voltou. A IA pode estar instável no momento — reabra o lead em alguns minutos.');
+    } finally {
+      setRegSwot(false);
+    }
+  };
   const patchStatus = async novoStatus => {
     if (actioning) return;
     setActioning(true);
@@ -9530,7 +9619,14 @@ function LeadDetailPanel({
       textTransform: 'uppercase',
       flex: 1
     }
-  }, "Briefing SWOT \xB7 IA")), l.swot.resumo && /*#__PURE__*/React.createElement("p", {
+  }, "Briefing SWOT \xB7 IA")), !l.swot.resumo && !l.swot.swot && /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 12.5,
+      lineHeight: 1.55,
+      margin: '0 0 12px',
+      color: 'var(--dim)'
+    }
+  }, "A an\xE1lise ainda n\xE3o foi gerada para este lead \u2014 a IA pode ter falhado ou estar indispon\xEDvel no momento. Clique em \u201CRefazer an\xE1lise\u201D abaixo. Os contatos n\xE3o s\xE3o alterados."), l.swot.resumo && /*#__PURE__*/React.createElement("p", {
     style: {
       fontSize: 13,
       lineHeight: 1.6,
@@ -9655,9 +9751,30 @@ function LeadDetailPanel({
     }
   }, l.swot.sinal_comercial || l.swot.gancho)), /*#__PURE__*/React.createElement("div", {
     style: {
-      marginTop: 12
+      marginTop: 12,
+      display: 'flex',
+      gap: 8,
+      flexWrap: 'wrap'
     }
   }, /*#__PURE__*/React.createElement("button", {
+    onClick: regerarSwot,
+    disabled: regSwot,
+    title: "Refaz s\xF3 o briefing da IA. Telefone, e-mail e site ficam como est\xE3o.",
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 6,
+      height: 31,
+      padding: '0 12px',
+      borderRadius: 7,
+      border: '1px solid var(--border)',
+      background: 'transparent',
+      color: regSwot ? 'var(--faint)' : 'var(--dim)',
+      fontSize: 12,
+      fontFamily: 'inherit',
+      cursor: regSwot ? 'default' : 'pointer'
+    }
+  }, regSwot ? 'Analisando…' : 'Refazer análise'), /*#__PURE__*/React.createElement("button", {
     onClick: () => navigator.clipboard?.writeText([l.swot.resumo, l.swot.fatos_uteis?.length ? 'Fatos úteis:\n- ' + l.swot.fatos_uteis.join('\n- ') : '', l.swot.dores_provaveis?.length ? 'Dores prováveis:\n- ' + l.swot.dores_provaveis.join('\n- ') : '', l.swot.sinal_comercial || l.swot.gancho ? 'Sinal comercial: ' + (l.swot.sinal_comercial || l.swot.gancho) : ''].filter(Boolean).join('\n\n')).catch(() => {}),
     style: {
       display: 'flex',

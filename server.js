@@ -1394,6 +1394,24 @@ app.post('/api/leads/acoes', requireAuth, requireEditor, async (req, res) => {
       return res.json({ ok: true, enfileirados: idsInt.length });
     }
 
+    // Refazer só a análise: re-roda o agente SWOT e NADA MAIS. Existe porque
+    // "Re-enriquecer" também refaz a busca de contato, e quando o telefone/e-mail
+    // já estão certos isso destrói dado bom pra consertar o briefing. Aqui nada
+    // é limpo: o agente lê a firmografia e o resumo do site que já existem e
+    // regrava só a coluna `swot`.
+    // contato_ok=false de propósito: regerar briefing NÃO pode disparar envio
+    // automático ao CRM. Quem manda pro CRM é o botão de enviar, deliberado.
+    if (acao === 'regerar_swot') {
+      if (!monitorQueues?.swot) return res.status(503).json({ erro: 'motor de análise indisponível' });
+      const { rows } = await pool.query(
+        `SELECT id, cnpj, busca_id FROM leads WHERE id = ANY($1::int[])`, [idsInt]);
+      await Promise.all(rows.map(r =>
+        monitorQueues.swot.add('swot', { cnpj: r.cnpj, busca_id: r.busca_id, lead_id: r.id, contato_ok: false },
+          { jobId: `swot-manual-${r.id}-${Date.now()}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 3, backoff: { type: 'exponential', delay: 8000 } })
+      ));
+      return res.json({ ok: true, reenfileirados: rows.length });
+    }
+
     // Re-enriquecer: re-roda a validação de contato + SWOT nos leads JÁ
     // existentes, com busca NOVA (limpa o contato web em cache), sem criar
     // duplicata. Útil pra atualizar dados após melhorar a busca (ex.: Tavily).
