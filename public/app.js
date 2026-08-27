@@ -9002,7 +9002,11 @@ function LeadDetailPanel({
         window.alert(d.erro || 'Não foi possível refazer a análise agora.');
         return;
       }
-      for (let i = 0; i < 12; i++) {
+      // 40 × 4s = ~2min40. Eram 48 segundos, e não bastavam: modelo de
+      // raciocínio pensa antes de escrever e passa fácil de 1 minuto. O
+      // briefing chegava, mas depois do aviso de falha — o usuário via "a IA
+      // não devolveu" numa análise que tinha dado certo.
+      for (let i = 0; i < 40; i++) {
         await new Promise(res => setTimeout(res, 4000));
         const novo = await fetch('/api/leads/' + leadId, {
           credentials: 'same-origin'
@@ -9012,7 +9016,7 @@ function LeadDetailPanel({
           return;
         }
       }
-      window.alert('A IA não devolveu a análise. Isso costuma ser o modelo configurado em Integrações → Inteligência: ' + 'roteadores como "openrouter/free" sorteiam um modelo grátis diferente a cada chamada e parte deles responde ' + 'em prosa ou vazio. Troque por um modelo fixo com suporte a JSON e tente de novo.');
+      window.alert('A análise ainda não voltou depois de quase 3 minutos. Ela pode chegar mesmo assim — ' + 'reabra o lead daqui a pouco antes de tentar de novo. Se continuar sem vir, o motivo costuma ser o modelo ' + 'configurado em Integrações → Inteligência: modelos de raciocínio gastam o orçamento de tokens pensando e ' + 'não sobra nada pra resposta. Um modelo direto (ex.: openai/gpt-4o-mini) resolve.');
     } finally {
       setRegSwot(false);
     }
