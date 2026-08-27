@@ -601,6 +601,32 @@ const statusColors = {
   Incompleto: C.amber,
   Descartado: C.gray
 };
+
+// "Enviado" sozinho não diz nada sobre o que foi feito com o lead: pode ter sido
+// o motor entregando ao CRM ou alguém marcando à mão depois de passar o contato
+// pro time. A etiqueta mostra qual dos dois, e o tooltip diz quando e por quem.
+// statusAtual vem separado porque no painel do lead o status na tela pode já ter
+// mudado (Aprovar/Descartar) sem o objeto ter sido recarregado — sem isso a
+// etiqueta continuaria dizendo "Enviado · manual" num lead recém-descartado.
+function envioDoLead(l, statusAtual) {
+  if ((statusAtual || l?.status) !== 'Enviado') return null;
+  const quando = d => {
+    try {
+      return new Date(d).toLocaleString('pt-BR');
+    } catch (_) {
+      return '';
+    }
+  };
+  if (l?.enviado_crm_em) return {
+    rotulo: 'Enviado · CRM',
+    titulo: `Entregue ao CRM pelo motor em ${quando(l.enviado_crm_em)}`
+  };
+  if (l?.enviado_manual_em) return {
+    rotulo: 'Enviado · manual',
+    titulo: `Marcado à mão em ${quando(l.enviado_manual_em)}${l.enviado_por ? ' por ' + l.enviado_por : ''}`
+  };
+  return null;
+}
 const buscaStatusColors = {
   Ativa: C.green,
   Pausada: C.amber,
@@ -1931,9 +1957,13 @@ function Leads({
   const allSel = leads.length > 0 && leads.every(l => selected.includes(l.id));
   const toggleSel = id => setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   const toggleAll = () => setSelected(allSel ? [] : leads.map(l => l.id));
+
+  // Sem checar o r.ok, um erro do servidor virava sucesso silencioso: a seleção
+  // limpava, a lista recarregava e nada tinha mudado. Foi assim que "Aprovar" e
+  // "Descartar" passaram despercebidos devolvendo 400.
   const batchAction = async acao => {
     if (!selected.length) return;
-    await fetch('/api/leads/acoes', {
+    const r = await fetch('/api/leads/acoes', {
       method: 'POST',
       credentials: 'same-origin',
       headers: {
@@ -1944,6 +1974,16 @@ function Leads({
         acao
       })
     });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      window.alert(d.erro || 'Não foi possível concluir a ação.');
+      return;
+    }
+    // Leads que já foram entregues ao CRM não aceitam marcação manual — avisa
+    // em vez de deixar o usuário achar que marcou todos.
+    if (d.ignorados_crm > 0) {
+      window.alert(`${d.ignorados_crm} lead(s) já tinham sido entregues ao CRM pelo motor e não foram alterados — a marcação manual vale só para os que ainda não passaram por lá.`);
+    }
     setSelected([]);
     setTick(t => t + 1); // recarrega a lista de fato (setPage no mesmo valor era no-op)
   };
@@ -2148,7 +2188,11 @@ function Leads({
     value: "Incompleto"
   }, "Incompleto"), /*#__PURE__*/React.createElement("option", {
     value: "Enviado"
-  }, "Enviado"), /*#__PURE__*/React.createElement("option", {
+  }, "Enviado (todos)"), /*#__PURE__*/React.createElement("option", {
+    value: "Enviado:crm"
+  }, "Enviado \xB7 pelo CRM"), /*#__PURE__*/React.createElement("option", {
+    value: "Enviado:manual"
+  }, "Enviado \xB7 marcado \xE0 m\xE3o"), /*#__PURE__*/React.createElement("option", {
     value: "Descartado"
   }, "Descartado")), /*#__PURE__*/React.createElement("input", {
     value: filterLocal,
@@ -2372,6 +2416,20 @@ function Leads({
     cy: 12,
     r: 4
   })), regSwot ? 'Enviando…' : 'Refazer análise'), /*#__PURE__*/React.createElement("button", {
+    onClick: () => batchAction('marcar_enviado'),
+    style: selBtnStyle('normal'),
+    title: "Marca \xE0 m\xE3o que estes leads foram entregues ao time de vendas (sem passar pelo CRM)."
+  }, /*#__PURE__*/React.createElement(Svg, {
+    d: "M20 6L9 17l-5-5",
+    color: C.green,
+    w: 14,
+    h: 14,
+    sw: 2.2
+  }), "Marcar como enviado"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => batchAction('desmarcar_enviado'),
+    style: selBtnStyle('dim'),
+    title: "Desfaz a marca\xE7\xE3o manual. Leads entregues pelo CRM n\xE3o s\xE3o afetados."
+  }, "Desmarcar envio"), /*#__PURE__*/React.createElement("button", {
     onClick: () => batchAction('aprovar'),
     style: selBtnStyle('normal')
   }, "Aprovar"), /*#__PURE__*/React.createElement("button", {
@@ -2558,9 +2616,16 @@ function Leads({
         gap: 4,
         alignItems: 'flex-start'
       }
-    }, /*#__PURE__*/React.createElement("span", {
-      style: badgeStyle(statusColors[l.status] || C.gray)
-    }, l.status), l.contato_pendente && /*#__PURE__*/React.createElement("span", {
+    }, (() => {
+      const e = envioDoLead(l, l.status);
+      return /*#__PURE__*/React.createElement("span", {
+        title: e?.titulo || undefined,
+        style: {
+          ...badgeStyle(statusColors[l.status] || C.gray),
+          whiteSpace: 'nowrap'
+        }
+      }, e ? e.rotulo : l.status);
+    })(), l.contato_pendente && /*#__PURE__*/React.createElement("span", {
       title: "Sem WhatsApp/telefone \u2014 n\xE3o enviado ao CRM automaticamente",
       style: {
         ...badgeStyle(C.red),
@@ -8938,6 +9003,44 @@ function LeadDetailPanel({
       setRegSwot(false);
     }
   };
+
+  // Marcador manual "entreguei este lead pro time de vendas". Aparece só pra
+  // lead que NÃO passou pelo CRM: quando o motor já entregou, a etiqueta conta a
+  // história sozinha e desmarcar seria mentira — o lead está lá de verdade.
+  const [marcandoEnvio, setMarcandoEnvio] = useState(false);
+  const toggleEnviadoManual = async () => {
+    if (marcandoEnvio || !lead) return;
+    const jaMarcado = !!lead.enviado_manual_em;
+    setMarcandoEnvio(true);
+    try {
+      const r = await fetch('/api/leads/acoes', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          ids: [leadId],
+          acao: jaMarcado ? 'desmarcar_enviado' : 'marcar_enviado'
+        })
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        window.alert(d.erro || 'Não foi possível atualizar o marcador.');
+        return;
+      }
+      const novo = await fetch('/api/leads/' + leadId, {
+        credentials: 'same-origin'
+      }).then(x => x.ok ? x.json() : null).catch(() => null);
+      if (novo) {
+        setLead(novo);
+        setDisplayStatus(novo.status);
+      }
+      onStatusChange && onStatusChange();
+    } finally {
+      setMarcandoEnvio(false);
+    }
+  };
   const patchStatus = async novoStatus => {
     if (actioning) return;
     setActioning(true);
@@ -9153,14 +9256,27 @@ function LeadDetailPanel({
       gap: 9,
       marginBottom: 5
     }
-  }, /*#__PURE__*/React.createElement("span", {
-    style: badgeStyle(statusColors[status] || C.gray)
-  }, status), /*#__PURE__*/React.createElement("span", {
+  }, (() => {
+    const e = envioDoLead(l, status);
+    return /*#__PURE__*/React.createElement("span", {
+      title: e?.titulo || undefined,
+      style: badgeStyle(statusColors[status] || C.gray)
+    }, e ? e.rotulo : status);
+  })(), /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 11.5,
       color: 'var(--faint)'
     }
-  }, l.cnpj)), /*#__PURE__*/React.createElement("h2", {
+  }, l.cnpj)), (() => {
+    const e = envioDoLead(l, status);
+    return e ? /*#__PURE__*/React.createElement("p", {
+      style: {
+        fontSize: 11.5,
+        color: 'var(--faint)',
+        margin: '0 0 4px'
+      }
+    }, e.titulo) : null;
+  })(), /*#__PURE__*/React.createElement("h2", {
     style: {
       fontSize: 19,
       fontWeight: 600,
@@ -9839,9 +9955,35 @@ function LeadDetailPanel({
       borderTop: '1px solid var(--border)',
       padding: '14px 24px',
       display: 'flex',
-      gap: 10
+      gap: 10,
+      flexWrap: 'wrap'
     }
-  }, /*#__PURE__*/React.createElement("button", {
+  }, !l.enviado_crm_em && /*#__PURE__*/React.createElement("button", {
+    onClick: toggleEnviadoManual,
+    disabled: marcandoEnvio,
+    title: l.enviado_manual_em ? 'Desfaz a marcação manual de envio ao time de vendas.' : 'Registra que você entregou este lead ao time de vendas (sem passar pelo CRM).',
+    style: {
+      height: 42,
+      padding: '0 16px',
+      borderRadius: 10,
+      border: `1px solid ${l.enviado_manual_em ? C.green : 'var(--border)'}`,
+      background: 'transparent',
+      color: l.enviado_manual_em ? C.green : 'var(--text)',
+      fontSize: 13,
+      fontFamily: 'inherit',
+      cursor: marcandoEnvio ? 'default' : 'pointer',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 7,
+      opacity: marcandoEnvio ? .6 : 1
+    }
+  }, /*#__PURE__*/React.createElement(Svg, {
+    d: "M20 6L9 17l-5-5",
+    color: l.enviado_manual_em ? C.green : 'var(--dim)',
+    w: 15,
+    h: 15,
+    sw: 2.2
+  }), l.enviado_manual_em ? 'Enviado ao time' : 'Marcar como enviado'), /*#__PURE__*/React.createElement("button", {
     onClick: () => onCrm([leadId]),
     style: {
       flex: 1,

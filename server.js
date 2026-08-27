@@ -90,7 +90,14 @@ function buildLeadsFilter(query) {
     const n = vals.length;
     conditions.push(`(l.fantasia ILIKE $${n} OR l.decisor ILIKE $${n} OR l.razao ILIKE $${n})`);
   }
-  if (status) { vals.push(status); conditions.push(`l.status = $${vals.length}`); }
+  // "Enviado" aceita sub-filtro: 'Enviado:crm' (o motor entregou ao CRM) ou
+  // 'Enviado:manual' (o usuário marcou à mão). Sem sufixo, traz os dois.
+  if (status) {
+    const [base, origem] = String(status).split(':');
+    vals.push(base); conditions.push(`l.status = $${vals.length}`);
+    if (origem === 'crm') conditions.push('l.enviado_crm_em IS NOT NULL');
+    if (origem === 'manual') conditions.push('l.enviado_crm_em IS NULL AND l.enviado_manual_em IS NOT NULL');
+  }
   if (uf) { vals.push(uf); conditions.push(`l.uf = $${vals.length}`); }
   // Local: casa cidade OU UF (ex.: "Goiânia", "GO", "São Paulo").
   if (local && String(local).trim()) {
@@ -421,6 +428,13 @@ async function init() {
     CREATE INDEX IF NOT EXISTS idx_leads_crm_ref ON leads(crm_ref);
     ALTER TABLE leads  ADD COLUMN IF NOT EXISTS contato_pendente BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE leads  ADD COLUMN IF NOT EXISTS contato_status TEXT;
+    -- Marcação MANUAL de "entreguei este lead pro time de vendas". Separada de
+    -- enviado_crm_em de propósito: aquela é carimbada pelo motor quando o envio
+    -- ao CRM dá certo, esta é a palavra do usuário. As duas levam ao mesmo
+    -- status 'Enviado', mas a tela mostra qual foi — e só a manual pode ser
+    -- desfeita (desmarcar um lead que JÁ está no CRM seria mentira).
+    ALTER TABLE leads  ADD COLUMN IF NOT EXISTS enviado_manual_em TIMESTAMPTZ;
+    ALTER TABLE leads  ADD COLUMN IF NOT EXISTS enviado_por       TEXT;
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS sem_contato INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE config ADD COLUMN IF NOT EXISTS limite_diario INTEGER NOT NULL DEFAULT 350;
     ALTER TABLE config ADD COLUMN IF NOT EXISTS descoberta_modo_padrao TEXT NOT NULL DEFAULT 'cnpja';
@@ -1050,7 +1064,8 @@ app.get('/api/leads', requireAuth, async (req, res) => {
     const [countRes, dataRes] = await Promise.all([
       pool.query(`SELECT COUNT(*)::int AS total FROM leads l ${where}`, vals),
       pool.query(`SELECT l.id, l.fantasia, l.razao, l.setor, l.porte, l.cidade, l.uf,
-        l.decisor, l.cargo, l.score, l.tem_email, l.tem_telefone, l.status, l.busca_id, l.contato_validado, l.contato_pendente, l.contato_status
+        l.decisor, l.cargo, l.score, l.tem_email, l.tem_telefone, l.status, l.busca_id, l.contato_validado, l.contato_pendente, l.contato_status,
+        l.enviado_crm_em, l.enviado_manual_em, l.enviado_por
         FROM leads l ${where} ORDER BY l.score DESC, l.id
         LIMIT $${vals.length+1} OFFSET $${vals.length+2}`,
         [...vals, perPage, (page-1)*perPage]),
@@ -1082,14 +1097,16 @@ app.get('/api/leads/export', requireAuth, async (req, res) => {
       const ids = String(idsParam).split(',').map(x => parseInt(x,10)).filter(x => !isNaN(x));
       if (!ids.length) return res.status(400).json({ erro: 'ids inválidos' });
       const { rows:r } = await pool.query(
-        `SELECT fantasia,razao,cnpj,setor,porte,cidade,uf,decisor,cargo,score,status,tem_email,tem_telefone,contato_validado
+        `SELECT fantasia,razao,cnpj,setor,porte,cidade,uf,decisor,cargo,score,status,tem_email,tem_telefone,contato_validado,
+                enviado_crm_em,enviado_manual_em,enviado_por
          FROM leads WHERE id = ANY($1::int[]) ORDER BY score DESC`, [ids]);
       rows = r;
     } else {
       const { conditions, vals } = buildLeadsFilter(req.query);
       const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
       const { rows:r } = await pool.query(
-        `SELECT fantasia,razao,cnpj,setor,porte,cidade,uf,decisor,cargo,score,status,tem_email,tem_telefone,contato_validado
+        `SELECT fantasia,razao,cnpj,setor,porte,cidade,uf,decisor,cargo,score,status,tem_email,tem_telefone,contato_validado,
+                enviado_crm_em,enviado_manual_em,enviado_por
          FROM leads l ${where} ORDER BY score DESC`, vals);
       rows = r;
     }
@@ -1102,15 +1119,26 @@ app.get('/api/leads/export', requireAuth, async (req, res) => {
       const cv = r.contato_validado || {};
       return { email: cv.email || null, telefone: cv.telefone || cv.whatsapp || null };
     };
+    // COMO o lead foi entregue ao time de vendas: pelo motor (CRM) ou marcado à
+    // mão. É o que permite auditar a planilha depois — "Enviado" sozinho não
+    // diz se alguém de fato mandou ou se o motor mandou.
+    const envioDe = r => {
+      if (r.enviado_crm_em) return { via: 'CRM', em: r.enviado_crm_em, por: '' };
+      if (r.enviado_manual_em) return { via: 'Manual', em: r.enviado_manual_em, por: r.enviado_por || '' };
+      return { via: '', em: null, por: '' };
+    };
+    const dataBr = d => d ? new Date(d).toLocaleString('pt-BR') : '';
     const csv = [
       ['Empresa','Razão Social','CNPJ','Setor','Porte','Cidade','UF','Decisor','Cargo','Score','Status',
-       'Tem E-mail','Tem Telefone','E-mail','Telefone'].join(';'),
+       'Tem E-mail','Tem Telefone','E-mail','Telefone','Enviado via','Enviado em','Enviado por'].join(';'),
       ...rows.map(r => {
         const c = contatoDe(r);
+        const e = envioDe(r);
         const temEmail = !!c.email || !!r.tem_email, temTel = !!c.telefone || !!r.tem_telefone;
         return [esc(r.fantasia),esc(r.razao),esc(r.cnpj),esc(r.setor),esc(r.porte),
           esc(r.cidade),esc(r.uf),esc(r.decisor),esc(r.cargo),r.score,esc(r.status),
-          temEmail?'Sim':'Não', temTel?'Sim':'Não', esc(c.email), esc(c.telefone)].join(';');
+          temEmail?'Sim':'Não', temTel?'Sim':'Não', esc(c.email), esc(c.telefone),
+          esc(e.via), esc(dataBr(e.em)), esc(e.por)].join(';');
       }),
     ].join('\r\n');
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -1392,6 +1420,42 @@ app.post('/api/leads/acoes', requireAuth, requireEditor, async (req, res) => {
           { jobId: `crm-manual-${id}-${Date.now()}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 4, backoff: { type: 'exponential', delay: 15000 } })
       ));
       return res.json({ ok: true, enfileirados: idsInt.length });
+    }
+
+    // Aprovar / Descartar em lote. Estavam quebrados: o front mandava
+    // acao='aprovar'|'descartar' e o endpoint não tinha esses ramos, então caía
+    // na validação de `status` (que vinha vazio) e devolvia 400. O front não
+    // checava o r.ok, limpava a seleção e recarregava — parecia ter funcionado
+    // e nunca mudava status nenhum.
+    if (acao === 'aprovar' || acao === 'descartar') {
+      const novo = acao === 'aprovar' ? 'Qualificado' : 'Descartado';
+      const { rowCount } = await pool.query(
+        `UPDATE leads SET status=$1, atualizado_em=now() WHERE id = ANY($2::int[])`,
+        [novo, idsInt]);
+      return res.json({ ok: true, atualizados: rowCount, status: novo });
+    }
+
+    // Marcar/desmarcar MANUALMENTE como entregue ao time de vendas. Serve pra
+    // quem trabalha sem CRM conectado, ou pra quem mandou o lead por fora
+    // (planilha, WhatsApp, reunião) e precisa que a lista reflita isso.
+    if (acao === 'marcar_enviado') {
+      // Lead que o motor já entregou ao CRM não é remarcado: ele já está
+      // 'Enviado' com data própria, e sobrescrever apagaria a procedência real.
+      const { rowCount } = await pool.query(
+        `UPDATE leads SET status='Enviado', enviado_manual_em=now(), enviado_por=$2, atualizado_em=now()
+          WHERE id = ANY($1::int[]) AND enviado_crm_em IS NULL`,
+        [idsInt, req.user?.nome || req.user?.email || null]);
+      return res.json({ ok: true, marcados: rowCount, ignorados_crm: idsInt.length - rowCount });
+    }
+
+    if (acao === 'desmarcar_enviado') {
+      // Só desfaz o que foi marcado à mão. Um lead entregue ao CRM continua
+      // entregue — desmarcar aqui não o tira de lá, só mentiria na tela.
+      const { rowCount } = await pool.query(
+        `UPDATE leads SET status='Qualificado', enviado_manual_em=NULL, enviado_por=NULL, atualizado_em=now()
+          WHERE id = ANY($1::int[]) AND enviado_crm_em IS NULL AND enviado_manual_em IS NOT NULL`,
+        [idsInt]);
+      return res.json({ ok: true, desmarcados: rowCount, ignorados_crm: idsInt.length - rowCount });
     }
 
     // Refazer só a análise: re-roda o agente SWOT e NADA MAIS. Existe porque
