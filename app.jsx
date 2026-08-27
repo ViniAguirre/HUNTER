@@ -282,6 +282,19 @@ const statusColors = { Qualificado:C.gold, Novo:C.blue, Enviado:C.green, Incompl
 // statusAtual vem separado porque no painel do lead o status na tela pode já ter
 // mudado (Aprovar/Descartar) sem o objeto ter sido recarregado — sem isso a
 // etiqueta continuaria dizendo "Enviado · manual" num lead recém-descartado.
+// Um briefing pode existir no banco e mesmo assim não ter conteúdo nenhum: até
+// hoje, resposta vazia da IA virava objeto com a forma certa e todos os campos
+// em branco. A tela precisa olhar o CONTEÚDO, não a presença do objeto — senão
+// mostra quatro quadrantes com "—" como se fosse análise.
+function briefingVazio(sw) {
+  if (!sw || typeof sw !== 'object') return true;
+  const n = v => Array.isArray(v) ? v.length : 0;
+  const s = sw.swot || {};
+  return !String(sw.resumo || '').trim() && !String(sw.sinal_comercial || sw.gancho || '').trim()
+    && !n(sw.fatos_uteis) && !n(sw.dores_provaveis)
+    && !n(s.forcas) && !n(s.fraquezas) && !n(s.oportunidades) && !n(s.ameacas);
+}
+
 function envioDoLead(l, statusAtual) {
   if ((statusAtual || l?.status) !== 'Enviado') return null;
   const quando = d => { try { return new Date(d).toLocaleString('pt-BR'); } catch (_) { return ''; } };
@@ -4173,7 +4186,11 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
   const regerarSwot = async () => {
     if (regSwot) return;
     setRegSwot(true);
-    const antes = JSON.stringify(lead?.swot || {});
+    // Compara o carimbo de geração, não o conteúdo: dois briefings vazios são
+    // idênticos, então comparar o texto fazia o botão parecer inerte quando a
+    // IA devolvia nada. Agora briefing vazio nem chega a ser gravado — o job
+    // falha — e a ausência de carimbo novo é justamente o sinal de que falhou.
+    const antes = String(lead?.swot?.gerado_em || '');
     try {
       const r = await fetch('/api/leads/acoes', {
         method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
@@ -4188,9 +4205,11 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
         await new Promise(res => setTimeout(res, 4000));
         const novo = await fetch('/api/leads/' + leadId, { credentials:'same-origin' })
           .then(x => x.ok ? x.json() : null).catch(() => null);
-        if (novo && JSON.stringify(novo.swot || {}) !== antes) { setLead(novo); return; }
+        if (novo && String(novo.swot?.gerado_em || '') !== antes) { setLead(novo); return; }
       }
-      window.alert('A análise foi enfileirada, mas ainda não voltou. A IA pode estar instável no momento — reabra o lead em alguns minutos.');
+      window.alert('A IA não devolveu a análise. Isso costuma ser o modelo configurado em Integrações → Inteligência: ' +
+        'roteadores como "openrouter/free" sorteiam um modelo grátis diferente a cada chamada e parte deles responde ' +
+        'em prosa ou vazio. Troque por um modelo fixo com suporte a JSON e tente de novo.');
     } finally { setRegSwot(false); }
   };
 
@@ -4488,13 +4507,10 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                   Briefing SWOT · IA
                 </span>
               </div>
-              {/* Sem resumo E sem quadrantes = a IA não devolveu nada. Antes a
-                  seção aparecia em branco e não dava pra saber se era falha ou
-                  se o lead simplesmente não tinha análise. */}
-              {!l.swot.resumo && !l.swot.swot && (
+              {briefingVazio(l.swot) && (
                 <p style={{ fontSize:12.5, lineHeight:1.55, margin:'0 0 12px', color:'var(--dim)' }}>
-                  A análise ainda não foi gerada para este lead — a IA pode ter falhado ou estar indisponível
-                  no momento. Clique em “Refazer análise” abaixo. Os contatos não são alterados.
+                  A análise ainda não foi gerada para este lead — a IA falhou ou devolveu resposta vazia.
+                  Clique em “Refazer análise” abaixo. Os contatos não são alterados.
                 </p>
               )}
               {l.swot.resumo && (
@@ -4518,6 +4534,7 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                   </ul>
                 </div>
               )}
+              {!briefingVazio(l.swot) && (
               <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:14 }}>
                 {[
                   ['Forças', l.swot.swot?.forcas, C.green],
@@ -4534,6 +4551,7 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                   </div>
                 ))}
               </div>
+              )}
               {(l.swot.sinal_comercial || l.swot.gancho) && (
                 <div style={{ background:'rgba(58,142,255,.07)', border:'1px solid rgba(58,142,255,.22)', borderRadius:11, padding:14, marginBottom:10 }}>
                   <div style={{ fontSize:10.5, fontWeight:600, color:C.blue, marginBottom:5, textTransform:'uppercase', letterSpacing:'.06em' }}>Sinal comercial</div>
@@ -4549,6 +4567,7 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                     cursor: regSwot ? 'default' : 'pointer' }}>
                   {regSwot ? 'Analisando…' : 'Refazer análise'}
                 </button>
+                {!briefingVazio(l.swot) && (
                 <button onClick={() => navigator.clipboard?.writeText(
                     [l.swot.resumo,
                      l.swot.fatos_uteis?.length ? 'Fatos úteis:\n- ' + l.swot.fatos_uteis.join('\n- ') : '',
@@ -4557,6 +4576,7 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                   style={{ display:'flex', alignItems:'center', gap:6, height:31, padding:'0 12px',
                     borderRadius:7, border:'1px solid rgba(58,142,255,.3)', background:'transparent',
                     color:C.blue, fontSize:12, fontFamily:'inherit', cursor:'pointer' }}>Copiar briefing</button>
+                )}
               </div>
             </section>
           )}

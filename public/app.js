@@ -608,6 +608,16 @@ const statusColors = {
 // statusAtual vem separado porque no painel do lead o status na tela pode já ter
 // mudado (Aprovar/Descartar) sem o objeto ter sido recarregado — sem isso a
 // etiqueta continuaria dizendo "Enviado · manual" num lead recém-descartado.
+// Um briefing pode existir no banco e mesmo assim não ter conteúdo nenhum: até
+// hoje, resposta vazia da IA virava objeto com a forma certa e todos os campos
+// em branco. A tela precisa olhar o CONTEÚDO, não a presença do objeto — senão
+// mostra quatro quadrantes com "—" como se fosse análise.
+function briefingVazio(sw) {
+  if (!sw || typeof sw !== 'object') return true;
+  const n = v => Array.isArray(v) ? v.length : 0;
+  const s = sw.swot || {};
+  return !String(sw.resumo || '').trim() && !String(sw.sinal_comercial || sw.gancho || '').trim() && !n(sw.fatos_uteis) && !n(sw.dores_provaveis) && !n(s.forcas) && !n(s.fraquezas) && !n(s.oportunidades) && !n(s.ameacas);
+}
 function envioDoLead(l, statusAtual) {
   if ((statusAtual || l?.status) !== 'Enviado') return null;
   const quando = d => {
@@ -8970,7 +8980,11 @@ function LeadDetailPanel({
   const regerarSwot = async () => {
     if (regSwot) return;
     setRegSwot(true);
-    const antes = JSON.stringify(lead?.swot || {});
+    // Compara o carimbo de geração, não o conteúdo: dois briefings vazios são
+    // idênticos, então comparar o texto fazia o botão parecer inerte quando a
+    // IA devolvia nada. Agora briefing vazio nem chega a ser gravado — o job
+    // falha — e a ausência de carimbo novo é justamente o sinal de que falhou.
+    const antes = String(lead?.swot?.gerado_em || '');
     try {
       const r = await fetch('/api/leads/acoes', {
         method: 'POST',
@@ -8993,12 +9007,12 @@ function LeadDetailPanel({
         const novo = await fetch('/api/leads/' + leadId, {
           credentials: 'same-origin'
         }).then(x => x.ok ? x.json() : null).catch(() => null);
-        if (novo && JSON.stringify(novo.swot || {}) !== antes) {
+        if (novo && String(novo.swot?.gerado_em || '') !== antes) {
           setLead(novo);
           return;
         }
       }
-      window.alert('A análise foi enfileirada, mas ainda não voltou. A IA pode estar instável no momento — reabra o lead em alguns minutos.');
+      window.alert('A IA não devolveu a análise. Isso costuma ser o modelo configurado em Integrações → Inteligência: ' + 'roteadores como "openrouter/free" sorteiam um modelo grátis diferente a cada chamada e parte deles responde ' + 'em prosa ou vazio. Troque por um modelo fixo com suporte a JSON e tente de novo.');
     } finally {
       setRegSwot(false);
     }
@@ -9735,14 +9749,14 @@ function LeadDetailPanel({
       textTransform: 'uppercase',
       flex: 1
     }
-  }, "Briefing SWOT \xB7 IA")), !l.swot.resumo && !l.swot.swot && /*#__PURE__*/React.createElement("p", {
+  }, "Briefing SWOT \xB7 IA")), briefingVazio(l.swot) && /*#__PURE__*/React.createElement("p", {
     style: {
       fontSize: 12.5,
       lineHeight: 1.55,
       margin: '0 0 12px',
       color: 'var(--dim)'
     }
-  }, "A an\xE1lise ainda n\xE3o foi gerada para este lead \u2014 a IA pode ter falhado ou estar indispon\xEDvel no momento. Clique em \u201CRefazer an\xE1lise\u201D abaixo. Os contatos n\xE3o s\xE3o alterados."), l.swot.resumo && /*#__PURE__*/React.createElement("p", {
+  }, "A an\xE1lise ainda n\xE3o foi gerada para este lead \u2014 a IA falhou ou devolveu resposta vazia. Clique em \u201CRefazer an\xE1lise\u201D abaixo. Os contatos n\xE3o s\xE3o alterados."), l.swot.resumo && /*#__PURE__*/React.createElement("p", {
     style: {
       fontSize: 13,
       lineHeight: 1.6,
@@ -9803,7 +9817,7 @@ function LeadDetailPanel({
     }
   }, l.swot.dores_provaveis.map((d, i) => /*#__PURE__*/React.createElement("li", {
     key: i
-  }, d)))), /*#__PURE__*/React.createElement("div", {
+  }, d)))), !briefingVazio(l.swot) && /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
       gridTemplateColumns: '1fr 1fr',
@@ -9890,7 +9904,7 @@ function LeadDetailPanel({
       fontFamily: 'inherit',
       cursor: regSwot ? 'default' : 'pointer'
     }
-  }, regSwot ? 'Analisando…' : 'Refazer análise'), /*#__PURE__*/React.createElement("button", {
+  }, regSwot ? 'Analisando…' : 'Refazer análise'), !briefingVazio(l.swot) && /*#__PURE__*/React.createElement("button", {
     onClick: () => navigator.clipboard?.writeText([l.swot.resumo, l.swot.fatos_uteis?.length ? 'Fatos úteis:\n- ' + l.swot.fatos_uteis.join('\n- ') : '', l.swot.dores_provaveis?.length ? 'Dores prováveis:\n- ' + l.swot.dores_provaveis.join('\n- ') : '', l.swot.sinal_comercial || l.swot.gancho ? 'Sinal comercial: ' + (l.swot.sinal_comercial || l.swot.gancho) : ''].filter(Boolean).join('\n\n')).catch(() => {}),
     style: {
       display: 'flex',

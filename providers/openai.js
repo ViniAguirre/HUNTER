@@ -28,18 +28,6 @@ const MODELO_PADRAO = PROVEDORES.openai.modelo;
 
 function provedorDe(nome) { return PROVEDORES[nome] || PROVEDORES.openai; }
 
-// Quem aceita "JSON mode" (response_format). Além da OpenAI nativa e dos
-// modelos openai/*, incluímos os ROTEADORES do OpenRouter (openrouter/auto,
-// openrouter/free): eles escolhem o modelo em função dos recursos pedidos, então
-// pedir saída estruturada faz o roteador filtrar por modelos que suportam JSON —
-// sem isso ele sorteia qualquer modelo grátis, que às vezes responde em prosa e
-// quebra o parser. Se algum provedor recusar o parâmetro, `postChat` refaz a
-// chamada sem ele (fallback), então isso nunca vira erro fatal.
-function suportaJsonMode(provedor, modelo) {
-  const m = String(modelo || '');
-  return provedor === 'openai' || /^openai\//i.test(m) || /^openrouter\//i.test(m);
-}
-
 // POST no endpoint de chat com fallback: se o provedor/modelo recusar
 // `response_format`, tenta de novo sem ele em vez de falhar a geração.
 async function postChat(url, body, apiKey) {
@@ -200,13 +188,20 @@ async function gerarSwot(empresa, { apiKey, modelo, contexto, perfilEmpresa, pro
     // inválido — o que aparecia como "briefing vazio" sem explicação.
     max_tokens: 1400,
   };
-  if (suportaJsonMode(provedor, body.model)) body.response_format = { type: 'json_object' };
+  // JSON mode SEMPRE, pra qualquer modelo. Aqui havia uma lista de permissão
+  // (`openai/*` e os roteadores `openrouter/*`) que deixava de fora modelos
+  // perfeitamente capazes: com `deepseek/deepseek-v4-flash` configurado, o
+  // parâmetro nunca era enviado, o modelo respondia em texto livre e o briefing
+  // voltava vazio. O prompt já pede JSON, e `postChat` refaz a chamada sem o
+  // parâmetro quando o provedor o recusa — pedir a mais não custa nada, pedir a
+  // menos custava o briefing inteiro.
+  body.response_format = { type: 'json_object' };
   const arr = v => Array.isArray(v) ? v.filter(Boolean).map(x => String(x)) : (v ? [String(v)] : []);
   try {
     const { data } = await postChat(prov.url, body, apiKey);
     const txt = data?.choices?.[0]?.message?.content || '{}';
     const parsed = extrairJson(txt);
-    return {
+    const briefing = {
       resumo: parsed.resumo || '',
       fatos_uteis: arr(parsed.fatos_uteis),
       dores_provaveis: arr(parsed.dores_provaveis),
@@ -222,6 +217,22 @@ async function gerarSwot(empresa, { apiKey, modelo, contexto, perfilEmpresa, pro
       modelo: body.model,
       gerado_em: new Date().toISOString(),
     };
+    // JSON válido mas SEM conteúdo (a IA devolveu {} ou um objeto com outras
+    // chaves) não pode virar briefing: cada campo cai no default vazio, o
+    // objeto fica com a forma certa e o lead é gravado como 'pronto' com uma
+    // análise em branco. Foi assim que leads apareceram com os quatro
+    // quadrantes em "—" e o "Refazer análise" parecendo não fazer nada —
+    // regerava o mesmo vazio. Falhar aqui faz o job tentar o próximo provedor
+    // e, no fim, deixar o lead pendente de verdade em vez de fingir pronto.
+    const s = briefing.swot;
+    const vazio = !briefing.resumo && !briefing.sinal_comercial
+      && !briefing.fatos_uteis.length && !briefing.dores_provaveis.length
+      && !s.forcas.length && !s.fraquezas.length && !s.oportunidades.length && !s.ameacas.length;
+    if (vazio) {
+      const amostra = String(txt).replace(/\s+/g, ' ').slice(0, 180);
+      throw new Error(`a IA devolveu JSON sem conteúdo de briefing — veio: "${amostra}"`);
+    }
+    return briefing;
   } catch (err) {
     if (err.response) {
       const msg = err.response.data?.error?.message || JSON.stringify(err.response.data).slice(0, 200);
@@ -262,7 +273,7 @@ async function sugerirCnae(texto, catalogo, { apiKey, modelo, max = 8, provedor 
     temperature: 0.1,
     max_tokens: 200,
   };
-  if (suportaJsonMode(provedor, body.model)) body.response_format = { type: 'json_object' };
+  body.response_format = { type: 'json_object' };
   try {
     const { data } = await postChat(prov.url, body, apiKey);
     const parsed = extrairJson(data?.choices?.[0]?.message?.content || '{}');
