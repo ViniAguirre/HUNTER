@@ -104,6 +104,29 @@ function extrairJson(txt) {
   throw new Error(`resposta da IA não veio em JSON válido — veio: "${amostra}${s.length > 180 ? '…' : ''}"`);
 }
 
+// Content vazio tem causas diferentes e conserto diferente — a mensagem precisa
+// dizer QUAL. O caso que nos custou 127 briefings: modelo de raciocínio
+// (deepseek-v4-flash e afins) gasta o orçamento de tokens "pensando" e devolve
+// content vazio com finish_reason='length'. Quem lê o log tem que ver isso, e
+// não um genérico "a IA não respondeu".
+function motivoRespostaVazia(escolha, data) {
+  const fim = escolha.finish_reason || escolha.native_finish_reason || '—';
+  const u = data?.usage || {};
+  const raciocinio = u.completion_tokens_details?.reasoning_tokens;
+  const partes = [`a IA devolveu resposta VAZIA (finish_reason=${fim}`];
+  if (u.completion_tokens != null) partes.push(`tokens gerados=${u.completion_tokens}`);
+  if (raciocinio) partes.push(`sendo ${raciocinio} só de raciocínio`);
+  let msg = partes.join(', ') + ')';
+  if (fim === 'length') {
+    msg += ' — o modelo estourou o limite de tokens antes de escrever a resposta. ' +
+      'Modelos de raciocínio gastam o orçamento pensando: use um modelo direto (sem "reasoning") ' +
+      'em Integrações → Inteligência.';
+  } else if (raciocinio) {
+    msg += ' — o modelo raciocinou mas não escreveu a resposta. Troque por um modelo direto.';
+  }
+  return msg;
+}
+
 const SYSTEM = `Você é um analista de inteligência comercial B2B brasileiro. A partir dos dados de
 uma empresa-alvo (firmografia da Receita, por que ela deu match no perfil buscado, e o que o site
 dela diz sobre si) e do que NÓS vendemos, produz um briefing para MUNICIAR o vendedor/closer com
@@ -183,10 +206,13 @@ async function gerarSwot(empresa, { apiKey, modelo, contexto, perfilEmpresa, pro
       { role: 'user', content: montarPrompt(empresa, contexto, perfilEmpresa) },
     ],
     temperature: 0.4,
-    // Folga suficiente pro briefing inteiro (resumo + fatos + 4 listas do SWOT
-    // + sinal). Apertado demais, a resposta é cortada no meio e o JSON fica
-    // inválido — o que aparecia como "briefing vazio" sem explicação.
-    max_tokens: 1400,
+    // Folga pro briefing inteiro (resumo + fatos + 4 listas do SWOT + sinal) E
+    // pro raciocínio: em modelos "reasoning" o orçamento é compartilhado, e o
+    // pensamento vem ANTES da resposta. Com 1400 o deepseek-v4-flash gastava
+    // tudo pensando e devolvia content vazio. 4000 dá espaço pros dois; modelo
+    // direto simplesmente para antes e a cobrança é por token gerado, não pelo
+    // teto — então a folga não custa nada a quem não precisa dela.
+    max_tokens: 4000,
   };
   // JSON mode SEMPRE, pra qualquer modelo. Aqui havia uma lista de permissão
   // (`openai/*` e os roteadores `openrouter/*`) que deixava de fora modelos
@@ -199,7 +225,14 @@ async function gerarSwot(empresa, { apiKey, modelo, contexto, perfilEmpresa, pro
   const arr = v => Array.isArray(v) ? v.filter(Boolean).map(x => String(x)) : (v ? [String(v)] : []);
   try {
     const { data } = await postChat(prov.url, body, apiKey);
-    const txt = data?.choices?.[0]?.message?.content || '{}';
+    // Sem o `|| '{}'` que havia aqui: resposta com content VAZIO virava o texto
+    // "{}", que parseava sem erro e produzia briefing em branco. Pior, a
+    // mensagem de erro dizia `veio: "{}"` como se o modelo tivesse mandado
+    // isso — o `{}` era nosso. Agora content vazio cai na mensagem de resposta
+    // vazia, que é o que de fato aconteceu.
+    const escolha = data?.choices?.[0] || {};
+    const txt = escolha.message?.content || '';
+    if (!txt.trim()) throw new Error(motivoRespostaVazia(escolha, data));
     const parsed = extrairJson(txt);
     const briefing = {
       resumo: parsed.resumo || '',
