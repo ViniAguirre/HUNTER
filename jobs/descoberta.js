@@ -545,7 +545,21 @@ function buildSearchParams(criterios) {
     out.states = p.ufs || [];
     out.activities = p.cnaes || [];
     out.municipalities = p.municipios_cod || [];
-    out.names = p.keywords || [];
+    // Palavra-chave DERIVADA (radar de semelhantes) não vira exigência.
+    //
+    // No lookalike, `keywords` sai de perfil.js: são os tokens que mais se
+    // repetem nos NOMES das sementes. É uma impressão digital da lista, não um
+    // pedido do usuário. Só que a CNPJá combina todos os filtros com E — então
+    // mandar isso junto do CNAE passa a exigir que a empresa tenha a palavra no
+    // nome. Medido em Goiânia, com os mesmos 10 CNAEs: 7.514 empresas sem a
+    // palavra "filtros", 16 com ela. O radar nascia com 0,2% do universo, e o
+    // cliente via "radar zerado" numa cidade cheia de empresas do ramo.
+    // O CNAE já diz o que a empresa faz; o nome dela é sinal de PONTUAÇÃO (a
+    // dimensão NOME do Score 1), não critério de existência.
+    // Num radar ICP a palavra-chave é digitada pelo usuário — ali ela é um
+    // pedido explícito e continua valendo como filtro.
+    const derivada = p.origem === 'lookalike';
+    out.names = (derivada && out.activities.length) ? [] : (p.keywords || []);
     // Só pra busca LOCAL: a tabela `empresas` guarda cidade por NOME e o porte
     // como texto — a CNPJá filtra por código de município e não usa porte aqui.
     out.municipiosNomes = (p.municipios_rotulos || []).map(m => m?.n).filter(Boolean);
