@@ -159,12 +159,20 @@ module.exports = async function descoberta(job, pool, queues) {
   // (deploy que reinicia o worker, crash, retry do BullMQ) recomeçava da página
   // 1 e PAGAVA DE NOVO por páginas já consultadas na CNPJá — e, como o total só
   // era gravado no fim, o universo_varrido ficava zerado apesar do gasto.
-  const { rows: [bTok] } = await pool.query(`SELECT descoberta_token FROM buscas WHERE id=$1`, [busca_id]);
+  const { rows: [bTok] } = await pool.query(
+    `SELECT descoberta_token, descoberta_fase FROM buscas WHERE id=$1`, [busca_id]);
   let token = bTok?.descoberta_token || null;
+  // Fase 1 = CNAE + palavra-chave (preciso). Fase 2 = CNAE sozinho (volume).
+  // Quem não tem as duas coisas já nasce na fase 2 — é a varredura única de
+  // sempre, com os filtros que a busca tiver.
+  let fase = params.duasFases ? (bTok?.descoberta_fase || 1) : 2;
   let pagina = 0, esgotou = false;
 
   do {
-    const { offices, next } = await cnpja.search({ ...params, token }, ig.key_cifrada);
+    // A fase 2 varre o CNAE inteiro; a palavra-chave sai do filtro e continua
+    // valendo no score, onde ela é sinal e não porteira.
+    const filtros = { ...params, names: fase === 1 ? params.names : [] };
+    const { offices, next } = await cnpja.search({ ...filtros, token }, ig.key_cifrada);
     counters.total += offices.length;
     for (const office of offices) {
       await processarOffice(pool, queues, busca_id, office, counters);
@@ -178,21 +186,30 @@ module.exports = async function descoberta(job, pool, queues) {
     await pool.query(
       `UPDATE buscas SET universo_varrido = universo_varrido + $1,
                          varrido_api      = varrido_api + $1,
-                         descoberta_token = $2 WHERE id=$3`,
-      [offices.length, next, busca_id]
+                         descoberta_token = $2, descoberta_fase = $3 WHERE id=$4`,
+      [offices.length, next, fase, busca_id]
     );
-    if (!next) { esgotou = true; break; }
+    if (!next) {
+      // Acabou a fase 1: a busca NÃO está esgotada, só terminou a parte
+      // precisa. Zera o cursor e segue na fase 2, atrás de volume.
+      if (fase === 1) { fase = 2; token = null; continue; }
+      esgotou = true; break;
+    }
   } while (pagina < TETO_PAGINAS);
 
   // Esgotou de verdade (acabaram as páginas) → limpa o cursor, pra uma eventual
   // reativação recomeçar do zero. Parou no teto de páginas → mantém o cursor,
   // pra continuar de onde parou em vez de repagar o começo.
+  // Esgotou de verdade → zera cursor E fase, pra uma reativação recomeçar pela
+  // fase precisa. Parou no teto de páginas → guarda os dois, pra retomar de
+  // onde estava sem repagar nem pular a fase.
   await pool.query(
-    `UPDATE buscas SET status='Esgotada', descoberta_token=$1, ultimo_heartbeat=now() WHERE id=$2`,
-    [esgotou ? null : token, busca_id]
+    `UPDATE buscas SET status='Esgotada', descoberta_token=$1, descoberta_fase=$2,
+                       ultimo_heartbeat=now() WHERE id=$3`,
+    [esgotou ? null : token, esgotou ? 1 : fase, busca_id]
   );
 
-  return { modo: tipo, ...counters, paginas: pagina, esgotou };
+  return { modo: tipo, ...counters, paginas: pagina, fase, esgotou };
 };
 
 
@@ -545,21 +562,22 @@ function buildSearchParams(criterios) {
     out.states = p.ufs || [];
     out.activities = p.cnaes || [];
     out.municipalities = p.municipios_cod || [];
-    // Palavra-chave DERIVADA (radar de semelhantes) não vira exigência.
+    out.names = p.keywords || [];
+    // Palavra-chave e CNAE juntos na MESMA consulta se anulam.
     //
-    // No lookalike, `keywords` sai de perfil.js: são os tokens que mais se
-    // repetem nos NOMES das sementes. É uma impressão digital da lista, não um
-    // pedido do usuário. Só que a CNPJá combina todos os filtros com E — então
-    // mandar isso junto do CNAE passa a exigir que a empresa tenha a palavra no
-    // nome. Medido em Goiânia, com os mesmos 10 CNAEs: 7.514 empresas sem a
-    // palavra "filtros", 16 com ela. O radar nascia com 0,2% do universo, e o
-    // cliente via "radar zerado" numa cidade cheia de empresas do ramo.
-    // O CNAE já diz o que a empresa faz; o nome dela é sinal de PONTUAÇÃO (a
-    // dimensão NOME do Score 1), não critério de existência.
-    // Num radar ICP a palavra-chave é digitada pelo usuário — ali ela é um
-    // pedido explícito e continua valendo como filtro.
-    const derivada = p.origem === 'lookalike';
-    out.names = (derivada && out.activities.length) ? [] : (p.keywords || []);
+    // A CNPJá combina todos os filtros com E. Mandar CNAE + palavra-chave passa
+    // a exigir que a empresa tenha a palavra no nome: medido em Goiânia, 7.514
+    // empresas nos CNAEs do perfil contra 16 quando "filtros" entrava junto. Só
+    // que essas 16 eram BOAS — nome com a palavra do ramo é sinal forte.
+    // Então não se escolhe entre as duas: varre-se em duas fases. Fase 1 é
+    // CNAE + palavra-chave (poucas e certeiras); quando ela esgota, a fase 2
+    // continua com CNAE sozinho, atrás de volume. As duas alimentam o mesmo
+    // Score 1, e o corte decide o que vira lead.
+    // Vale só pro lookalike, onde a palavra-chave é INFERIDA da lista. No ICP o
+    // usuário digitou aquela palavra de propósito — ali ela é um pedido
+    // explícito e continua sendo exigência, numa fase só.
+    out.duasFases = p.origem === 'lookalike'
+      && out.activities.length > 0 && out.names.length > 0;
     // Só pra busca LOCAL: a tabela `empresas` guarda cidade por NOME e o porte
     // como texto — a CNPJá filtra por código de município e não usa porte aqui.
     out.municipiosNomes = (p.municipios_rotulos || []).map(m => m?.n).filter(Boolean);

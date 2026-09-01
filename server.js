@@ -419,6 +419,10 @@ async function init() {
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS lista TEXT;
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS crm_queue_id TEXT;
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS descoberta_token TEXT;
+    -- Fase da varredura no radar de semelhantes: 1 = CNAE + palavra-chave
+    -- (preciso), 2 = CNAE sozinho (volume). Radar antigo começa em 1 e passa
+    -- pela fase precisa antes de abrir — que é o comportamento desejado.
+    ALTER TABLE buscas ADD COLUMN IF NOT EXISTS descoberta_fase INTEGER NOT NULL DEFAULT 1;
     -- Origem do que foi varrido: quanto veio da API PAGA (CNPJá) e quanto foi
     -- reaproveitado de graça do cadastro local. universo_varrido segue sendo o
     -- total (soma das duas), pra não mudar o que a tela já mostra.
