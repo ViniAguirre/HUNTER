@@ -407,9 +407,25 @@ function construirPerfil(empresas, base, W, opts = {}) {
   // Descoberta (CNPJá): UF é sinal geográfico forte → manda todas as observadas
   // (teto 8). CNAE → cobre ~90% da amostra (teto 10) pra não abrir demais.
   const ufsBusca = perfil.ufs.slice(0, 8).map(x => x.uf);
+  // CNAE de cauda NÃO entra na descoberta.
+  //
+  // A lista vem ordenada por frequência. Ir somando até 90% enchia os 10 lugares
+  // com códigos de 2 ou 3 empresas — que somam quase nada de cobertura e podem
+  // ser códigos GUARDA-CHUVA, com universo gigante. Caso real (Planeta Água):
+  // "eletrodomésticos" era 42 das 120 sementes e "materiais de construção em
+  // geral" era 3, mas o segundo tem dezenas de milhares de empresas em Goiânia
+  // contra alguns milhares do primeiro. A CNPJá devolve proporcionalmente ao
+  // tamanho de cada universo, então 40 dos 63 leads saíram do código que
+  // representa 2,5% dos clientes, e o que representa 35% ficou soterrado.
+  // O piso corta isso. Os 3 primeiros entram sempre — mesmo numa lista muito
+  // dispersa, onde nenhum código sozinho alcança o piso, o radar precisa de
+  // algum alvo pra funcionar.
+  const CNAE_FREQ_MIN = 0.05;   // 5% da amostra (6 empresas numa lista de 120)
+  const CNAE_MIN = 3;
   const cnaesBusca = [];
   let cobertura = 0;
   for (const x of perfil.cnaes) {
+    if (x.freq < CNAE_FREQ_MIN && cnaesBusca.length >= CNAE_MIN) break;
     cnaesBusca.push(x.c);
     cobertura += x.freq;
     if (cnaesBusca.length >= 10 || cobertura >= 0.9) break;
