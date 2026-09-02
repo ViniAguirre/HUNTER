@@ -82,7 +82,7 @@ function computeHealth(b) {
 }
 
 function buildLeadsFilter(query) {
-  const { q, status, uf, busca_id, email_only, local, score_min } = query;
+  const { q, status, uf, busca_id, email_only, local, score_min, contato } = query;
   const conditions = [];
   const vals = [];
   if (q && q.trim()) {
@@ -112,6 +112,9 @@ function buildLeadsFilter(query) {
   const sMin = parseInt(score_min, 10);
   if (!isNaN(sMin) && sMin > 0) { vals.push(sMin); conditions.push(`l.score >= $${vals.length}`); }
   if (email_only === 'true' || email_only === '1') conditions.push('l.tem_email = true');
+  // Fila de enriquecimento manual: leads aprovados no score a que só falta o
+  // contato. É a mesma lista que a extensão do Google Meu Negócio vai consumir.
+  if (contato === 'sem_contato') conditions.push(`l.contato_status = 'sem_contato'`);
   return { conditions, vals };
 }
 
@@ -1397,9 +1400,15 @@ app.patch('/api/leads/:id/contato', requireAuth, requireEditor, async (req, res)
     cv.fonte = cv.fonte ? `${cv.fonte}+manual` : 'manual';
     cv.validado = !!(cv.telefone || cv.email);
     const completo = !!((cv.telefone || cv.whatsapp) && cv.email);
+    // Lead que estava em 'Incompleto' por falta de contato volta pra triagem
+    // assim que ganha telefone — senão o trabalho manual não aparece em lugar
+    // nenhum e a empresa continua parecendo inacionável.
+    const ganhouTelefone = !!(cv.telefone || cv.whatsapp);
     await pool.query(
-      `UPDATE leads SET contato_validado=$2::jsonb, contato_status=$3, contato_pendente=$4, atualizado_em=now() WHERE id=$1`,
-      [id, JSON.stringify(cv), completo ? 'completo' : 'decisao', !completo]
+      `UPDATE leads SET contato_validado=$2::jsonb, contato_status=$3, contato_pendente=$4,
+                        status = CASE WHEN status='Incompleto' AND $5 THEN 'Novo' ELSE status END,
+                        atualizado_em=now() WHERE id=$1`,
+      [id, JSON.stringify(cv), completo ? 'completo' : 'decisao', !completo, ganhouTelefone]
     );
     res.json({ ok: true, completo, contato_validado: cv });
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }

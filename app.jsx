@@ -884,7 +884,10 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
     setLoading(true);
     const params = new URLSearchParams();
     if (debouncedQ) params.set('q', debouncedQ);
-    if (filterStatus) params.set('status', filterStatus);
+    // A opção "Sem contato" não é um status — é a fila de enriquecimento
+    // manual (contato_status). Vai num parâmetro próprio.
+    if (filterStatus === 'sem_contato') params.set('contato', 'sem_contato');
+    else if (filterStatus) params.set('status', filterStatus);
     if (emailOnly) params.set('email_only', 'true');
     if (filterBusca) params.set('busca_id', filterBusca);
     if (debouncedLocal) params.set('local', debouncedLocal);
@@ -1021,6 +1024,7 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
           <option value="Novo">Novo</option>
           <option value="Qualificado">Qualificado</option>
           <option value="Incompleto">Incompleto</option>
+          <option value="sem_contato">Sem contato — enriquecer</option>
           <option value="Enviado">Enviado (todos)</option>
           <option value="Enviado:crm">Enviado · pelo CRM</option>
           <option value="Enviado:manual">Enviado · marcado à mão</option>
@@ -1187,7 +1191,9 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
                   </span>
                 ); })()}
                 {l.contato_pendente && (
-                  <span title="Sem WhatsApp/telefone — não enviado ao CRM automaticamente"
+                  <span title={l.contato_status === 'sem_contato'
+                    ? 'A busca não achou telefone desta empresa. Clique no lead para preencher à mão.'
+                    : 'Sem WhatsApp/telefone — não enviado ao CRM automaticamente'}
                     style={{ ...badgeStyle(C.red), whiteSpace:'nowrap' }}>sem contato</span>
                 )}
                 <ForaDoPerfil leadId={l.id} compacto

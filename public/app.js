@@ -1951,7 +1951,9 @@ function Leads({
     setLoading(true);
     const params = new URLSearchParams();
     if (debouncedQ) params.set('q', debouncedQ);
-    if (filterStatus) params.set('status', filterStatus);
+    // A opção "Sem contato" não é um status — é a fila de enriquecimento
+    // manual (contato_status). Vai num parâmetro próprio.
+    if (filterStatus === 'sem_contato') params.set('contato', 'sem_contato');else if (filterStatus) params.set('status', filterStatus);
     if (emailOnly) params.set('email_only', 'true');
     if (filterBusca) params.set('busca_id', filterBusca);
     if (debouncedLocal) params.set('local', debouncedLocal);
@@ -2197,6 +2199,8 @@ function Leads({
   }, "Qualificado"), /*#__PURE__*/React.createElement("option", {
     value: "Incompleto"
   }, "Incompleto"), /*#__PURE__*/React.createElement("option", {
+    value: "sem_contato"
+  }, "Sem contato \u2014 enriquecer"), /*#__PURE__*/React.createElement("option", {
     value: "Enviado"
   }, "Enviado (todos)"), /*#__PURE__*/React.createElement("option", {
     value: "Enviado:crm"
@@ -2636,7 +2640,7 @@ function Leads({
         }
       }, e ? e.rotulo : l.status);
     })(), l.contato_pendente && /*#__PURE__*/React.createElement("span", {
-      title: "Sem WhatsApp/telefone \u2014 n\xE3o enviado ao CRM automaticamente",
+      title: l.contato_status === 'sem_contato' ? 'A busca não achou telefone desta empresa. Clique no lead para preencher à mão.' : 'Sem WhatsApp/telefone — não enviado ao CRM automaticamente',
       style: {
         ...badgeStyle(C.red),
         whiteSpace: 'nowrap'

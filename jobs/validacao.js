@@ -173,23 +173,30 @@ module.exports = async function validacao(job, pool, queues) {
       return { lead_id, contato: 'decisao_so_telefone' };
     }
 
-    // 3) SEM telefone. Se for re-enriquecimento pedido pelo usuário, o lead é
-    //    PRESERVADO (só fica pendente pra decisão manual) — ele pediu pra
-    //    atualizar, não pra descartar. Na primeira passagem, sim: vira só
-    //    "empresa encontrada" e o lead é removido (a empresa segue no ledger).
-    if (preservarLead || !temFonteEnriquecimento) {
-      if (!temFonteEnriquecimento) {
-        console.warn(`[validacao] lead ${lead_id} (${cnpj}): sem telefone, mas NENHUMA fonte de ` +
-          `enriquecimento ativa (Integrações → Contato comercial / Busca na web). Lead PRESERVADO ` +
-          `como pendente em vez de descartado — configure um provedor pra qualificação valer.`);
-      }
-      await pool.query(`UPDATE leads SET contato_status='decisao', contato_pendente=true WHERE id=$1`, [lead_id]);
-      await seguirParaSwot(queues, { cnpj, busca_id, lead_id, contato_ok: false });
-      return { lead_id, contato: 'sem_telefone_preservado' };
+    // 3) SEM telefone: o lead FICA, marcado como 'Incompleto'.
+    //
+    // Antes ele era APAGADO, e com isso sumia justamente a lista mais acionável
+    // que o motor produz: empresas reais, ativas, aprovadas no Score 1, a que só
+    // falta o contato. No radar 56 do Planeta Água foram 85 de 89 — 95% da
+    // produção do dia indo pro lixo depois de já ter custado consulta paga na
+    // CNPJá e raspagem de site.
+    // Preservado, o usuário pode completar o telefone à mão na própria tela; e é
+    // desta fila (`contato_status='sem_contato'`) que a extensão do Google Meu
+    // Negócio vai puxar as empresas pra buscar.
+    if (!temFonteEnriquecimento) {
+      console.warn(`[validacao] lead ${lead_id} (${cnpj}): sem telefone e NENHUMA fonte de ` +
+        `enriquecimento ativa (Integrações → Contato comercial / Busca na web) — configure um provedor.`);
     }
     await pool.query(`UPDATE buscas SET sem_contato = sem_contato + 1 WHERE id=$1`, [busca_id]).catch(() => {});
-    await pool.query(`DELETE FROM leads WHERE id=$1`, [lead_id]);
-    return { lead_id, contato: 'sem_telefone_removido' };
+    await pool.query(
+      `UPDATE leads SET status = CASE WHEN status IN ('Novo','Qualificado') THEN 'Incompleto' ELSE status END,
+                        contato_status='sem_contato', contato_pendente=true, atualizado_em=now()
+        WHERE id=$1`, [lead_id]
+    );
+    // Sem SWOT de propósito: briefing custa IA e não serve pra empresa que
+    // ninguém consegue abordar. Quando o contato entrar — à mão ou pela
+    // extensão — o botão "Refazer análise" gera o briefing.
+    return { lead_id, contato: 'sem_contato_preservado' };
   } catch (err) {
     // Erro não trava o pipeline: marca pra decisão manual (não some silenciosamente).
     try { await pool.query(`UPDATE leads SET contato_status='decisao', contato_pendente=true WHERE id=$1`, [lead_id]); } catch (_) {}
