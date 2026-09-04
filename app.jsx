@@ -421,9 +421,11 @@ function Sidebar({ screen, onNav, onLogout, user }) {
       <span className="h-side-label">{it.label}</span>
     </a>
   ));
+  // height:100% (não 100vh) porque a casca .h-shell já é do tamanho da janela —
+  // e sem sticky, que só fazia sentido quando a página inteira rolava.
   return (
     <aside className="h-side" style={{ width:236, flexShrink:0, background:'var(--panel)', borderRight:'1px solid var(--border)',
-      display:'flex', flexDirection:'column', position:'sticky', top:0, height:'100vh' }}>
+      display:'flex', flexDirection:'column', height:'100%', minHeight:0 }}>
       <div className="h-nav-item" style={{ display:'flex', alignItems:'center', gap:10, padding:'20px 20px 22px' }}>
         <img src="hunter_logo_icon.png" alt="Hunter" style={{ width:30, height:30, flexShrink:0 }}/>
         <span className="h-side-label" style={{ fontSize:16, fontWeight:600, letterSpacing:'.2em' }}>HUNTER</span>
@@ -1161,10 +1163,10 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
         </div>
       )}
 
-      <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden' }}>
+      <div className="h-tabela" style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden' }}>
         <div className="h-scroll">
         <div className="h-tw" style={{ '--tw':'1000px' }}>
-        <div style={{ display:'grid', gridTemplateColumns:'40px 2.3fr 1.1fr .8fr 1.4fr 96px 90px 110px',
+        <div className="h-thead" style={{ display:'grid', gridTemplateColumns:'40px 2.3fr 1.1fr .8fr 1.4fr 96px 90px 110px',
           alignItems:'center', gap:10, padding:'12px 18px', borderBottom:'1px solid var(--border)',
           fontSize:11, fontWeight:600, letterSpacing:'.04em', color:'var(--faint)', textTransform:'uppercase' }}>
           <div onClick={toggleAll} style={{ cursor:'pointer' }}><Checkbox checked={allSel}/></div>
@@ -1180,30 +1182,34 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
         {!loading && leads.map(l => {
           const sel = selected.includes(l.id);
           return (
-            <div key={l.id} onClick={() => onOpenLead(l.id)} className="row-hover"
+            <div key={l.id} onClick={() => onOpenLead(l.id)} className="row-hover h-linha"
               style={{ display:'grid', gridTemplateColumns:'40px 2.3fr 1.1fr .8fr 1.4fr 96px 90px 110px',
                 alignItems:'center', gap:10, padding:'13px 18px',
                 borderBottom:'1px solid var(--border)', cursor:'pointer',
                 background: sel ? 'var(--panel2)' : 'transparent' }}>
-              <div onClick={e => { e.stopPropagation(); toggleSel(l.id); }} style={{ cursor:'pointer' }}>
+              <div className="h-sel" onClick={e => { e.stopPropagation(); toggleSel(l.id); }} style={{ cursor:'pointer' }}>
                 <Checkbox checked={sel}/>
               </div>
-              <div style={{ minWidth:0 }}>
+              <div className="h-titulo" style={{ minWidth:0 }}>
                 <div style={{ fontSize:13.5, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{l.fantasia}</div>
                 <div style={{ fontSize:11, color:'var(--faint)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{l.razao}</div>
               </div>
-              <div style={{ minWidth:0 }}>
+              <div data-rot="Setor" style={{ minWidth:0 }}>
                 <div style={{ fontSize:12.5, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{l.setor}</div>
                 <div style={{ fontSize:11, color:'var(--faint)' }}>{l.porte}</div>
               </div>
-              <div style={{ fontSize:12.5 }}>{l.cidade}<span style={{ color:'var(--faint)' }}>/{l.uf}</span></div>
-              <div style={{ minWidth:0 }}>
+              <div data-rot="Local" style={{ fontSize:12.5 }}>{l.cidade}<span style={{ color:'var(--faint)' }}>/{l.uf}</span></div>
+              <div data-rot="Decisor" style={{ minWidth:0 }}>
                 <div style={{ fontSize:12.5, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{l.decisor}</div>
                 <div style={{ fontSize:11, color:'var(--faint)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{l.cargo}</div>
               </div>
-              <ScoreBar score={l.score}/>
-              <ContactCell leadId={l.id} emailVal={l.email_valor} phoneVal={l.telefone_valor} onSaved={() => setTick(t => t + 1)}/>
-              <div style={{ display:'flex', flexDirection:'column', gap:4, alignItems:'flex-start' }}>
+              {/* ScoreBar e ContactCell trazem o próprio root, então vão
+                  embrulhados só pra receber o rótulo do modo cartão. */}
+              <div data-rot="Score"><ScoreBar score={l.score}/></div>
+              <div data-rot="Contato">
+                <ContactCell leadId={l.id} emailVal={l.email_valor} phoneVal={l.telefone_valor} onSaved={() => setTick(t => t + 1)}/>
+              </div>
+              <div data-rot="Status" style={{ display:'flex', flexDirection:'column', gap:4, alignItems:'flex-start' }}>
                 {(() => { const e = envioDoLead(l, l.status); return (
                   <span title={e?.titulo || undefined}
                     style={{ ...badgeStyle(statusColors[l.status]||C.gray), whiteSpace:'nowrap' }}>
@@ -1279,10 +1285,10 @@ function Buscas({ onOpen }) {
             padding:'0 12px 0 34px', fontSize:13, fontFamily:'inherit' }}/>
         </div>
       </div>
-      <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden' }}>
+      <div className="h-tabela" style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden' }}>
         <div className="h-scroll">
-        <div className="h-tw" style={{ '--tw':'1040px' }}>
-        <div style={{ display:'grid', gridTemplateColumns:'24px 2fr 1fr 1fr 1.1fr .8fr .8fr .8fr 1fr 40px',
+        <div className="h-tw" style={{ '--tw':'1000px' }}>
+        <div className="h-thead" style={{ display:'grid', gridTemplateColumns:'24px 2fr 1fr 1fr 1.1fr .8fr .8fr .8fr 1fr 40px',
           alignItems:'center', gap:10, padding:'12px 18px', borderBottom:'1px solid var(--border)',
           fontSize:11, fontWeight:600, letterSpacing:'.04em', color:'var(--faint)', textTransform:'uppercase' }}>
           <div/><div>Nome</div><div>Status</div><div>Criada por</div><div>Criada em</div>
@@ -1295,19 +1301,19 @@ function Buscas({ onOpen }) {
           <div style={{ padding:'22px 18px', fontSize:13, color:'var(--faint)' }}>Nenhum radar encontrado.</div>
         )}
         {buscas && buscas.map(b => (
-          <div key={b.id} onClick={() => onOpen(b.id)} className="row-hover"
+          <div key={b.id} onClick={() => onOpen(b.id)} className="row-hover h-linha"
             style={{ display:'grid', gridTemplateColumns:'24px 2fr 1fr 1fr 1.1fr .8fr .8fr .8fr 1fr 40px',
               alignItems:'center', gap:10, padding:'14px 18px', borderBottom:'1px solid var(--border)', cursor:'pointer' }}>
-            <div><StatusDot color={healthColors[b.health]||C.gray} pulse={b.health==='green'}/></div>
-            <div style={{ fontSize:13.5, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{b.nome}</div>
-            <div><span style={badgeStyle(buscaStatusColors[b.status]||C.gray)}>{b.status}</span></div>
-            <div style={{ fontSize:12.5, color:'var(--dim)' }}>{b.criador_nome || b.criador || '—'}</div>
-            <div style={{ fontSize:12, color:'var(--dim)', lineHeight:1.35 }}>{dataHora(b.criado_em)}</div>
-            <div style={{ fontSize:13, fontWeight:600 }}>{fmtNum(b.encontrados ?? b.enc)}</div>
-            <div style={{ fontSize:13, color:'var(--dim)' }}>{fmtNum(b.qualificados ?? b.qual)}</div>
-            <div style={{ fontSize:13, color:C.cyan }}>{fmtNum(b.enviados ?? b.crm)}</div>
-            <div style={{ fontSize:12, color:'var(--faint)' }}>{timeAgo(b.ultima_ativ)}</div>
-            <div>
+            <div className="h-sel"><StatusDot color={healthColors[b.health]||C.gray} pulse={b.health==='green'}/></div>
+            <div className="h-titulo" style={{ fontSize:13.5, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{b.nome}</div>
+            <div data-rot="Status"><span style={badgeStyle(buscaStatusColors[b.status]||C.gray)}>{b.status}</span></div>
+            <div data-rot="Criada por" style={{ fontSize:12.5, color:'var(--dim)' }}>{b.criador_nome || b.criador || '—'}</div>
+            <div data-rot="Criada em" style={{ fontSize:12, color:'var(--dim)', lineHeight:1.35 }}>{dataHora(b.criado_em)}</div>
+            <div data-rot="Encontr." style={{ fontSize:13, fontWeight:600 }}>{fmtNum(b.encontrados ?? b.enc)}</div>
+            <div data-rot="Qualif." style={{ fontSize:13, color:'var(--dim)' }}>{fmtNum(b.qualificados ?? b.qual)}</div>
+            <div data-rot="CRM" style={{ fontSize:13, color:C.cyan }}>{fmtNum(b.enviados ?? b.crm)}</div>
+            <div data-rot="Atividade" style={{ fontSize:12, color:'var(--faint)' }}>{timeAgo(b.ultima_ativ)}</div>
+            <div data-rot="Ações">
               <button onClick={(e) => excluir(e, b)} title="Excluir radar"
                 style={{ width:30, height:30, borderRadius:8, border:'1px solid var(--border)', background:'transparent',
                   color:'var(--dim)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
@@ -1619,7 +1625,7 @@ function BuscaDetail({ buscaId, onBack, onOpenLead, onDuplicar }) {
 
       {criterios.params?.perfil && <PerfilMedio perfil={criterios.params.perfil}/>}
 
-      <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden' }}>
+      <div className="h-tabela" style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden' }}>
         <div style={{ padding:'15px 18px', borderBottom:'1px solid var(--border)' }}>
           <h3 style={{ fontSize:14, fontWeight:600, margin:0 }}>Leads deste radar</h3>
         </div>
@@ -1629,15 +1635,15 @@ function BuscaDetail({ buscaId, onBack, onOpenLead, onDuplicar }) {
         <div className="h-scroll">
         <div className="h-tw" style={{ '--tw':'720px' }}>
         {leads.map(l => (
-          <div key={l.id} onClick={() => onOpenLead(l.id)} className="row-hover"
+          <div key={l.id} onClick={() => onOpenLead(l.id)} className="row-hover h-linha"
             style={{ display:'grid', gridTemplateColumns:'2fr 1.3fr 1fr 120px 100px',
               alignItems:'center', gap:10, padding:'13px 18px',
               borderBottom:'1px solid var(--border)', cursor:'pointer' }}>
-            <div style={{ fontSize:13.5, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{l.fantasia}</div>
-            <div style={{ fontSize:12.5, color:'var(--dim)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{l.decisor}</div>
-            <div style={{ fontSize:12.5 }}>{l.cidade}/{l.uf}</div>
-            <ScoreBar score={l.score}/>
-            <div><span style={badgeStyle(statusColors[l.status]||C.gray)}>{l.status}</span></div>
+            <div className="h-titulo" style={{ fontSize:13.5, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{l.fantasia}</div>
+            <div data-rot="Decisor" style={{ fontSize:12.5, color:'var(--dim)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{l.decisor}</div>
+            <div data-rot="Local" style={{ fontSize:12.5 }}>{l.cidade}/{l.uf}</div>
+            <div data-rot="Score"><ScoreBar score={l.score}/></div>
+            <div data-rot="Status"><span style={badgeStyle(statusColors[l.status]||C.gray)}>{l.status}</span></div>
           </div>
         ))}
         </div>
@@ -3535,10 +3541,10 @@ function Usuarios({ user }) {
       </div>
       {erro && <div style={{ fontSize:13, color:C.red, background:'rgba(248,113,113,.1)',
         border:'1px solid rgba(248,113,113,.25)', borderRadius:9, padding:'10px 12px', marginBottom:14 }}>{erro}</div>}
-      <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden' }}>
+      <div className="h-tabela" style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden' }}>
         <div className="h-scroll">
         <div className="h-tw" style={{ '--tw':'820px' }}>
-        <div style={{ display:'grid', gridTemplateColumns:cols,
+        <div className="h-thead" style={{ display:'grid', gridTemplateColumns:cols,
           alignItems:'center', gap:10, padding:'12px 18px', borderBottom:'1px solid var(--border)',
           fontSize:11, fontWeight:600, letterSpacing:'.04em', color:'var(--faint)', textTransform:'uppercase' }}>
           <div>Usuário</div><div>E-mail</div><div>Papel</div><div>Último acesso</div><div>Status</div><div></div>
@@ -3550,15 +3556,15 @@ function Usuarios({ user }) {
         ) : users.map(u => {
           const ini = (u.nome||'?').split(' ').slice(0,2).map(w=>w[0]).join('');
           return (
-            <div key={u.id} style={{ display:'grid', gridTemplateColumns:cols,
+            <div key={u.id} className="h-linha" style={{ display:'grid', gridTemplateColumns:cols,
               alignItems:'center', gap:10, padding:'13px 18px', borderBottom:'1px solid var(--border)' }}>
-              <div style={{ display:'flex', alignItems:'center', gap:11 }}>
+              <div className="h-titulo" style={{ display:'flex', alignItems:'center', gap:11 }}>
                 <div style={{ width:34, height:34, borderRadius:9, background:'var(--panel2)', color:C.blue,
                   display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:600, flexShrink:0 }}>{ini}</div>
                 <span style={{ fontSize:13.5, fontWeight:500 }}>{u.nome}</span>
               </div>
-              <div style={{ fontSize:12.5, color:'var(--dim)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{u.email}</div>
-              <div style={{ display:'flex', gap:6, alignItems:'center', flexWrap:'wrap' }}>
+              <div data-rot="E-mail" style={{ fontSize:12.5, color:'var(--dim)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{u.email}</div>
+              <div data-rot="Papel" style={{ display:'flex', gap:6, alignItems:'center', flexWrap:'wrap' }}>
                 <span style={badgeStyle(papelColors[u.papel]||C.gray)}>{u.papel}</span>
                 {u.master ? (
                   <span onClick={isMaster ? () => toggleMaster(u) : undefined}
@@ -3569,14 +3575,14 @@ function Usuarios({ user }) {
                     style={{ ...badgeStyle(C.gray), cursor:'pointer', opacity:.6 }}>+ master</span>
                 ) : null}
               </div>
-              <div style={{ fontSize:12.5, color:'var(--faint)' }}>{fmtAcesso(u.ultimo_acesso)}</div>
-              <div>
+              <div data-rot="Último acesso" style={{ fontSize:12.5, color:'var(--faint)' }}>{fmtAcesso(u.ultimo_acesso)}</div>
+              <div data-rot="Status">
                 <span onClick={() => alternar(u)} title="Clique para ativar/desativar"
                   style={{ ...badgeStyle(u.ativo ? C.green : C.gray), cursor:'pointer' }}>
                   {u.ativo ? 'Ativo' : 'Inativo'}
                 </span>
               </div>
-              <div style={{ display:'flex', gap:6 }}>
+              <div data-rot="Ações" style={{ display:'flex', gap:6 }}>
                 <button onClick={() => redefinirSenha(u)} title="Redefinir senha"
                   style={{ width:30, height:30, borderRadius:8, border:'1px solid var(--border)', background:'transparent',
                     color:'var(--dim)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
@@ -4808,7 +4814,9 @@ function App() {
       return [s.slice(0,i).trim(), s.slice(i+1).trim()];
     })
   );
-  const rootStyle = { display:'flex', minHeight:'100vh', width:'100%', fontFamily:'Inter,system-ui,sans-serif',
+  // A altura vem da classe .h-shell (100dvh + overflow:hidden), não do inline:
+  // a casca ocupa a janela e só o <main> rola por dentro.
+  const rootStyle = { display:'flex', width:'100%', fontFamily:'Inter,system-ui,sans-serif',
     color:'var(--text)', background:'var(--bg)', WebkitFontSmoothing:'antialiased', ...cssVarObj };
 
   const renderScreen = () => {
@@ -4835,10 +4843,10 @@ function App() {
   };
 
   return (
-    <div style={rootStyle}>
-      <div style={{ display:'flex', width:'100%', minHeight:'100vh' }}>
+    <div className="h-shell" style={rootStyle}>
+      <div style={{ display:'flex', width:'100%', height:'100%' }}>
         <Sidebar screen={screen} onNav={navTo} onLogout={logout} user={user}/>
-        <div style={{ flex:1, minWidth:0, display:'flex', flexDirection:'column', background:'var(--bg)' }}>
+        <div className="h-col" style={{ flex:1, minWidth:0, display:'flex', flexDirection:'column', background:'var(--bg)' }}>
           <Topbar screen={screen} theme={theme} onTheme={toggleTheme} onNova={() => navTo('nova')} user={user}/>
           <main className="h-main" style={{ flex:1, overflowY:'auto', padding:28 }}>
             {renderScreen()}
