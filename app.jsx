@@ -1020,7 +1020,7 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
   return (
     <div>
       <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap', marginBottom:16 }}>
-        <div style={{ position:'relative', flex:1, minWidth:220, maxWidth:320 }}>
+        <div style={{ position:'relative', flex:'1 1 150px', minWidth:150, maxWidth:320 }}>
           <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="var(--faint)" strokeWidth={1.8} strokeLinecap="round"
             style={{ position:'absolute', left:12, top:11 }}>
             <circle cx={11} cy={11} r={7}/><path d="M21 21l-4.3-4.3"/>
@@ -1030,14 +1030,14 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
               background:'var(--panel)', color:'var(--text)', padding:'0 12px 0 34px', fontSize:13, fontFamily:'inherit' }}/>
         </div>
         <select value={filterBusca} onChange={e => { setFilterBusca(e.target.value); setPage(1); }}
-          style={{ height:38, padding:'0 10px', borderRadius:9, border:'1px solid var(--border)', maxWidth:220,
+          style={{ height:38, padding:'0 10px', borderRadius:9, border:'1px solid var(--border)', maxWidth:170,
             background:'var(--panel)', color: filterBusca ? 'var(--text)' : 'var(--dim)',
             fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>
           <option value="">Todos os radares</option>
           {buscasOpts.map(b => <option key={b.id} value={b.id}>{b.nome}</option>)}
         </select>
         <select value={filterStatus} onChange={e => { setFilterStatus(e.target.value); setPage(1); }}
-          style={{ height:38, padding:'0 10px', borderRadius:9, border:'1px solid var(--border)',
+          style={{ height:38, padding:'0 10px', borderRadius:9, border:'1px solid var(--border)', maxWidth:150,
             background:'var(--panel)', color: filterStatus ? 'var(--text)' : 'var(--dim)',
             fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>
           <option value="">Status</option>
@@ -1051,7 +1051,7 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
           <option value="Descartado">Descartado</option>
         </select>
         <input value={filterLocal} onChange={handleLocal} placeholder="Local (cidade/UF)"
-          style={{ height:38, width:150, maxWidth:'100%', borderRadius:9, border:'1px solid var(--border)',
+          style={{ height:38, width:140, maxWidth:'100%', borderRadius:9, border:'1px solid var(--border)',
             background:'var(--panel)', color:'var(--text)', padding:'0 12px', fontSize:12.5, fontFamily:'inherit' }}/>
         <select value={filterScore} onChange={e => { setFilterScore(e.target.value); setPage(1); }}
           style={{ height:38, padding:'0 10px', borderRadius:9, border:'1px solid var(--border)',
@@ -1063,7 +1063,10 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
           <option value="60">≥ 60</option>
           <option value="40">≥ 40</option>
         </select>
-        <div style={{ flex:1 }}/>
+        {/* Sem espaçador aqui: um <div flex:1> empurrava o botão pra borda
+            direita, mas participava do flex-wrap e ocupava uma linha inteira,
+            derrubando "Só e-mail válido" pra linha seguinte mesmo quando havia
+            espaço de sobra na primeira. */}
         <button onClick={() => { setEmailOnly(e => !e); setPage(1); }}
           style={{ height:38, padding:'0 13px', borderRadius:9, fontSize:12.5, fontFamily:'inherit',
             cursor:'pointer', display:'flex', alignItems:'center', gap:7,
@@ -3480,7 +3483,14 @@ function Usuarios({ user }) {
     carregar();
   };
 
-  const credText = (c) => 'Acesso ao Hunter\nURL: https://adhunter.antidotodigital.com\nE-mail: ' + c.email +
+  // A URL sai da origem em que o próprio Hunter está sendo servido, não de um
+  // domínio fixo: cada tenant tem o seu (adhunter.antidotodigital.com,
+  // hunter.gktechai.com.br, ...) e antes todos recebiam o do Antídoto nas
+  // credenciais. Dentro do iframe do CRM isso continua certo — a origem aqui é
+  // a do Hunter, que é justamente o endereço que o novo usuário precisa abrir.
+  const baseUrl = (typeof window !== 'undefined' && window.location && window.location.origin)
+    || '';
+  const credText = (c) => 'Acesso ao Hunter\nURL: ' + baseUrl + '\nE-mail: ' + c.email +
     '\nSenha provisória: ' + c.senha + '\n(troque a senha no primeiro acesso)';
   const copiar = async (c) => {
     try { await navigator.clipboard.writeText(credText(c)); setCopiado(true); setTimeout(() => setCopiado(false), 2500); }

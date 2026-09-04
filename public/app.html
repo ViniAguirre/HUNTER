@@ -101,8 +101,11 @@ input:focus,textarea:focus{border-color:var(--blue)!important;outline:none;}
 }
 
 /* Sidebar vira trilho só de ícones quando a largura aperta (devolve ~170px ao
-   conteúdo). O !important é porque a largura base é inline no componente. */
-@media(max-width:1024px){
+   conteúdo). O !important é porque a largura base é inline no componente.
+   O corte é 1200px e não 1024px porque entre esses dois valores a sidebar
+   expandida deixava só ~808px de conteúdo — pouco pra barra de filtros dos
+   Leads, que então quebrava o "Só e-mail válido" pra uma segunda linha. */
+@media(max-width:1200px){
   .h-side{width:64px!important;}
   .h-side .h-side-label{display:none;}
   .h-side .h-nav-item{justify-content:center;padding-left:0;padding-right:0;}
