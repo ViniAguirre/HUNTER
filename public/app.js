@@ -2164,8 +2164,8 @@ function Leads({
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       position: 'relative',
-      flex: 1,
-      minWidth: 220,
+      flex: '1 1 150px',
+      minWidth: 150,
       maxWidth: 320
     }
   }, /*#__PURE__*/React.createElement("svg", {
@@ -2213,7 +2213,7 @@ function Leads({
       padding: '0 10px',
       borderRadius: 9,
       border: '1px solid var(--border)',
-      maxWidth: 220,
+      maxWidth: 170,
       background: 'var(--panel)',
       color: filterBusca ? 'var(--text)' : 'var(--dim)',
       fontSize: 12.5,
@@ -2236,6 +2236,7 @@ function Leads({
       padding: '0 10px',
       borderRadius: 9,
       border: '1px solid var(--border)',
+      maxWidth: 150,
       background: 'var(--panel)',
       color: filterStatus ? 'var(--text)' : 'var(--dim)',
       fontSize: 12.5,
@@ -2266,7 +2267,7 @@ function Leads({
     placeholder: "Local (cidade/UF)",
     style: {
       height: 38,
-      width: 150,
+      width: 140,
       maxWidth: '100%',
       borderRadius: 9,
       border: '1px solid var(--border)',
@@ -2303,11 +2304,7 @@ function Leads({
     value: "60"
   }, "\u2265 60"), /*#__PURE__*/React.createElement("option", {
     value: "40"
-  }, "\u2265 40")), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1
-    }
-  }), /*#__PURE__*/React.createElement("button", {
+  }, "\u2265 40")), /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       setEmailOnly(e => !e);
       setPage(1);
@@ -7418,7 +7415,14 @@ function Usuarios({
     });
     carregar();
   };
-  const credText = c => 'Acesso ao Hunter\nURL: https://adhunter.antidotodigital.com\nE-mail: ' + c.email + '\nSenha provisória: ' + c.senha + '\n(troque a senha no primeiro acesso)';
+
+  // A URL sai da origem em que o próprio Hunter está sendo servido, não de um
+  // domínio fixo: cada tenant tem o seu (adhunter.antidotodigital.com,
+  // hunter.gktechai.com.br, ...) e antes todos recebiam o do Antídoto nas
+  // credenciais. Dentro do iframe do CRM isso continua certo — a origem aqui é
+  // a do Hunter, que é justamente o endereço que o novo usuário precisa abrir.
+  const baseUrl = typeof window !== 'undefined' && window.location && window.location.origin || '';
+  const credText = c => 'Acesso ao Hunter\nURL: ' + baseUrl + '\nE-mail: ' + c.email + '\nSenha provisória: ' + c.senha + '\n(troque a senha no primeiro acesso)';
   const copiar = async c => {
     try {
       await navigator.clipboard.writeText(credText(c));
