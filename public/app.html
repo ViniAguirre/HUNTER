@@ -19,6 +19,52 @@ body{margin:0;font-family:Inter,system-ui,sans-serif;-webkit-font-smoothing:anti
 .row-hover:hover{background:var(--hover)!important;}
 .nav-link:hover{background:rgba(255,255,255,.04);}
 input:focus,textarea:focus{border-color:var(--blue)!important;outline:none;}
+
+/* ── responsividade ───────────────────────────────────────────────────────────
+   O app é montado inteiro com estilo inline (sem build de CSS), então não havia
+   nenhuma media query: as telas fixavam "repeat(4,1fr)", "1.55fr 1fr" etc. e as
+   colunas iam sendo espremidas até virar tira ilegível — inclusive no desktop,
+   e principalmente com o Hunter dentro do iframe do CRM, onde sobra bem menos
+   largura. Estas classes são o único lugar do front onde o layout reage à
+   largura; prefira usá-las a fixar colunas no style inline. */
+
+/* Cartões de métrica. Reflui sozinho por largura disponível, sem media query:
+   cabe 4 numa tela larga, 2 num painel médio, 1 no celular. */
+.h-cards{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(var(--card,190px),1fr));}
+
+/* Duas colunas que viram uma quando não cabem. A proporção do desktop fica em
+   --split (ex.: style={{'--split':'1.55fr 1fr'}}); abaixo de 900px empilha. */
+.h-split{display:grid;gap:16px;grid-template-columns:var(--split,1fr 1fr);}
+@media(max-width:900px){.h-split{grid-template-columns:1fr;}}
+
+/* Tabelas. Em vez de espremer 8-10 colunas até ninguém conseguir ler, o corpo
+   rola na horizontal e cada coluna mantém a largura mínima de leitura (--tw). */
+.h-scroll{overflow-x:auto;}
+.h-tw{min-width:var(--tw,900px);}
+
+/* Sidebar vira trilho só de ícones quando a largura aperta (devolve ~170px ao
+   conteúdo). O !important é porque a largura base é inline no componente. */
+@media(max-width:1024px){
+  .h-side{width:64px!important;}
+  .h-side .h-side-label{display:none;}
+  .h-side .h-nav-item{justify-content:center;padding-left:0;padding-right:0;}
+  .h-side .h-side-foot{padding-left:8px!important;padding-right:8px!important;}
+  .h-side .h-side-foot-btns{flex-direction:column;}
+  /* "ADMINISTRAÇÃO" não cabe em 64px e truncava como "ADMIN": vira só um
+     traço separando o bloco administrativo do resto do menu. */
+  .h-side .h-side-sec{font-size:0!important;padding:12px 12px 10px!important;}
+  .h-side .h-side-sec::after{content:'';display:block;height:1px;background:var(--border);}
+}
+
+/* Topbar e área de conteúdo em telas estreitas. */
+@media(max-width:760px){
+  .h-topbar{padding:0 14px!important;}
+  .h-topbar-sub{display:none;}
+  .h-main{padding:16px!important;}
+}
+@media(max-width:560px){
+  .h-btn-label{display:none;}
+}
 </style>
 <script src="/vendor/react.production.min.js"></script>
 <script src="/vendor/react-dom.production.min.js"></script>
