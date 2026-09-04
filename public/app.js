@@ -949,6 +949,8 @@ function Sidebar({
   })), /*#__PURE__*/React.createElement("span", {
     className: "h-side-label"
   }, it.label)));
+  // height:100% (não 100vh) porque a casca .h-shell já é do tamanho da janela —
+  // e sem sticky, que só fazia sentido quando a página inteira rolava.
   return /*#__PURE__*/React.createElement("aside", {
     className: "h-side",
     style: {
@@ -958,9 +960,8 @@ function Sidebar({
       borderRight: '1px solid var(--border)',
       display: 'flex',
       flexDirection: 'column',
-      position: 'sticky',
-      top: 0,
-      height: '100vh'
+      height: '100%',
+      minHeight: 0
     }
   }, /*#__PURE__*/React.createElement("div", {
     className: "h-nav-item",
@@ -2538,6 +2539,7 @@ function Leads({
       fontFamily: 'inherit'
     }
   }, "Limpar")), /*#__PURE__*/React.createElement("div", {
+    className: "h-tabela",
     style: {
       background: 'var(--panel)',
       border: '1px solid var(--border)',
@@ -2552,6 +2554,7 @@ function Leads({
       '--tw': '1000px'
     }
   }, /*#__PURE__*/React.createElement("div", {
+    className: "h-thead",
     style: {
       display: 'grid',
       gridTemplateColumns: '40px 2.3fr 1.1fr .8fr 1.4fr 96px 90px 110px',
@@ -2591,7 +2594,7 @@ function Leads({
     return /*#__PURE__*/React.createElement("div", {
       key: l.id,
       onClick: () => onOpenLead(l.id),
-      className: "row-hover",
+      className: "row-hover h-linha",
       style: {
         display: 'grid',
         gridTemplateColumns: '40px 2.3fr 1.1fr .8fr 1.4fr 96px 90px 110px',
@@ -2603,6 +2606,7 @@ function Leads({
         background: sel ? 'var(--panel2)' : 'transparent'
       }
     }, /*#__PURE__*/React.createElement("div", {
+      className: "h-sel",
       onClick: e => {
         e.stopPropagation();
         toggleSel(l.id);
@@ -2613,6 +2617,7 @@ function Leads({
     }, /*#__PURE__*/React.createElement(Checkbox, {
       checked: sel
     })), /*#__PURE__*/React.createElement("div", {
+      className: "h-titulo",
       style: {
         minWidth: 0
       }
@@ -2633,6 +2638,7 @@ function Leads({
         textOverflow: 'ellipsis'
       }
     }, l.razao)), /*#__PURE__*/React.createElement("div", {
+      "data-rot": "Setor",
       style: {
         minWidth: 0
       }
@@ -2649,6 +2655,7 @@ function Leads({
         color: 'var(--faint)'
       }
     }, l.porte)), /*#__PURE__*/React.createElement("div", {
+      "data-rot": "Local",
       style: {
         fontSize: 12.5
       }
@@ -2657,6 +2664,7 @@ function Leads({
         color: 'var(--faint)'
       }
     }, "/", l.uf)), /*#__PURE__*/React.createElement("div", {
+      "data-rot": "Decisor",
       style: {
         minWidth: 0
       }
@@ -2675,14 +2683,19 @@ function Leads({
         overflow: 'hidden',
         textOverflow: 'ellipsis'
       }
-    }, l.cargo)), /*#__PURE__*/React.createElement(ScoreBar, {
+    }, l.cargo)), /*#__PURE__*/React.createElement("div", {
+      "data-rot": "Score"
+    }, /*#__PURE__*/React.createElement(ScoreBar, {
       score: l.score
-    }), /*#__PURE__*/React.createElement(ContactCell, {
+    })), /*#__PURE__*/React.createElement("div", {
+      "data-rot": "Contato"
+    }, /*#__PURE__*/React.createElement(ContactCell, {
       leadId: l.id,
       emailVal: l.email_valor,
       phoneVal: l.telefone_valor,
       onSaved: () => setTick(t => t + 1)
-    }), /*#__PURE__*/React.createElement("div", {
+    })), /*#__PURE__*/React.createElement("div", {
+      "data-rot": "Status",
       style: {
         display: 'flex',
         flexDirection: 'column',
@@ -2835,6 +2848,7 @@ function Buscas({
       fontFamily: 'inherit'
     }
   }))), /*#__PURE__*/React.createElement("div", {
+    className: "h-tabela",
     style: {
       background: 'var(--panel)',
       border: '1px solid var(--border)',
@@ -2846,9 +2860,10 @@ function Buscas({
   }, /*#__PURE__*/React.createElement("div", {
     className: "h-tw",
     style: {
-      '--tw': '1040px'
+      '--tw': '1000px'
     }
   }, /*#__PURE__*/React.createElement("div", {
+    className: "h-thead",
     style: {
       display: 'grid',
       gridTemplateColumns: '24px 2fr 1fr 1fr 1.1fr .8fr .8fr .8fr 1fr 40px',
@@ -2877,7 +2892,7 @@ function Buscas({
   }, "Nenhum radar encontrado."), buscas && buscas.map(b => /*#__PURE__*/React.createElement("div", {
     key: b.id,
     onClick: () => onOpen(b.id),
-    className: "row-hover",
+    className: "row-hover h-linha",
     style: {
       display: 'grid',
       gridTemplateColumns: '24px 2fr 1fr 1fr 1.1fr .8fr .8fr .8fr 1fr 40px',
@@ -2887,10 +2902,13 @@ function Buscas({
       borderBottom: '1px solid var(--border)',
       cursor: 'pointer'
     }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(StatusDot, {
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h-sel"
+  }, /*#__PURE__*/React.createElement(StatusDot, {
     color: healthColors[b.health] || C.gray,
     pulse: b.health === 'green'
   })), /*#__PURE__*/React.createElement("div", {
+    className: "h-titulo",
     style: {
       fontSize: 13.5,
       fontWeight: 500,
@@ -2898,40 +2916,50 @@ function Buscas({
       overflow: 'hidden',
       textOverflow: 'ellipsis'
     }
-  }, b.nome), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
+  }, b.nome), /*#__PURE__*/React.createElement("div", {
+    "data-rot": "Status"
+  }, /*#__PURE__*/React.createElement("span", {
     style: badgeStyle(buscaStatusColors[b.status] || C.gray)
   }, b.status)), /*#__PURE__*/React.createElement("div", {
+    "data-rot": "Criada por",
     style: {
       fontSize: 12.5,
       color: 'var(--dim)'
     }
   }, b.criador_nome || b.criador || '—'), /*#__PURE__*/React.createElement("div", {
+    "data-rot": "Criada em",
     style: {
       fontSize: 12,
       color: 'var(--dim)',
       lineHeight: 1.35
     }
   }, dataHora(b.criado_em)), /*#__PURE__*/React.createElement("div", {
+    "data-rot": "Encontr.",
     style: {
       fontSize: 13,
       fontWeight: 600
     }
   }, fmtNum(b.encontrados ?? b.enc)), /*#__PURE__*/React.createElement("div", {
+    "data-rot": "Qualif.",
     style: {
       fontSize: 13,
       color: 'var(--dim)'
     }
   }, fmtNum(b.qualificados ?? b.qual)), /*#__PURE__*/React.createElement("div", {
+    "data-rot": "CRM",
     style: {
       fontSize: 13,
       color: C.cyan
     }
   }, fmtNum(b.enviados ?? b.crm)), /*#__PURE__*/React.createElement("div", {
+    "data-rot": "Atividade",
     style: {
       fontSize: 12,
       color: 'var(--faint)'
     }
-  }, timeAgo(b.ultima_ativ)), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("button", {
+  }, timeAgo(b.ultima_ativ)), /*#__PURE__*/React.createElement("div", {
+    "data-rot": "A\xE7\xF5es"
+  }, /*#__PURE__*/React.createElement("button", {
     onClick: e => excluir(e, b),
     title: "Excluir radar",
     style: {
@@ -3603,6 +3631,7 @@ function BuscaDetail({
   }, "\xDAltima atividade: ", timeAgo(b.ultima_ativ), "."))), criterios.params?.perfil && /*#__PURE__*/React.createElement(PerfilMedio, {
     perfil: criterios.params.perfil
   }), /*#__PURE__*/React.createElement("div", {
+    className: "h-tabela",
     style: {
       background: 'var(--panel)',
       border: '1px solid var(--border)',
@@ -3636,7 +3665,7 @@ function BuscaDetail({
   }, leads.map(l => /*#__PURE__*/React.createElement("div", {
     key: l.id,
     onClick: () => onOpenLead(l.id),
-    className: "row-hover",
+    className: "row-hover h-linha",
     style: {
       display: 'grid',
       gridTemplateColumns: '2fr 1.3fr 1fr 120px 100px',
@@ -3647,6 +3676,7 @@ function BuscaDetail({
       cursor: 'pointer'
     }
   }, /*#__PURE__*/React.createElement("div", {
+    className: "h-titulo",
     style: {
       fontSize: 13.5,
       fontWeight: 500,
@@ -3655,6 +3685,7 @@ function BuscaDetail({
       textOverflow: 'ellipsis'
     }
   }, l.fantasia), /*#__PURE__*/React.createElement("div", {
+    "data-rot": "Decisor",
     style: {
       fontSize: 12.5,
       color: 'var(--dim)',
@@ -3663,12 +3694,17 @@ function BuscaDetail({
       textOverflow: 'ellipsis'
     }
   }, l.decisor), /*#__PURE__*/React.createElement("div", {
+    "data-rot": "Local",
     style: {
       fontSize: 12.5
     }
-  }, l.cidade, "/", l.uf), /*#__PURE__*/React.createElement(ScoreBar, {
+  }, l.cidade, "/", l.uf), /*#__PURE__*/React.createElement("div", {
+    "data-rot": "Score"
+  }, /*#__PURE__*/React.createElement(ScoreBar, {
     score: l.score
-  }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
+  })), /*#__PURE__*/React.createElement("div", {
+    "data-rot": "Status"
+  }, /*#__PURE__*/React.createElement("span", {
     style: badgeStyle(statusColors[l.status] || C.gray)
   }, l.status))))))));
 }
@@ -7507,6 +7543,7 @@ function Usuarios({
       marginBottom: 14
     }
   }, erro), /*#__PURE__*/React.createElement("div", {
+    className: "h-tabela",
     style: {
       background: 'var(--panel)',
       border: '1px solid var(--border)',
@@ -7521,6 +7558,7 @@ function Usuarios({
       '--tw': '820px'
     }
   }, /*#__PURE__*/React.createElement("div", {
+    className: "h-thead",
     style: {
       display: 'grid',
       gridTemplateColumns: cols,
@@ -7550,6 +7588,7 @@ function Usuarios({
     const ini = (u.nome || '?').split(' ').slice(0, 2).map(w => w[0]).join('');
     return /*#__PURE__*/React.createElement("div", {
       key: u.id,
+      className: "h-linha",
       style: {
         display: 'grid',
         gridTemplateColumns: cols,
@@ -7559,6 +7598,7 @@ function Usuarios({
         borderBottom: '1px solid var(--border)'
       }
     }, /*#__PURE__*/React.createElement("div", {
+      className: "h-titulo",
       style: {
         display: 'flex',
         alignItems: 'center',
@@ -7584,6 +7624,7 @@ function Usuarios({
         fontWeight: 500
       }
     }, u.nome)), /*#__PURE__*/React.createElement("div", {
+      "data-rot": "E-mail",
       style: {
         fontSize: 12.5,
         color: 'var(--dim)',
@@ -7592,6 +7633,7 @@ function Usuarios({
         textOverflow: 'ellipsis'
       }
     }, u.email), /*#__PURE__*/React.createElement("div", {
+      "data-rot": "Papel",
       style: {
         display: 'flex',
         gap: 6,
@@ -7616,11 +7658,14 @@ function Usuarios({
         opacity: .6
       }
     }, "+ master") : null), /*#__PURE__*/React.createElement("div", {
+      "data-rot": "\xDAltimo acesso",
       style: {
         fontSize: 12.5,
         color: 'var(--faint)'
       }
-    }, fmtAcesso(u.ultimo_acesso)), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
+    }, fmtAcesso(u.ultimo_acesso)), /*#__PURE__*/React.createElement("div", {
+      "data-rot": "Status"
+    }, /*#__PURE__*/React.createElement("span", {
       onClick: () => alternar(u),
       title: "Clique para ativar/desativar",
       style: {
@@ -7628,6 +7673,7 @@ function Usuarios({
         cursor: 'pointer'
       }
     }, u.ativo ? 'Ativo' : 'Inativo')), /*#__PURE__*/React.createElement("div", {
+      "data-rot": "A\xE7\xF5es",
       style: {
         display: 'flex',
         gap: 6
@@ -10391,9 +10437,10 @@ function App() {
     const i = s.indexOf(':');
     return [s.slice(0, i).trim(), s.slice(i + 1).trim()];
   }));
+  // A altura vem da classe .h-shell (100dvh + overflow:hidden), não do inline:
+  // a casca ocupa a janela e só o <main> rola por dentro.
   const rootStyle = {
     display: 'flex',
-    minHeight: '100vh',
     width: '100%',
     fontFamily: 'Inter,system-ui,sans-serif',
     color: 'var(--text)',
@@ -10458,12 +10505,13 @@ function App() {
     }
   };
   return /*#__PURE__*/React.createElement("div", {
+    className: "h-shell",
     style: rootStyle
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       width: '100%',
-      minHeight: '100vh'
+      height: '100%'
     }
   }, /*#__PURE__*/React.createElement(Sidebar, {
     screen: screen,
@@ -10471,6 +10519,7 @@ function App() {
     onLogout: logout,
     user: user
   }), /*#__PURE__*/React.createElement("div", {
+    className: "h-col",
     style: {
       flex: 1,
       minWidth: 0,

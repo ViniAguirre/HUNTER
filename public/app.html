@@ -37,10 +37,68 @@ input:focus,textarea:focus{border-color:var(--blue)!important;outline:none;}
 .h-split{display:grid;gap:16px;grid-template-columns:var(--split,1fr 1fr);}
 @media(max-width:900px){.h-split{grid-template-columns:1fr;}}
 
-/* Tabelas. Em vez de espremer 8-10 colunas até ninguém conseguir ler, o corpo
-   rola na horizontal e cada coluna mantém a largura mínima de leitura (--tw). */
+/* Tabelas. Entre ~900px e a largura cheia o corpo rola na horizontal e cada
+   coluna mantém a largura mínima de leitura (--tw). */
 .h-scroll{overflow-x:auto;}
 .h-tw{min-width:var(--tw,900px);}
+
+/* Quando o espaço aperta, a tabela deixa de ser tabela: cada linha vira um
+   cartão com os campos rotulados, um por linha. Assim tudo cabe e só existe
+   rolagem vertical — que é o que se espera dentro do painel do CRM. O rótulo
+   de cada campo vem do data-rot da célula, então o cabeçalho some.
+
+   É container query, não media query, de propósito: o gatilho tem que ser a
+   largura QUE SOBRA PRA TABELA, não a da janela. Com media query havia um vão
+   de 1000px a 1300px em que a janela já era "grande" mas, depois de descontar
+   a sidebar e o padding, a tabela ainda não cabia e escondia até 234px. */
+.h-tabela{container-type:inline-size;}
+@container (max-width:1000px){
+  .h-tabela .h-tw{
+    min-width:0!important;
+    /* Num espaço largo-mas-insuficiente (ex.: 900px), empilhar um cartão por
+       linha deixaria metade da área vazia — então os cartões se distribuem em
+       colunas. No celular vira uma coluna só, empilhado. */
+    display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(290px,1fr));
+  }
+  .h-tabela .h-thead{display:none!important;}
+  .h-tabela .h-linha{
+    grid-template-columns:26px 1fr!important;
+    align-items:start!important;
+    gap:3px 10px!important;
+    padding:14px 16px!important;
+  }
+  /* Todo campo ocupa a linha inteira do cartão: rótulo à esquerda, valor à
+     direita. O flex-direction:row com !important é porque algumas células
+     trazem flexDirection:'column' no style inline (que venceria a classe). */
+  .h-tabela .h-linha > [data-rot]{
+    grid-column:1/-1;
+    display:flex!important;
+    flex-direction:row!important;
+    flex-wrap:wrap;
+    align-items:baseline;
+    gap:2px 10px;
+    min-width:0;
+  }
+  /* Seleção e título dividem a primeira linha do cartão. */
+  .h-tabela .h-linha > .h-sel{grid-column:1;grid-row:1;padding-top:2px;}
+  .h-tabela .h-linha > .h-titulo{grid-column:2;grid-row:1;margin-bottom:7px;}
+  .h-tabela .h-linha > [data-rot]::before{
+    content:attr(data-rot);
+    flex:0 0 84px;
+    font-size:10px;
+    font-weight:600;
+    letter-spacing:.05em;
+    text-transform:uppercase;
+    color:var(--faint);
+  }
+  /* A barra do Score é um flex:1 dentro da própria célula. Como no cartão a
+     célula encolhe pro tamanho do conteúdo, esse flex:1 resolvia pra zero e
+     sobrava só o número — então aqui o valor precisa poder crescer. */
+  .h-tabela .h-linha > [data-rot="Score"] > *{flex:1 1 120px;}
+  /* Campo vazio não vira uma linha só com o rótulo. */
+  .h-tabela .h-linha > [data-rot]:empty{display:none;}
+}
 
 /* Sidebar vira trilho só de ícones quando a largura aperta (devolve ~170px ao
    conteúdo). O !important é porque a largura base é inline no componente. */
@@ -55,6 +113,18 @@ input:focus,textarea:focus{border-color:var(--blue)!important;outline:none;}
   .h-side .h-side-sec{font-size:0!important;padding:12px 12px 10px!important;}
   .h-side .h-side-sec::after{content:'';display:block;height:1px;background:var(--border);}
 }
+
+/* A casca ocupa exatamente a altura da janela e quem rola é só o <main>.
+   Antes o contêiner usava minHeight:100vh, então o main crescia sem limite e o
+   overflowY:'auto' dele nunca chegava a valer: rolava a página inteira, levando
+   junto a sidebar e a topbar. Dentro de um iframe de altura fixa isso é o que
+   dava a sensação de "não está ajustado à tela". 100dvh acompanha a barra de
+   endereço no celular; o 100vh antes dele é o fallback pra quem não suporta. */
+.h-shell{height:100vh;height:100dvh;overflow:hidden;}
+/* min-height:0 é o que autoriza o filho de um flex a encolher e, aí sim,
+   rolar por dentro em vez de esticar o pai. */
+.h-col{min-height:0;}
+.h-main{min-height:0;}
 
 /* Topbar e área de conteúdo em telas estreitas. */
 @media(max-width:760px){
