@@ -26,6 +26,15 @@
   input{width:100%;height:44px;border-radius:10px;border:1px solid rgba(255,255,255,.08);
     background:#101a3a;color:#ECEFF7;padding:0 14px;font-size:14px;font-family:inherit;margin-bottom:16px;outline:none;}
   input:focus{border-color:#3A8EFF;}
+  /* Campo de senha com o botão do olho por cima: o padding-right no input abre
+     o espaço pra ele não cobrir o texto digitado. */
+  .pwd-wrap{position:relative;}
+  .pwd-wrap input{padding-right:46px;}
+  .pwd-toggle{position:absolute;top:0;right:0;width:44px;height:44px;display:flex;
+    align-items:center;justify-content:center;background:none;border:none;padding:0;
+    margin:0;cursor:pointer;color:#8A95B4;border-radius:10px;}
+  .pwd-toggle:hover{color:#ECEFF7;}
+  .pwd-toggle:focus-visible{outline:2px solid #3A8EFF;outline-offset:-2px;}
   button{width:100%;height:46px;border-radius:10px;border:none;background:#FBE49A;color:#0E1936;
     font-weight:600;font-size:14px;font-family:inherit;cursor:pointer;margin-top:6px;}
   button:disabled{opacity:.6;cursor:default;}
@@ -60,7 +69,16 @@
     <label for="email">E-mail</label>
     <input id="email" name="email" type="email" autocomplete="username" value="" placeholder="seu@email.com" />
     <label for="senha">Senha</label>
-    <input id="senha" name="senha" type="password" autocomplete="current-password" value="" />
+    <div class="pwd-wrap">
+      <input id="senha" name="senha" type="password" autocomplete="current-password" value="" />
+      <button type="button" id="verSenha" class="pwd-toggle" aria-label="Mostrar senha" aria-pressed="false" title="Mostrar senha">
+        <svg id="olho" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"></path>
+          <circle cx="12" cy="12" r="3.2"></circle>
+        </svg>
+      </button>
+    </div>
     <button type="submit" id="btn">Entrar</button>
     <div class="forgot"><a href="#">Esqueci minha senha</a></div>
   </form>
@@ -69,6 +87,35 @@
   var form = document.getElementById('form');
   var err = document.getElementById('err');
   var btn = document.getElementById('btn');
+
+  // Revelar/ocultar a senha. Vale tanto pra senha digitada quanto pra que veio
+  // preenchida pelo gerenciador do navegador — trocar o type já mostra o valor.
+  var senhaInput = document.getElementById('senha');
+  var verSenha = document.getElementById('verSenha');
+  var olho = document.getElementById('olho');
+  var OLHO_ABERTO =
+    '<path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"></path>' +
+    '<circle cx="12" cy="12" r="3.2"></circle>';
+  // Olho cortado = senha visível no momento; clicar de novo esconde.
+  var OLHO_CORTADO =
+    '<path d="M9.9 4.24A9.1 9.1 0 0 1 12 4c7 0 11 7 11 7a17.7 17.7 0 0 1-3.06 3.94"></path>' +
+    '<path d="M6.53 6.53A17.6 17.6 0 0 0 1 11s4 7 11 7a10 10 0 0 0 4.42-1"></path>' +
+    '<path d="M9.9 9.9a3.2 3.2 0 0 0 4.2 4.2"></path>' +
+    '<path d="M2 2l20 20"></path>';
+  verSenha.addEventListener('click', function () {
+    var revelar = senhaInput.type === 'password';
+    senhaInput.type = revelar ? 'text' : 'password';
+    olho.innerHTML = revelar ? OLHO_CORTADO : OLHO_ABERTO;
+    verSenha.setAttribute('aria-pressed', revelar ? 'true' : 'false');
+    var rotulo = revelar ? 'Ocultar senha' : 'Mostrar senha';
+    verSenha.setAttribute('aria-label', rotulo);
+    verSenha.setAttribute('title', rotulo);
+    // Devolve o cursor pro fim do campo: sem isso o clique tira o foco e o
+    // usuário precisa clicar no input de novo pra continuar digitando.
+    senhaInput.focus();
+    var fim = senhaInput.value.length;
+    try { senhaInput.setSelectionRange(fim, fim); } catch (_) {}
+  });
   form.addEventListener('submit', async function (e) {
     e.preventDefault();
     err.style.display = 'none';

@@ -404,47 +404,60 @@ function Sidebar({ screen, onNav, onLogout, user }) {
       transition:'background .12s',
     };
   };
+  const botaoRodape = { flex:1, height:32, borderRadius:8, border:'1px solid var(--border)',
+    background:'transparent', color:'var(--dim)', fontSize:12, fontFamily:'inherit', cursor:'pointer',
+    display:'flex', alignItems:'center', justifyContent:'center', gap:6, overflow:'hidden',
+    whiteSpace:'nowrap', padding:'0 4px' };
+  // title= no <a>: quando a sidebar colapsa pra trilho de ícones (≤1024px) o
+  // rótulo some, então o tooltip nativo passa a ser a única pista do que é cada
+  // item.
   const renderNav = (items) => items.map(it => (
-    <a key={it.key} onClick={() => onNav(it.key)} className="nav-link" style={navStyle(it.key)}>
+    <a key={it.key} onClick={() => onNav(it.key)} className="nav-link h-nav-item" title={it.label} style={navStyle(it.key)}>
       <svg width={18} height={18} viewBox="0 0 24 24" fill="none"
         stroke={screen === it.key || (it.key==='buscas' && screen==='buscaDetail') ? 'var(--accent)' : '#8A95B4'}
         strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink:0 }}>
         <path d={it.icon}/>
       </svg>
-      <span>{it.label}</span>
+      <span className="h-side-label">{it.label}</span>
     </a>
   ));
   return (
-    <aside style={{ width:236, flexShrink:0, background:'var(--panel)', borderRight:'1px solid var(--border)',
+    <aside className="h-side" style={{ width:236, flexShrink:0, background:'var(--panel)', borderRight:'1px solid var(--border)',
       display:'flex', flexDirection:'column', position:'sticky', top:0, height:'100vh' }}>
-      <div style={{ display:'flex', alignItems:'center', gap:10, padding:'20px 20px 22px' }}>
-        <img src="hunter_logo_icon.png" alt="Hunter" style={{ width:30, height:30 }}/>
-        <span style={{ fontSize:16, fontWeight:600, letterSpacing:'.2em' }}>HUNTER</span>
+      <div className="h-nav-item" style={{ display:'flex', alignItems:'center', gap:10, padding:'20px 20px 22px' }}>
+        <img src="hunter_logo_icon.png" alt="Hunter" style={{ width:30, height:30, flexShrink:0 }}/>
+        <span className="h-side-label" style={{ fontSize:16, fontWeight:600, letterSpacing:'.2em' }}>HUNTER</span>
       </div>
       <nav style={{ display:'flex', flexDirection:'column', gap:2, padding:'4px 12px', flex:1, overflowY:'auto' }}>
         {renderNav(NAV_MAIN)}
         {adminItems.length > 0 && (
-          <div style={{ fontSize:10, fontWeight:600, letterSpacing:'.14em', color:'var(--faint)',
+          <div className="h-side-sec" style={{ fontSize:10, fontWeight:600, letterSpacing:'.14em', color:'var(--faint)',
             padding:'18px 12px 8px' }}>ADMINISTRAÇÃO</div>
         )}
         {renderNav(adminItems)}
       </nav>
-      <div style={{ padding:'12px 14px', borderTop:'1px solid var(--border)' }}>
-        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-          <div style={{ width:32, height:32, borderRadius:8, background:C.blue, color:'#fff',
+      <div className="h-side-foot" style={{ padding:'12px 14px', borderTop:'1px solid var(--border)' }}>
+        <div className="h-nav-item" style={{ display:'flex', alignItems:'center', gap:10 }}>
+          <div title={nome} style={{ width:32, height:32, borderRadius:8, background:C.blue, color:'#fff',
             display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:600, flexShrink:0 }}>{ini}</div>
-          <div style={{ lineHeight:1.3, overflow:'hidden' }}>
+          <div className="h-side-label" style={{ lineHeight:1.3, overflow:'hidden' }}>
             <div style={{ fontSize:13, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{nome}</div>
             <div style={{ fontSize:11, color:'var(--faint)' }}>{papel}</div>
           </div>
         </div>
-        <div style={{ display:'flex', gap:8, marginTop:10 }}>
-          <button onClick={() => setModalSenha(true)} className="nav-link"
-            style={{ flex:1, height:32, borderRadius:8, border:'1px solid var(--border)', background:'transparent',
-              color:'var(--dim)', fontSize:12, fontFamily:'inherit', cursor:'pointer' }}>Trocar senha</button>
-          <button onClick={onLogout} className="nav-link"
-            style={{ flex:1, height:32, borderRadius:8, border:'1px solid var(--border)', background:'transparent',
-              color:'var(--dim)', fontSize:12, fontFamily:'inherit', cursor:'pointer' }}>Sair</button>
+        {/* Ícone + rótulo: com a sidebar colapsada o rótulo some (.h-side-label)
+            e sobra só o ícone, igual aos itens do menu. */}
+        <div className="h-side-foot-btns" style={{ display:'flex', gap:8, marginTop:10 }}>
+          <button onClick={() => setModalSenha(true)} className="nav-link" title="Trocar senha"
+            style={{ ...botaoRodape }}>
+            <Svg d="M19 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2zM7 11V7a5 5 0 0 1 10 0v4"
+              w={14} h={14} sw={1.7}/>
+            <span className="h-side-label">Trocar senha</span>
+          </button>
+          <button onClick={onLogout} className="nav-link" title="Sair" style={{ ...botaoRodape }}>
+            <Svg d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" w={14} h={14} sw={1.7}/>
+            <span className="h-side-label">Sair</span>
+          </button>
         </div>
       </div>
       {modalSenha && <TrocarSenhaModal onClose={() => setModalSenha(false)}/>}
@@ -460,6 +473,7 @@ const TITLES = {
   buscaDetail: ['Detalhe do Radar', 'Produção e leads deste radar'],
   nova: ['Criar Radar', 'Configure um novo radar de leads'],
   propostas: ['Propostas', 'Suas propostas de valor (o que você vende)'],
+  semelhantes: ['Semelhantes', 'Listas de clientes que servem de modelo para a busca'],
   agente: ['Agente SWOT', 'Fichamento comercial que personaliza a análise'],
   integracoes: ['Integrações', 'Conexões com APIs e CRM'],
   usuarios: ['Usuários', 'Permissões e acessos'],
@@ -528,19 +542,23 @@ function Topbar({ screen, theme, onTheme, onNova, user }) {
   const [title, sub] = TITLES[screen] || ['',''];
   const ini = (user?.nome || '').split(' ').slice(0,2).map(w=>w[0]).join('') || 'U';
   return (
-    <header style={{ height:64, flexShrink:0, borderBottom:'1px solid var(--border)',
-      display:'flex', alignItems:'center', justifyContent:'space-between', padding:'0 28px',
+    <header className="h-topbar" style={{ height:64, flexShrink:0, borderBottom:'1px solid var(--border)',
+      display:'flex', alignItems:'center', justifyContent:'space-between', gap:12, padding:'0 28px',
       background:'var(--bg)', position:'sticky', top:0, zIndex:20 }}>
-      <div style={{ display:'flex', flexDirection:'column', lineHeight:1.2 }}>
-        <h2 style={{ fontSize:17, fontWeight:600, margin:0 }}>{title}</h2>
-        <span style={{ fontSize:12, color:'var(--faint)' }}>{sub}</span>
+      {/* minWidth:0 é o que permite o título encolher em vez de empurrar os
+          botões da direita pra fora da tela. */}
+      <div style={{ display:'flex', flexDirection:'column', lineHeight:1.2, minWidth:0, overflow:'hidden' }}>
+        <h2 style={{ fontSize:17, fontWeight:600, margin:0, whiteSpace:'nowrap',
+          overflow:'hidden', textOverflow:'ellipsis' }}>{title}</h2>
+        <span className="h-topbar-sub" style={{ fontSize:12, color:'var(--faint)', whiteSpace:'nowrap',
+          overflow:'hidden', textOverflow:'ellipsis' }}>{sub}</span>
       </div>
-      <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-        <button onClick={onNova} style={{ display:'flex', alignItems:'center', gap:8, height:38, padding:'0 16px',
+      <div style={{ display:'flex', alignItems:'center', gap:10, flexShrink:0 }}>
+        <button onClick={onNova} title="Criar Radar" style={{ display:'flex', alignItems:'center', gap:8, height:38, padding:'0 16px',
           borderRadius:9, border:'none', background:'var(--gold)', color:'#0E1936', fontWeight:600,
-          fontSize:13, fontFamily:'inherit', cursor:'pointer' }}>
+          fontSize:13, fontFamily:'inherit', cursor:'pointer', whiteSpace:'nowrap' }}>
           <Svg d="M12 5v14M5 12h14" color="#0E1936" w={16} h={16} sw={2}/>
-          Criar Radar
+          <span className="h-btn-label">Criar Radar</span>
         </button>
         <ThemeToggle theme={theme} onToggle={onTheme}/>
         <SinoAlertas/>
@@ -589,7 +607,7 @@ function Dashboard({ onOpenBusca }) {
 
   return (
     <div style={{ maxWidth:1180 }}>
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:16, marginBottom:24 }}>
+      <div className="h-cards" style={{ '--card':'200px', gap:16, marginBottom:24 }}>
         {metrics.map(m => (
           <div key={m.label} style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:'18px 20px' }}>
             <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14 }}>
@@ -604,7 +622,7 @@ function Dashboard({ onOpenBusca }) {
         ))}
       </div>
 
-      <div style={{ display:'grid', gridTemplateColumns:'1.55fr 1fr', gap:16 }}>
+      <div className="h-split" style={{ '--split':'1.55fr 1fr', gap:16 }}>
         <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:'6px 6px 8px' }}>
           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'14px 16px 12px' }}>
             <h3 style={{ fontSize:14, fontWeight:600, margin:0 }}>Radares ativos</h3>
@@ -1031,7 +1049,7 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
           <option value="Descartado">Descartado</option>
         </select>
         <input value={filterLocal} onChange={handleLocal} placeholder="Local (cidade/UF)"
-          style={{ height:38, width:150, borderRadius:9, border:'1px solid var(--border)',
+          style={{ height:38, width:150, maxWidth:'100%', borderRadius:9, border:'1px solid var(--border)',
             background:'var(--panel)', color:'var(--text)', padding:'0 12px', fontSize:12.5, fontFamily:'inherit' }}/>
         <select value={filterScore} onChange={e => { setFilterScore(e.target.value); setPage(1); }}
           style={{ height:38, padding:'0 10px', borderRadius:9, border:'1px solid var(--border)',
@@ -1144,6 +1162,8 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
       )}
 
       <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden' }}>
+        <div className="h-scroll">
+        <div className="h-tw" style={{ '--tw':'1000px' }}>
         <div style={{ display:'grid', gridTemplateColumns:'40px 2.3fr 1.1fr .8fr 1.4fr 96px 90px 110px',
           alignItems:'center', gap:10, padding:'12px 18px', borderBottom:'1px solid var(--border)',
           fontSize:11, fontWeight:600, letterSpacing:'.04em', color:'var(--faint)', textTransform:'uppercase' }}>
@@ -1204,8 +1224,11 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
             </div>
           );
         })}
+        </div>
+        </div>
       </div>
-      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginTop:14, fontSize:12, color:'var(--faint)' }}>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10,
+        flexWrap:'wrap', marginTop:14, fontSize:12, color:'var(--faint)' }}>
         <span>Mostrando {leads.length} de {fmtNum(total)} leads</span>
         <div style={{ display:'flex', gap:6 }}>
           <button onClick={() => setPage(p => Math.max(1, p-1))} disabled={page <= 1}
@@ -1257,6 +1280,8 @@ function Buscas({ onOpen }) {
         </div>
       </div>
       <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden' }}>
+        <div className="h-scroll">
+        <div className="h-tw" style={{ '--tw':'1040px' }}>
         <div style={{ display:'grid', gridTemplateColumns:'24px 2fr 1fr 1fr 1.1fr .8fr .8fr .8fr 1fr 40px',
           alignItems:'center', gap:10, padding:'12px 18px', borderBottom:'1px solid var(--border)',
           fontSize:11, fontWeight:600, letterSpacing:'.04em', color:'var(--faint)', textTransform:'uppercase' }}>
@@ -1291,6 +1316,8 @@ function Buscas({ onOpen }) {
             </div>
           </div>
         ))}
+        </div>
+        </div>
       </div>
     </div>
   );
@@ -1320,7 +1347,7 @@ function PerfilMedio({ perfil }) {
         </span>
         <span style={{ fontSize:12, color:'var(--faint)' }}>{perfil.amostra} empresas analisadas</span>
       </div>
-      <div style={{ display:'grid', gridTemplateColumns:'1.4fr 1fr', gap:22 }}>
+      <div className="h-split" style={{ '--split':'1.4fr 1fr', gap:22 }}>
         <div>
           <div style={{ fontSize:11.5, color:'var(--faint)', marginBottom:8, textTransform:'uppercase', letterSpacing:.4 }}>Atividades (CNAE)</div>
           {(perfil.cnaes || []).slice(0, 5).map(x => barra(cnaeNome(x.c), x.freq))}
@@ -1550,7 +1577,7 @@ function BuscaDetail({ buscaId, onBack, onOpenLead, onDuplicar }) {
         </div>
       )}
 
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(6,1fr)', gap:12, marginBottom:18 }}>
+      <div className="h-cards" style={{ '--card':'150px', gap:12, marginBottom:18 }}>
         {[['Encontrados', fmtNum(b.enc), 'var(--text)'],
           ['Segmentadas (perfil)', fmtNum((b.qual||0)+(b.sem_contato||0)), C.blue],
           ['Qualificados', fmtNum(b.qual), C.green],
@@ -1564,7 +1591,7 @@ function BuscaDetail({ buscaId, onBack, onOpenLead, onDuplicar }) {
         ))}
       </div>
 
-      <div style={{ display:'grid', gridTemplateColumns:'1.6fr 1fr', gap:16, marginBottom:18 }}>
+      <div className="h-split" style={{ '--split':'1.6fr 1fr', gap:16, marginBottom:18 }}>
         <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:18 }}>
           <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14 }}>
             <h3 style={{ fontSize:14, fontWeight:600, margin:0 }}>Produção ao longo do tempo</h3>
@@ -1599,6 +1626,8 @@ function BuscaDetail({ buscaId, onBack, onOpenLead, onDuplicar }) {
         {leads.length === 0 && (
           <div style={{ padding:'22px 18px', fontSize:13, color:'var(--faint)' }}>Nenhum lead ainda.</div>
         )}
+        <div className="h-scroll">
+        <div className="h-tw" style={{ '--tw':'720px' }}>
         {leads.map(l => (
           <div key={l.id} onClick={() => onOpenLead(l.id)} className="row-hover"
             style={{ display:'grid', gridTemplateColumns:'2fr 1.3fr 1fr 120px 100px',
@@ -1611,6 +1640,8 @@ function BuscaDetail({ buscaId, onBack, onOpenLead, onDuplicar }) {
             <div><span style={badgeStyle(statusColors[l.status]||C.gray)}>{l.status}</span></div>
           </div>
         ))}
+        </div>
+        </div>
       </div>
     </div>
   );
@@ -2781,7 +2812,7 @@ function NovaBusca({ onSalvar, inicial }) {
             )}
           </div>
           {modoDesc === 'cnpja' && (
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16, marginBottom:18 }}>
+          <div className="h-split" style={{ gap:16, marginBottom:18 }}>
             <div>
               <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>Data de abertura</label>
               <select value={abertura} onChange={e => setAbertura(e.target.value)}
@@ -2994,7 +3025,7 @@ function NovaBusca({ onSalvar, inicial }) {
       )}
 
       <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:20, marginBottom:18 }}>
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'18px 22px' }}>
+        <div className="h-split" style={{ gap:'18px 22px' }}>
           <div style={{ gridColumn:'1 / -1' }}>
             <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>Nome do Radar</label>
             <input ref={nomeRef} defaultValue={inicial?.nome ? inicial.nome + ' (cópia)' : ''} placeholder="Ex: Agências de marketing — Sul"
@@ -3194,7 +3225,7 @@ function IntegracaoGK({ row, meta, onSaved }) {
         </div>
       </div>
 
-      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:12 }}>
+      <div className="h-split" style={{ gap:12, marginBottom:12 }}>
         <div>
           <label style={{ display:'block', fontSize:11, color:'var(--dim)', marginBottom:5 }}>Backend (URL da API)</label>
           <input value={backend} onChange={e=>setBackend(e.target.value)} placeholder="https://api.gktechai.info" style={inputStyle}/>
@@ -3217,7 +3248,7 @@ function IntegracaoGK({ row, meta, onSaved }) {
       </div>
 
       {filas.length > 0 && (
-        <div style={{ display:'grid', gridTemplateColumns: empresas.length > 0 ? '1fr 1fr' : '1fr', gap:12, marginBottom:12 }}>
+        <div className="h-split" style={{ '--split': empresas.length > 0 ? '1fr 1fr' : '1fr', gap:12, marginBottom:12 }}>
           {empresas.length > 0 && (
             <div>
               <label style={{ display:'block', fontSize:11, color:'var(--dim)', marginBottom:5 }}>Empresa</label>
@@ -3339,12 +3370,12 @@ function Integracoes() {
         const conectado = !!(row && row.ativo && row.tem_chave);
         return (
           <div key={chave} style={{ background:'var(--panel)', border:'1px solid var(--border)',
-            borderRadius:14, padding:'18px 20px', display:'flex', alignItems:'center', gap:16 }}>
+            borderRadius:14, padding:'18px 20px', display:'flex', alignItems:'center', gap:16, flexWrap:'wrap' }}>
             <div style={{ width:42, height:42, borderRadius:11, background:'var(--panel2)',
               display:'flex', alignItems:'center', justifyContent:'center', color:'var(--dim)', flexShrink:0 }}>
               <Svg d={meta.icon} w={20} h={20} sw={1.6}/>
             </div>
-            <div style={{ flex:1, minWidth:0 }}>
+            <div style={{ flex:1, minWidth:200 }}>
               <div style={{ display:'flex', alignItems:'center', gap:9 }}>
                 <span style={{ fontSize:14.5, fontWeight:600 }}>{meta.nome}</span>
                 <span style={badgeStyle(conectado ? C.green : C.gray)}>
@@ -3362,19 +3393,19 @@ function Integracoes() {
             {meta.editavel ? (
               <>
                 <input ref={el => chaveRefs.current[chave] = el} placeholder={meta.placeholder || 'Colar chave da API…'}
-                  style={{ width:190, height:38, borderRadius:9, border:'1px solid var(--border)',
+                  style={{ width:190, maxWidth:'100%', height:38, borderRadius:9, border:'1px solid var(--border)',
                     background:'var(--panel2)', color:'var(--dim)', padding:'0 12px', fontSize:12.5,
                     fontFamily:'inherit', letterSpacing:'.05em' }}/>
                 {meta.temSegredo && (
                   <input ref={el => segredoRefs.current[chave] = el} placeholder="Colar segredo (HMAC, opcional)…"
-                    style={{ width:190, height:38, borderRadius:9, border:'1px solid var(--border)',
+                    style={{ width:190, maxWidth:'100%', height:38, borderRadius:9, border:'1px solid var(--border)',
                       background:'var(--panel2)', color:'var(--dim)', padding:'0 12px', fontSize:12.5,
                       fontFamily:'inherit', letterSpacing:'.05em' }}/>
                 )}
                 {meta.temModelo && (
                   <input ref={el => modeloRefs.current[chave] = el} defaultValue={row?.config?.modelo || ''}
                     placeholder={meta.modeloPlaceholder || 'modelo (opcional)'}
-                    style={{ width:200, height:38, borderRadius:9, border:'1px solid var(--border)',
+                    style={{ width:200, maxWidth:'100%', height:38, borderRadius:9, border:'1px solid var(--border)',
                       background:'var(--panel2)', color:'var(--dim)', padding:'0 12px', fontSize:12,
                       fontFamily:'inherit' }}/>
                 )}
@@ -3505,6 +3536,8 @@ function Usuarios({ user }) {
       {erro && <div style={{ fontSize:13, color:C.red, background:'rgba(248,113,113,.1)',
         border:'1px solid rgba(248,113,113,.25)', borderRadius:9, padding:'10px 12px', marginBottom:14 }}>{erro}</div>}
       <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden' }}>
+        <div className="h-scroll">
+        <div className="h-tw" style={{ '--tw':'820px' }}>
         <div style={{ display:'grid', gridTemplateColumns:cols,
           alignItems:'center', gap:10, padding:'12px 18px', borderBottom:'1px solid var(--border)',
           fontSize:11, fontWeight:600, letterSpacing:'.04em', color:'var(--faint)', textTransform:'uppercase' }}>
@@ -3558,6 +3591,8 @@ function Usuarios({ user }) {
             </div>
           );
         })}
+        </div>
+        </div>
       </div>
 
       {novaCred && (
@@ -3715,7 +3750,7 @@ function Config() {
       <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:22 }}>
         <h3 style={{ fontSize:14, fontWeight:600, margin:'0 0 4px' }}>Parâmetros padrão</h3>
         <p style={{ fontSize:12.5, color:'var(--faint)', margin:'0 0 18px' }}>Valores iniciais aplicados a novos radares e ao motor.</p>
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:16 }}>
+        <div className="h-cards" style={{ '--card':'200px', gap:16 }}>
           {numField('Limite diário de leads', 'limite_diario', 'leads/dia')}
           {numField('Corte de score', 'corte_padrao', 'pts')}
           {numField('TTL de cache', 'ttl_cache_dias', 'dias')}
@@ -3929,7 +3964,7 @@ function Config() {
       <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:22 }}>
         <h3 style={{ fontSize:14, fontWeight:600, margin:'0 0 4px' }}>Alertas</h3>
         <p style={{ fontSize:12.5, color:'var(--faint)', margin:'0 0 18px' }}>Quando considerar um radar parado, e para quem avisar.</p>
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
+        <div className="h-split" style={{ gap:16 }}>
           {numField('Parada considerada após', 'parada_min', 'min')}
           <div>
             <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>Destinatário dos alertas</label>
@@ -4042,7 +4077,7 @@ function Monitor() {
           Motor (Redis/BullMQ) não conectado ao painel — verifique REDIS_HOST no serviço hunter-api.
         </div>
       )}
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:14, marginBottom:18 }}>
+      <div className="h-cards" style={{ '--card':'175px', gap:14, marginBottom:18 }}>
         {cards.map(q => (
           <div key={q.label} style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:13, padding:'16px 18px' }}>
             <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:10 }}>
@@ -4054,7 +4089,7 @@ function Monitor() {
         ))}
       </div>
 
-      <div style={{ display:'grid', gridTemplateColumns:'1.5fr 1fr', gap:16, marginBottom:18 }}>
+      <div className="h-split" style={{ '--split':'1.5fr 1fr', gap:16, marginBottom:18 }}>
         <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden' }}>
           <div style={{ padding:'15px 18px', borderBottom:'1px solid var(--border)' }}>
             <h3 style={{ fontSize:14, fontWeight:600, margin:0 }}>Pipeline por etapa</h3>
@@ -4370,7 +4405,7 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
           <section>
             <div style={{ fontSize:11, fontWeight:600, letterSpacing:'.08em', color:'var(--faint)',
               marginBottom:12, textTransform:'uppercase' }}>Dados cadastrais · Receita Federal</div>
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'14px 18px' }}>
+            <div className="h-split" style={{ gap:'14px 18px' }}>
               {cadastrais.map(c => (
                 <div key={c.k}>
                   <div style={{ fontSize:11, color:'var(--faint)', marginBottom:3 }}>{c.k}</div>
@@ -4546,7 +4581,7 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                 </div>
               )}
               {!briefingVazio(l.swot) && (
-              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:14 }}>
+              <div className="h-split" style={{ gap:10, marginBottom:14 }}>
                 {[
                   ['Forças', l.swot.swot?.forcas, C.green],
                   ['Fraquezas', l.swot.swot?.fraquezas, C.red],
@@ -4805,7 +4840,7 @@ function App() {
         <Sidebar screen={screen} onNav={navTo} onLogout={logout} user={user}/>
         <div style={{ flex:1, minWidth:0, display:'flex', flexDirection:'column', background:'var(--bg)' }}>
           <Topbar screen={screen} theme={theme} onTheme={toggleTheme} onNova={() => navTo('nova')} user={user}/>
-          <main style={{ flex:1, overflowY:'auto', padding:28 }}>
+          <main className="h-main" style={{ flex:1, overflowY:'auto', padding:28 }}>
             {renderScreen()}
           </main>
         </div>

@@ -905,10 +905,32 @@ function Sidebar({
       transition: 'background .12s'
     };
   };
+  const botaoRodape = {
+    flex: 1,
+    height: 32,
+    borderRadius: 8,
+    border: '1px solid var(--border)',
+    background: 'transparent',
+    color: 'var(--dim)',
+    fontSize: 12,
+    fontFamily: 'inherit',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    overflow: 'hidden',
+    whiteSpace: 'nowrap',
+    padding: '0 4px'
+  };
+  // title= no <a>: quando a sidebar colapsa pra trilho de ícones (≤1024px) o
+  // rótulo some, então o tooltip nativo passa a ser a única pista do que é cada
+  // item.
   const renderNav = items => items.map(it => /*#__PURE__*/React.createElement("a", {
     key: it.key,
     onClick: () => onNav(it.key),
-    className: "nav-link",
+    className: "nav-link h-nav-item",
+    title: it.label,
     style: navStyle(it.key)
   }, /*#__PURE__*/React.createElement("svg", {
     width: 18,
@@ -924,8 +946,11 @@ function Sidebar({
     }
   }, /*#__PURE__*/React.createElement("path", {
     d: it.icon
-  })), /*#__PURE__*/React.createElement("span", null, it.label)));
+  })), /*#__PURE__*/React.createElement("span", {
+    className: "h-side-label"
+  }, it.label)));
   return /*#__PURE__*/React.createElement("aside", {
+    className: "h-side",
     style: {
       width: 236,
       flexShrink: 0,
@@ -938,6 +963,7 @@ function Sidebar({
       height: '100vh'
     }
   }, /*#__PURE__*/React.createElement("div", {
+    className: "h-nav-item",
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -949,9 +975,11 @@ function Sidebar({
     alt: "Hunter",
     style: {
       width: 30,
-      height: 30
+      height: 30,
+      flexShrink: 0
     }
   }), /*#__PURE__*/React.createElement("span", {
+    className: "h-side-label",
     style: {
       fontSize: 16,
       fontWeight: 600,
@@ -967,6 +995,7 @@ function Sidebar({
       overflowY: 'auto'
     }
   }, renderNav(NAV_MAIN), adminItems.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "h-side-sec",
     style: {
       fontSize: 10,
       fontWeight: 600,
@@ -975,17 +1004,20 @@ function Sidebar({
       padding: '18px 12px 8px'
     }
   }, "ADMINISTRA\xC7\xC3O"), renderNav(adminItems)), /*#__PURE__*/React.createElement("div", {
+    className: "h-side-foot",
     style: {
       padding: '12px 14px',
       borderTop: '1px solid var(--border)'
     }
   }, /*#__PURE__*/React.createElement("div", {
+    className: "h-nav-item",
     style: {
       display: 'flex',
       alignItems: 'center',
       gap: 10
     }
   }, /*#__PURE__*/React.createElement("div", {
+    title: nome,
     style: {
       width: 32,
       height: 32,
@@ -1000,6 +1032,7 @@ function Sidebar({
       flexShrink: 0
     }
   }, ini), /*#__PURE__*/React.createElement("div", {
+    className: "h-side-label",
     style: {
       lineHeight: 1.3,
       overflow: 'hidden'
@@ -1018,6 +1051,7 @@ function Sidebar({
       color: 'var(--faint)'
     }
   }, papel))), /*#__PURE__*/React.createElement("div", {
+    className: "h-side-foot-btns",
     style: {
       display: 'flex',
       gap: 8,
@@ -1026,32 +1060,32 @@ function Sidebar({
   }, /*#__PURE__*/React.createElement("button", {
     onClick: () => setModalSenha(true),
     className: "nav-link",
+    title: "Trocar senha",
     style: {
-      flex: 1,
-      height: 32,
-      borderRadius: 8,
-      border: '1px solid var(--border)',
-      background: 'transparent',
-      color: 'var(--dim)',
-      fontSize: 12,
-      fontFamily: 'inherit',
-      cursor: 'pointer'
+      ...botaoRodape
     }
-  }, "Trocar senha"), /*#__PURE__*/React.createElement("button", {
+  }, /*#__PURE__*/React.createElement(Svg, {
+    d: "M19 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2zM7 11V7a5 5 0 0 1 10 0v4",
+    w: 14,
+    h: 14,
+    sw: 1.7
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "h-side-label"
+  }, "Trocar senha")), /*#__PURE__*/React.createElement("button", {
     onClick: onLogout,
     className: "nav-link",
+    title: "Sair",
     style: {
-      flex: 1,
-      height: 32,
-      borderRadius: 8,
-      border: '1px solid var(--border)',
-      background: 'transparent',
-      color: 'var(--dim)',
-      fontSize: 12,
-      fontFamily: 'inherit',
-      cursor: 'pointer'
+      ...botaoRodape
     }
-  }, "Sair"))), modalSenha && /*#__PURE__*/React.createElement(TrocarSenhaModal, {
+  }, /*#__PURE__*/React.createElement(Svg, {
+    d: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9",
+    w: 14,
+    h: 14,
+    sw: 1.7
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "h-side-label"
+  }, "Sair")))), modalSenha && /*#__PURE__*/React.createElement(TrocarSenhaModal, {
     onClose: () => setModalSenha(false)
   }));
 }
@@ -1064,6 +1098,7 @@ const TITLES = {
   buscaDetail: ['Detalhe do Radar', 'Produção e leads deste radar'],
   nova: ['Criar Radar', 'Configure um novo radar de leads'],
   propostas: ['Propostas', 'Suas propostas de valor (o que você vende)'],
+  semelhantes: ['Semelhantes', 'Listas de clientes que servem de modelo para a busca'],
   agente: ['Agente SWOT', 'Fichamento comercial que personaliza a análise'],
   integracoes: ['Integrações', 'Conexões com APIs e CRM'],
   usuarios: ['Usuários', 'Permissões e acessos'],
@@ -1228,6 +1263,7 @@ function Topbar({
   const [title, sub] = TITLES[screen] || ['', ''];
   const ini = (user?.nome || '').split(' ').slice(0, 2).map(w => w[0]).join('') || 'U';
   return /*#__PURE__*/React.createElement("header", {
+    className: "h-topbar",
     style: {
       height: 64,
       flexShrink: 0,
@@ -1235,6 +1271,7 @@ function Topbar({
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
+      gap: 12,
       padding: '0 28px',
       background: 'var(--bg)',
       position: 'sticky',
@@ -1245,27 +1282,38 @@ function Topbar({
     style: {
       display: 'flex',
       flexDirection: 'column',
-      lineHeight: 1.2
+      lineHeight: 1.2,
+      minWidth: 0,
+      overflow: 'hidden'
     }
   }, /*#__PURE__*/React.createElement("h2", {
     style: {
       fontSize: 17,
       fontWeight: 600,
-      margin: 0
+      margin: 0,
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis'
     }
   }, title), /*#__PURE__*/React.createElement("span", {
+    className: "h-topbar-sub",
     style: {
       fontSize: 12,
-      color: 'var(--faint)'
+      color: 'var(--faint)',
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis'
     }
   }, sub)), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
-      gap: 10
+      gap: 10,
+      flexShrink: 0
     }
   }, /*#__PURE__*/React.createElement("button", {
     onClick: onNova,
+    title: "Criar Radar",
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -1279,7 +1327,8 @@ function Topbar({
       fontWeight: 600,
       fontSize: 13,
       fontFamily: 'inherit',
-      cursor: 'pointer'
+      cursor: 'pointer',
+      whiteSpace: 'nowrap'
     }
   }, /*#__PURE__*/React.createElement(Svg, {
     d: "M12 5v14M5 12h14",
@@ -1287,7 +1336,9 @@ function Topbar({
     w: 16,
     h: 16,
     sw: 2
-  }), "Criar Radar"), /*#__PURE__*/React.createElement(ThemeToggle, {
+  }), /*#__PURE__*/React.createElement("span", {
+    className: "h-btn-label"
+  }, "Criar Radar")), /*#__PURE__*/React.createElement(ThemeToggle, {
     theme: theme,
     onToggle: onTheme
   }), /*#__PURE__*/React.createElement(SinoAlertas, null), /*#__PURE__*/React.createElement("div", {
@@ -1380,9 +1431,9 @@ function Dashboard({
       maxWidth: 1180
     }
   }, /*#__PURE__*/React.createElement("div", {
+    className: "h-cards",
     style: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(4,1fr)',
+      '--card': '200px',
       gap: 16,
       marginBottom: 24
     }
@@ -1427,9 +1478,9 @@ function Dashboard({
       color: m.tColor
     }
   }, /*#__PURE__*/React.createElement("span", null, m.trend))))), /*#__PURE__*/React.createElement("div", {
+    className: "h-split",
     style: {
-      display: 'grid',
-      gridTemplateColumns: '1.55fr 1fr',
+      '--split': '1.55fr 1fr',
       gap: 16
     }
   }, /*#__PURE__*/React.createElement("div", {
@@ -2215,6 +2266,7 @@ function Leads({
     style: {
       height: 38,
       width: 150,
+      maxWidth: '100%',
       borderRadius: 9,
       border: '1px solid var(--border)',
       background: 'var(--panel)',
@@ -2493,6 +2545,13 @@ function Leads({
       overflow: 'hidden'
     }
   }, /*#__PURE__*/React.createElement("div", {
+    className: "h-scroll"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h-tw",
+    style: {
+      '--tw': '1000px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
       gridTemplateColumns: '40px 2.3fr 1.1fr .8fr 1.4fr 96px 90px 110px',
@@ -2652,11 +2711,13 @@ function Leads({
       onMudou: patch => patchLead(l.id, patch),
       onVarrer: varrerIguais
     })));
-  })), /*#__PURE__*/React.createElement("div", {
+  })))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
+      gap: 10,
+      flexWrap: 'wrap',
       marginTop: 14,
       fontSize: 12,
       color: 'var(--faint)'
@@ -2781,6 +2842,13 @@ function Buscas({
       overflow: 'hidden'
     }
   }, /*#__PURE__*/React.createElement("div", {
+    className: "h-scroll"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h-tw",
+    style: {
+      '--tw': '1040px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
       gridTemplateColumns: '24px 2fr 1fr 1fr 1.1fr .8fr .8fr .8fr 1fr 40px',
@@ -2884,7 +2952,7 @@ function Buscas({
     sw: 1.7
   }, /*#__PURE__*/React.createElement("path", {
     d: "M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6M10 11v6M14 11v6"
-  }))))))));
+  }))))))))));
 }
 
 // ── PerfilMedio: mostra o perfil destilado da lista (lookalike) ────────────────
@@ -2963,9 +3031,9 @@ function PerfilMedio({
       color: 'var(--faint)'
     }
   }, perfil.amostra, " empresas analisadas")), /*#__PURE__*/React.createElement("div", {
+    className: "h-split",
     style: {
-      display: 'grid',
-      gridTemplateColumns: '1.4fr 1fr',
+      '--split': '1.4fr 1fr',
       gap: 22
     }
   }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
@@ -3422,9 +3490,9 @@ function BuscaDetail({
       lineHeight: 1.5
     }
   }, proposta)), /*#__PURE__*/React.createElement("div", {
+    className: "h-cards",
     style: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(6,1fr)',
+      '--card': '150px',
       gap: 12,
       marginBottom: 18
     }
@@ -3449,9 +3517,9 @@ function BuscaDetail({
       color: col
     }
   }, val)))), /*#__PURE__*/React.createElement("div", {
+    className: "h-split",
     style: {
-      display: 'grid',
-      gridTemplateColumns: '1.6fr 1fr',
+      '--split': '1.6fr 1fr',
       gap: 16,
       marginBottom: 18
     }
@@ -3558,7 +3626,14 @@ function BuscaDetail({
       fontSize: 13,
       color: 'var(--faint)'
     }
-  }, "Nenhum lead ainda."), leads.map(l => /*#__PURE__*/React.createElement("div", {
+  }, "Nenhum lead ainda."), /*#__PURE__*/React.createElement("div", {
+    className: "h-scroll"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h-tw",
+    style: {
+      '--tw': '720px'
+    }
+  }, leads.map(l => /*#__PURE__*/React.createElement("div", {
     key: l.id,
     onClick: () => onOpenLead(l.id),
     className: "row-hover",
@@ -3595,7 +3670,7 @@ function BuscaDetail({
     score: l.score
   }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("span", {
     style: badgeStyle(statusColors[l.status] || C.gray)
-  }, l.status))))));
+  }, l.status))))))));
 }
 
 // ── Nova Busca ────────────────────────────────────────────────────────────────
@@ -5897,9 +5972,8 @@ function NovaBusca({
       opacity: .8
     }
   }, "\xD7"))))), modoDesc === 'cnpja' && /*#__PURE__*/React.createElement("div", {
+    className: "h-split",
     style: {
-      display: 'grid',
-      gridTemplateColumns: '1fr 1fr',
       gap: 16,
       marginBottom: 18
     }
@@ -6349,9 +6423,8 @@ function NovaBusca({
       marginBottom: 18
     }
   }, /*#__PURE__*/React.createElement("div", {
+    className: "h-split",
     style: {
-      display: 'grid',
-      gridTemplateColumns: '1fr 1fr',
       gap: '18px 22px'
     }
   }, /*#__PURE__*/React.createElement("div", {
@@ -6820,9 +6893,8 @@ function IntegracaoGK({
       marginTop: 3
     }
   }, meta.provedor, conectado ? ' · ' + cfg.backend : ''))), /*#__PURE__*/React.createElement("div", {
+    className: "h-split",
     style: {
-      display: 'grid',
-      gridTemplateColumns: '1fr 1fr',
       gap: 12,
       marginBottom: 12
     }
@@ -6876,9 +6948,9 @@ function IntegracaoGK({
       opacity: conectando ? .6 : 1
     }
   }, conectando ? 'Conectando…' : 'Conectar e buscar empresas/filas')), filas.length > 0 && /*#__PURE__*/React.createElement("div", {
+    className: "h-split",
     style: {
-      display: 'grid',
-      gridTemplateColumns: empresas.length > 0 ? '1fr 1fr' : '1fr',
+      '--split': empresas.length > 0 ? '1fr 1fr' : '1fr',
       gap: 12,
       marginBottom: 12
     }
@@ -7102,7 +7174,8 @@ function Integracoes() {
         padding: '18px 20px',
         display: 'flex',
         alignItems: 'center',
-        gap: 16
+        gap: 16,
+        flexWrap: 'wrap'
       }
     }, /*#__PURE__*/React.createElement("div", {
       style: {
@@ -7124,7 +7197,7 @@ function Integracoes() {
     })), /*#__PURE__*/React.createElement("div", {
       style: {
         flex: 1,
-        minWidth: 0
+        minWidth: 200
       }
     }, /*#__PURE__*/React.createElement("div", {
       style: {
@@ -7155,6 +7228,7 @@ function Integracoes() {
       placeholder: meta.placeholder || 'Colar chave da API…',
       style: {
         width: 190,
+        maxWidth: '100%',
         height: 38,
         borderRadius: 9,
         border: '1px solid var(--border)',
@@ -7170,6 +7244,7 @@ function Integracoes() {
       placeholder: "Colar segredo (HMAC, opcional)\u2026",
       style: {
         width: 190,
+        maxWidth: '100%',
         height: 38,
         borderRadius: 9,
         border: '1px solid var(--border)',
@@ -7186,6 +7261,7 @@ function Integracoes() {
       placeholder: meta.modeloPlaceholder || 'modelo (opcional)',
       style: {
         width: 200,
+        maxWidth: '100%',
         height: 38,
         borderRadius: 9,
         border: '1px solid var(--border)',
@@ -7438,6 +7514,13 @@ function Usuarios({
       overflow: 'hidden'
     }
   }, /*#__PURE__*/React.createElement("div", {
+    className: "h-scroll"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h-tw",
+    style: {
+      '--tw': '820px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'grid',
       gridTemplateColumns: cols,
@@ -7592,7 +7675,7 @@ function Usuarios({
     }, /*#__PURE__*/React.createElement("path", {
       d: "M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6M10 11v6M14 11v6"
     })))));
-  })), novaCred && /*#__PURE__*/React.createElement("div", {
+  })))), novaCred && /*#__PURE__*/React.createElement("div", {
     style: {
       position: 'fixed',
       inset: 0,
@@ -7936,9 +8019,9 @@ function Config() {
       margin: '0 0 18px'
     }
   }, "Valores iniciais aplicados a novos radares e ao motor."), /*#__PURE__*/React.createElement("div", {
+    className: "h-cards",
     style: {
-      display: 'grid',
-      gridTemplateColumns: '1fr 1fr 1fr',
+      '--card': '200px',
       gap: 16
     }
   }, numField('Limite diário de leads', 'limite_diario', 'leads/dia'), numField('Corte de score', 'corte_padrao', 'pts'), numField('TTL de cache', 'ttl_cache_dias', 'dias')), /*#__PURE__*/React.createElement("div", {
@@ -8410,9 +8493,8 @@ function Config() {
       margin: '0 0 18px'
     }
   }, "Quando considerar um radar parado, e para quem avisar."), /*#__PURE__*/React.createElement("div", {
+    className: "h-split",
     style: {
-      display: 'grid',
-      gridTemplateColumns: '1fr 1fr',
       gap: 16
     }
   }, numField('Parada considerada após', 'parada_min', 'min'), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
@@ -8630,9 +8712,9 @@ function Monitor() {
       color: C.amber
     }
   }, "Motor (Redis/BullMQ) n\xE3o conectado ao painel \u2014 verifique REDIS_HOST no servi\xE7o hunter-api."), /*#__PURE__*/React.createElement("div", {
+    className: "h-cards",
     style: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(4,1fr)',
+      '--card': '175px',
       gap: 14,
       marginBottom: 18
     }
@@ -8669,9 +8751,9 @@ function Monitor() {
       fontWeight: 600
     }
   }, q.v)))), /*#__PURE__*/React.createElement("div", {
+    className: "h-split",
     style: {
-      display: 'grid',
-      gridTemplateColumns: '1.5fr 1fr',
+      '--split': '1.5fr 1fr',
       gap: 16,
       marginBottom: 18
     }
@@ -9366,9 +9448,8 @@ function LeadDetailPanel({
       textTransform: 'uppercase'
     }
   }, "Dados cadastrais \xB7 Receita Federal"), /*#__PURE__*/React.createElement("div", {
+    className: "h-split",
     style: {
-      display: 'grid',
-      gridTemplateColumns: '1fr 1fr',
       gap: '14px 18px'
     }
   }, cadastrais.map(c => /*#__PURE__*/React.createElement("div", {
@@ -9826,9 +9907,8 @@ function LeadDetailPanel({
   }, l.swot.dores_provaveis.map((d, i) => /*#__PURE__*/React.createElement("li", {
     key: i
   }, d)))), !briefingVazio(l.swot) && /*#__PURE__*/React.createElement("div", {
+    className: "h-split",
     style: {
-      display: 'grid',
-      gridTemplateColumns: '1fr 1fr',
       gap: 10,
       marginBottom: 14
     }
@@ -10405,6 +10485,7 @@ function App() {
     onNova: () => navTo('nova'),
     user: user
   }), /*#__PURE__*/React.createElement("main", {
+    className: "h-main",
     style: {
       flex: 1,
       overflowY: 'auto',
