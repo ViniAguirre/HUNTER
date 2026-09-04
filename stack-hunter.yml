@@ -45,6 +45,11 @@ services:
       - NODE_ENV=production
       - REDIS_HOST=hunter-redis
       - REDIS_PORT=6379
+      # Hunter embedado como iframe dentro do CRM (domínio diferente): sem
+      # isso o cookie de sessão sai com SameSite=Lax e o navegador não o
+      # grava/envia em contexto cross-site, então o login "funciona" mas a
+      # sessão não persiste. Exige HTTPS (já garantido pelo Traefik acima).
+      - COOKIE_SAMESITE=none
     deploy:
       mode: replicated
       replicas: 1
