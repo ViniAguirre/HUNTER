@@ -13,10 +13,15 @@ const gk = require('../providers/gk');
 module.exports = async function crm(job, pool) {
   const { lead_id } = job.data;
 
+  // ORDER BY ordem, id: só "ordem" empatava (todas as integrações nascem com
+  // ordem=100, e nenhuma tela manda outro valor). Com empate o Postgres devolve
+  // a linha que varrer primeiro, o que muda depois de um UPDATE qualquer — e o
+  // destino dos leads trocava sozinho de provedor. O id desempata de forma
+  // estável.
   const { rows: [ig] } = await pool.query(
     `SELECT provedor, key_cifrada, config FROM integracoes
      WHERE categoria='crm' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> ''
-     ORDER BY ordem LIMIT 1`
+     ORDER BY ordem, id LIMIT 1`
   );
   if (!ig) return { skipped: 'sem_crm', lead_id };
 
