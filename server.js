@@ -1632,7 +1632,7 @@ app.get('/api/crm/status', requireAuth, async (req, res) => {
     const { rows: [ig] } = await pool.query(
       `SELECT provedor, config FROM integracoes
        WHERE categoria='crm' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> ''
-       ORDER BY ordem LIMIT 1`
+       ORDER BY ordem, id LIMIT 1`
     );
     if (!ig) return res.json({ ativo: false });
     // Nome/detalhe técnico (qual provedor) é sigiloso — só o master vê. Pro
@@ -1789,6 +1789,19 @@ app.get('/api/integracoes', requireAuth, requireMaster, async (req, res) => {
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
+// O envio ao CRM escolhe UM destino (LIMIT 1), então duas integrações de CRM
+// ativas ao mesmo tempo não significam "manda pros dois": significa que uma
+// delas é ignorada em silêncio — e, com a ordem empatada, qual delas era ficava
+// indefinido. Ativar um CRM passa a desligar o outro, que é o que a tela sempre
+// deu a entender.
+async function desativarOutrosCrm(row) {
+  if (!row || row.categoria !== 'crm' || !row.ativo) return;
+  await pool.query(
+    `UPDATE integracoes SET ativo=false WHERE categoria='crm' AND id <> $1 AND ativo=true`,
+    [row.id]
+  );
+}
+
 app.post('/api/integracoes', requireAuth, requireMaster, async (req, res) => {
   const categoria = String(req.body.categoria || '').trim();
   const provedor = String(req.body.provedor || '').trim();
@@ -1811,6 +1824,7 @@ app.post('/api/integracoes', requireAuth, requireMaster, async (req, res) => {
       RETURNING id, categoria, provedor, config, ativo, ordem`,
       [categoria, provedor, key, config, ativo, ordem]
     );
+    await desativarOutrosCrm(row);
     res.status(201).json(row);
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
@@ -1830,6 +1844,7 @@ app.patch('/api/integracoes/:id', requireAuth, requireMaster, async (req, res) =
       `UPDATE integracoes SET ${sets.join(', ')} WHERE id=$${vals.length} RETURNING id, categoria, provedor, config, ativo, ordem`, vals
     );
     if (!row) return res.status(404).json({ erro: 'não encontrado' });
+    await desativarOutrosCrm(row);
     res.json(row);
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
