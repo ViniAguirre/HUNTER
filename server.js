@@ -1681,8 +1681,15 @@ app.get('/api/monitor/queues', requireAuth, requireMaster, async (req, res) => {
         const q = monitorQueues[key];
         const jobs = await q.getFailed(0, 4);
         return jobs.map(j => ({
-          job: label, ref: j.data?.cnpj || j.data?.busca_id || '—',
-          motivo: (j.failedReason || 'erro desconhecido').slice(0, 140),
+          job: label,
+          // lead_id entra aqui porque o job de CRM não carrega cnpj nem
+          // busca_id — sem isso toda falha de envio aparecia como "—" e não
+          // dava pra saber de que lead era.
+          ref: j.data?.cnpj || (j.data?.lead_id ? 'lead #' + j.data.lead_id : null) || j.data?.busca_id || '—',
+          // 140 cortava justamente a resposta da API do CRM, que é o que diz o
+          // motivo real da recusa (o traduzErro dos providers embute status +
+          // corpo). A tela é só do master, então cabe mostrar inteiro.
+          motivo: (j.failedReason || 'erro desconhecido').slice(0, 400),
           quando: j.finishedOn ? new Date(j.finishedOn).toISOString() : null,
         }));
       }));
