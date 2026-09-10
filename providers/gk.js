@@ -90,26 +90,32 @@ async function abrirTicket(backend, token, { contactId, queueId, status }) {
 // não pode ser criado — quem chama trata isso.
 function montarContato(empresa, lead, extras = {}) {
   const e = empresa || {};
+  const l = lead || {};
+  // A firmografia de `empresas` manda (é a enriquecida/verificada), mas o lead
+  // entra como fallback: nem todo lead tem linha lá — o cadastrado à mão não
+  // tem. Sem isso o contato ia pro CRM como "Contato", sem CNPJ nem cidade, e
+  // ninguém conseguia achar o lead do outro lado.
+  const de = (campo) => e[campo] || l[campo] || '';
   const tel = (extras.telefone || '').replace(/\D/g, '');
   const extraInfo = [
     { name: 'Origem', value: 'Hunter' },
     // Identificador de ida-e-volta: quando o contato for marcado como convertido,
     // o webhook do GK devolve este ref e o Hunter acha o lead na própria base.
     { name: 'hunter_ref', value: extras.ref || '' },
-    { name: 'Empresa', value: e.razao || e.fantasia || '' },
-    { name: 'CNAE', value: e.setor || '' },
-    { name: 'Score do Lead', value: lead?.score != null ? String(lead.score) : '' },
+    { name: 'Empresa', value: de('razao') || de('fantasia') },
+    { name: 'CNAE', value: de('setor') },
+    { name: 'Score do Lead', value: l.score != null ? String(l.score) : '' },
     { name: 'Capturado em', value: new Date().toISOString() },
   ].filter(x => x.value);
   const contato = {
-    name: e.decisor || e.fantasia || e.razao || 'Contato',
+    name: de('decisor') || de('fantasia') || de('razao') || 'Contato',
     number: tel,
     email: extras.email || '',
-    cpfcnpj: e.cnpj || '',
-    estado: e.uf || '',
-    cidade: e.cidade || '',
+    cpfcnpj: de('cnpj'),
+    estado: de('uf'),
+    cidade: de('cidade'),
     referencia: 'Hunter Automático',
-    endereco: e.endereco || '',
+    endereco: de('endereco'),
     carteiraId: '',
     extraInfo,
   };

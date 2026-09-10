@@ -34,6 +34,11 @@ function normalizarTelefoneBR(tel) {
 // — tipicamente um n8n — conseguir criar o contato/ticket direto na API.
 function montarPayload(empresa, lead, busca, ref, crm) {
   const e = empresa || {};
+  const l = lead || {};
+  // Igual ao provider do GK: a firmografia de `empresas` manda, o lead entra
+  // como fallback pra quem não tem linha lá (ex.: lead cadastrado à mão), senão
+  // o bloco `empresa` do payload sai todo vazio.
+  const de = (campo) => e[campo] ?? l[campo] ?? null;
   return {
     evento: 'lead.pronto',
     enviado_em: new Date().toISOString(),
@@ -43,22 +48,23 @@ function montarPayload(empresa, lead, busca, ref, crm) {
     hunter_ref: ref || lead?.crm_ref || null,
     score: lead?.score ?? null,
     empresa: {
-      cnpj: e.cnpj,
-      razao: e.razao,
-      fantasia: e.fantasia,
-      cnae: e.cnae,
-      setor: e.setor,
-      porte: e.porte,
-      capital: e.capital,
-      abertura: e.abertura,
-      situacao: e.situacao,
-      natureza_juridica: e.natureza_juridica,
-      opcao_simples: e.opcao_simples,
-      cidade: e.cidade,
-      uf: e.uf,
-      endereco: e.endereco,
+      cnpj: de('cnpj'),
+      razao: de('razao'),
+      fantasia: de('fantasia'),
+      cnae: de('cnae'),
+      setor: de('setor'),
+      porte: de('porte'),
+      capital: de('capital'),
+      abertura: de('abertura'),
+      situacao: de('situacao'),
+      // Só existem em `empresas` — o lead não guarda esses dois.
+      natureza_juridica: e.natureza_juridica ?? null,
+      opcao_simples: e.opcao_simples ?? null,
+      cidade: de('cidade'),
+      uf: de('uf'),
+      endereco: de('endereco'),
     },
-    decisor: { nome: e.decisor || null, cargo: e.cargo || null },
+    decisor: { nome: de('decisor'), cargo: de('cargo') },
     // telefone/whatsapp saem sempre com DDI 55 (o resto do objeto é preservado).
     contato_validado: lead?.contato_validado ? {
       ...lead.contato_validado,
