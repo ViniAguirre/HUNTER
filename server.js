@@ -1600,9 +1600,17 @@ app.post('/api/leads/acoes', requireAuth, requireEditor, async (req, res) => {
     // busca ativa re-descobriria a empresa e recriaria o lead na hora — dando a
     // impressão de que a exclusão "não pegou". Depois apaga os leads.
     if (acao === 'excluir') {
+      // A trava de "não reaparecer em buscas futuras" só vale pra CNPJ que
+      // exista em `empresas` — empresa_tenant_estado tem FK pra lá e cnpj NOT
+      // NULL. Um lead sem CNPJ, ou com CNPJ que o motor nunca enriqueceu (o
+      // cadastrado à mão, por exemplo), fazia este INSERT estourar e a exclusão
+      // inteira devolvia 500 sem apagar nada. Sem empresa conhecida não há o
+      // que travar; o lead é excluído do mesmo jeito.
       await pool.query(
         `INSERT INTO empresa_tenant_estado (cnpj, estado_global)
-         SELECT cnpj, 'descarte_duro' FROM leads WHERE id = ANY($1::int[])
+         SELECT DISTINCT l.cnpj, 'descarte_duro' FROM leads l
+          WHERE l.id = ANY($1::int[]) AND l.cnpj IS NOT NULL
+            AND EXISTS (SELECT 1 FROM empresas e WHERE e.cnpj = l.cnpj)
          ON CONFLICT (cnpj, tenant_id) DO UPDATE SET estado_global='descarte_duro', atualizado_em=now()`,
         [idsInt]);
       const { rowCount } = await pool.query(`DELETE FROM leads WHERE id = ANY($1::int[])`, [idsInt]);
