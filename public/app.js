@@ -1,3 +1,4 @@
+function _extends() { return _extends = Object.assign ? Object.assign.bind() : function (n) { for (var e = 1; e < arguments.length; e++) { var t = arguments[e]; for (var r in t) ({}).hasOwnProperty.call(t, r) && (n[r] = t[r]); } return n; }, _extends.apply(null, arguments); }
 const {
   useState,
   useRef,
@@ -1905,10 +1906,282 @@ ${lista.map(secaoLeadHtml).join('\n')}
   w.document.write(html);
   w.document.close();
 }
+
+// Cadastro manual de lead — só aparece pro MASTER. Serve pra testar o fluxo
+// (curadoria, envio ao CRM, briefing) sem precisar rodar um radar de verdade.
+function NovoLeadModal({
+  buscas,
+  onClose,
+  onCriado
+}) {
+  const [f, setF] = useState({
+    fantasia: '',
+    razao: '',
+    cnpj: '',
+    setor: '',
+    porte: '',
+    cidade: '',
+    uf: '',
+    decisor: '',
+    cargo: '',
+    email: '',
+    telefone: '',
+    website: '',
+    score: '',
+    status: 'Novo',
+    busca_id: ''
+  });
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState(null);
+  const set = k => e => setF(o => ({
+    ...o,
+    [k]: e.target.value
+  }));
+  const salvar = async e => {
+    e.preventDefault();
+    if (!f.fantasia.trim()) {
+      setErro('Informe ao menos o nome fantasia.');
+      return;
+    }
+    setSalvando(true);
+    setErro(null);
+    try {
+      const r = await fetch('/api/leads', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(f)
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        setErro(d.erro || 'Não foi possível criar o lead.');
+        setSalvando(false);
+        return;
+      }
+      onCriado(d);
+    } catch (_) {
+      setErro('Erro de conexão. Tente novamente.');
+      setSalvando(false);
+    }
+  };
+  const inp = {
+    width: '100%',
+    height: 38,
+    borderRadius: 9,
+    border: '1px solid var(--border)',
+    background: 'var(--panel2)',
+    color: 'var(--text)',
+    padding: '0 11px',
+    fontSize: 13,
+    fontFamily: 'inherit'
+  };
+  const campo = (rot, k, extra) => /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 6
+    }
+  }, rot), /*#__PURE__*/React.createElement("input", _extends({
+    value: f[k],
+    onChange: set(k),
+    style: inp
+  }, extra || {})));
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'fixed',
+      inset: 0,
+      zIndex: 80,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: 16
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    onClick: onClose,
+    style: {
+      position: 'absolute',
+      inset: 0,
+      background: 'rgba(5,9,20,.6)'
+    }
+  }), /*#__PURE__*/React.createElement("form", {
+    onSubmit: salvar,
+    style: {
+      position: 'relative',
+      width: 620,
+      maxWidth: '96vw',
+      maxHeight: '90vh',
+      overflowY: 'auto',
+      background: 'var(--panel)',
+      border: '1px solid var(--border)',
+      borderRadius: 16
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '22px 24px 0'
+    }
+  }, /*#__PURE__*/React.createElement("h2", {
+    style: {
+      fontSize: 17,
+      fontWeight: 600,
+      margin: '0 0 4px'
+    }
+  }, "Novo lead (manual)"), /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 12.5,
+      color: 'var(--dim)',
+      margin: '0 0 18px',
+      lineHeight: 1.5
+    }
+  }, "Entra na lista como se o motor tivesse terminado, mas marcado como origem manual. S\xF3 o nome fantasia \xE9 obrigat\xF3rio."), erro && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      color: C.red,
+      background: 'rgba(248,113,113,.1)',
+      border: '1px solid rgba(248,113,113,.25)',
+      borderRadius: 9,
+      padding: '10px 12px',
+      marginBottom: 16
+    }
+  }, erro)), /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '0 24px 4px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h-split",
+    style: {
+      gap: '14px 16px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      gridColumn: '1 / -1'
+    }
+  }, campo('Nome fantasia *', 'fantasia', {
+    autoFocus: true,
+    placeholder: 'Ex: Casa dos Filtros'
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      gridColumn: '1 / -1'
+    }
+  }, campo('Razão social', 'razao')), campo('CNPJ', 'cnpj', {
+    placeholder: '00.000.000/0001-00'
+  }), campo('Setor', 'setor', {
+    placeholder: 'Ex: Comércio varejista'
+  }), campo('Porte', 'porte', {
+    placeholder: 'Micro / Pequeno / Médio / Grande'
+  }), campo('Cidade', 'cidade'), campo('UF', 'uf', {
+    maxLength: 2,
+    placeholder: 'SP'
+  }), campo('Decisor', 'decisor'), campo('Cargo', 'cargo', {
+    placeholder: 'Ex: Sócio-Administrador'
+  }), campo('E-mail', 'email', {
+    type: 'email',
+    placeholder: 'contato@empresa.com.br'
+  }), campo('Telefone / WhatsApp', 'telefone', {
+    placeholder: '(11) 98888-0000'
+  }), campo('Site', 'website', {
+    placeholder: 'www.empresa.com.br'
+  }), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 6
+    }
+  }, "Score (0\u2013100)"), /*#__PURE__*/React.createElement("input", {
+    value: f.score,
+    onChange: set('score'),
+    type: "number",
+    min: 0,
+    max: 100,
+    placeholder: "0",
+    style: inp
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 6
+    }
+  }, "Status"), /*#__PURE__*/React.createElement("select", {
+    value: f.status,
+    onChange: set('status'),
+    style: {
+      ...inp,
+      cursor: 'pointer'
+    }
+  }, ['Novo', 'Qualificado', 'Incompleto', 'Descartado', 'Enviado'].map(s => /*#__PURE__*/React.createElement("option", {
+    key: s,
+    value: s
+  }, s)))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      gridColumn: '1 / -1'
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 6
+    }
+  }, "Radar (opcional)"), /*#__PURE__*/React.createElement("select", {
+    value: f.busca_id,
+    onChange: set('busca_id'),
+    style: {
+      ...inp,
+      cursor: 'pointer'
+    }
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "Sem radar \u2014 lead avulso"), buscas.map(b => /*#__PURE__*/React.createElement("option", {
+    key: b.id,
+    value: b.id
+  }, b.nome)))))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'flex-end',
+      gap: 10,
+      padding: '18px 24px 22px'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: onClose,
+    style: {
+      height: 38,
+      padding: '0 16px',
+      borderRadius: 9,
+      border: '1px solid var(--border)',
+      background: 'transparent',
+      color: 'var(--dim)',
+      fontSize: 13,
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, "Cancelar"), /*#__PURE__*/React.createElement("button", {
+    type: "submit",
+    disabled: salvando,
+    style: {
+      height: 38,
+      padding: '0 18px',
+      borderRadius: 9,
+      border: 'none',
+      background: 'var(--gold)',
+      color: '#0E1936',
+      fontWeight: 600,
+      fontSize: 13,
+      fontFamily: 'inherit',
+      cursor: salvando ? 'default' : 'pointer',
+      opacity: salvando ? .6 : 1
+    }
+  }, salvando ? 'Criando…' : 'Criar lead'))));
+}
 function Leads({
   refreshKey,
   onOpenLead,
-  onCrm
+  onCrm,
+  user
 }) {
   const [leads, setLeads] = useState([]);
   const [total, setTotal] = useState(0);
@@ -1927,6 +2200,7 @@ function Leads({
   const [exportIds, setExportIds] = useState(null);
   const [tick, setTick] = useState(0); // força recarregar a lista após ações em lote
   const [varredura, setVarredura] = useState(null); // { criterio, candidatos } achados após um joinha
+  const [novoLead, setNovoLead] = useState(false); // modal de cadastro manual (só MASTER)
 
   // Atualiza UMA linha no lugar, sem refazer a busca — evita o pisca e a perda
   // da posição de rolagem quando o usuário marca vários leads seguidos.
@@ -2341,7 +2615,30 @@ function Leads({
     rx: 2
   }), /*#__PURE__*/React.createElement("path", {
     d: "M3 7l9 6 9-6"
-  })), "S\xF3 e-mail v\xE1lido")), varredura && /*#__PURE__*/React.createElement("div", {
+  })), "S\xF3 e-mail v\xE1lido"), user?.master && /*#__PURE__*/React.createElement("button", {
+    onClick: () => setNovoLead(true),
+    title: "Cadastrar um lead \xE0 m\xE3o para testes",
+    style: {
+      height: 38,
+      padding: '0 13px',
+      borderRadius: 9,
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      cursor: 'pointer',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 7,
+      whiteSpace: 'nowrap',
+      border: '1px dashed var(--border)',
+      background: 'transparent',
+      color: 'var(--dim)'
+    }
+  }, /*#__PURE__*/React.createElement(Svg, {
+    d: "M12 5v14M5 12h14",
+    w: 14,
+    h: 14,
+    sw: 2
+  }), "Novo lead")), varredura && /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -2771,6 +3068,16 @@ function Leads({
   }, "\u203A"))), exportIds && /*#__PURE__*/React.createElement(ExportModal, {
     ids: exportIds,
     onClose: () => setExportIds(null)
+  }), novoLead && /*#__PURE__*/React.createElement(NovoLeadModal, {
+    buscas: buscasOpts,
+    onClose: () => setNovoLead(false),
+    onCriado: lead => {
+      setNovoLead(false);
+      // Recarrega a lista e já abre o lead criado, que é o que se quer
+      // logo depois de cadastrar pra teste.
+      setTick(t => t + 1);
+      onOpenLead(lead.id);
+    }
   }));
 }
 
@@ -10469,7 +10776,8 @@ function App() {
         return /*#__PURE__*/React.createElement(Leads, {
           refreshKey: leadsRefreshKey,
           onOpenLead: setOpenLeadId,
-          onCrm: setCrmIds
+          onCrm: setCrmIds,
+          user: user
         });
       case 'buscas':
         return /*#__PURE__*/React.createElement(Buscas, {
