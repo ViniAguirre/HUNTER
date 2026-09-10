@@ -20,8 +20,14 @@ module.exports = async function crm(job, pool) {
   );
   if (!ig) return { skipped: 'sem_crm', lead_id };
 
+  // Os campos de identificação do próprio lead (fantasia, razão, decisor,
+  // cidade...) entram aqui porque nem todo lead tem linha em `empresas`: o
+  // cadastrado à mão não tem. Sem eles, os providers só enxergavam a empresa e
+  // mandavam um contato anônimo pro CRM.
   const { rows: [lead] } = await pool.query(
     `SELECT l.id, l.cnpj, l.busca_id, l.score, l.swot, l.contato_validado, l.crm_ref,
+            l.fantasia, l.razao, l.setor, l.cnae, l.porte, l.cidade, l.uf,
+            l.decisor, l.cargo, l.endereco, l.situacao, l.abertura, l.capital,
             b.nome AS busca_nome, b.crm_queue_id AS busca_queue_id
      FROM leads l LEFT JOIN buscas b ON b.id=l.busca_id WHERE l.id=$1`, [lead_id]
   );
@@ -90,10 +96,21 @@ module.exports = async function crm(job, pool) {
   );
   // Trava definitiva: uma vez no CRM, nenhuma busca (nem outra, nem esta de
   // novo) volta a criar lead pra esse CNPJ.
-  await pool.query(
-    `INSERT INTO empresa_tenant_estado (cnpj, estado_global) VALUES ($1, 'em_crm')
-     ON CONFLICT (cnpj, tenant_id) DO UPDATE SET estado_global='em_crm', atualizado_em=now()`, [lead.cnpj]
-  );
+  //
+  // Só vale pra CNPJ que exista em `empresas` — a tabela tem FK pra lá. Um lead
+  // sem empresa conhecida (cadastrado à mão, por exemplo) fazia este INSERT
+  // estourar DEPOIS do UPDATE acima: o lead ficava marcado como entregue, o job
+  // caía em erro e o BullMQ re-tentava, recriando o contato no CRM a cada
+  // tentativa. Sem empresa não há o que travar, então é só pular.
+  if (lead.cnpj) {
+    const { rowCount } = await pool.query('SELECT 1 FROM empresas WHERE cnpj=$1', [lead.cnpj]);
+    if (rowCount) {
+      await pool.query(
+        `INSERT INTO empresa_tenant_estado (cnpj, estado_global) VALUES ($1, 'em_crm')
+         ON CONFLICT (cnpj, tenant_id) DO UPDATE SET estado_global='em_crm', atualizado_em=now()`, [lead.cnpj]
+      );
+    }
+  }
 
   return { ok: true, lead_id, provedor: ig.provedor };
 };
