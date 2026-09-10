@@ -1169,6 +1169,88 @@ app.get('/api/leads/decisao-pendente', requireAuth, async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
+// Cadastro MANUAL de lead — só o MASTER. Existe pra testar o fluxo (curadoria,
+// envio ao CRM, briefing) sem depender de um radar rodar e gastar chave paga.
+// O lead entra já em 'pronto', como se o motor tivesse terminado: origem
+// 'manual' é o que o distingue dos que vieram da descoberta.
+const STATUS_LEAD = ['Novo','Qualificado','Incompleto','Descartado','Enviado'];
+
+app.post('/api/leads', requireAuth, requireMaster, async (req, res) => {
+  const b = req.body || {};
+  const txt = (v, max) => {
+    const s = String(v ?? '').trim();
+    return s ? s.slice(0, max) : null;
+  };
+
+  const fantasia = txt(b.fantasia, 200);
+  if (!fantasia) return res.status(400).json({ erro: 'informe ao menos o nome fantasia' });
+
+  const status = STATUS_LEAD.includes(b.status) ? b.status : 'Novo';
+
+  const scoreNum = parseInt(b.score, 10);
+  if (b.score != null && b.score !== '' && (isNaN(scoreNum) || scoreNum < 0 || scoreNum > 100))
+    return res.status(400).json({ erro: 'score deve ser um número de 0 a 100' });
+  const score = isNaN(scoreNum) ? 0 : scoreNum;
+
+  // Valida o valor INTEIRO, sem cortar antes: truncar pra 2 e só então testar
+  // faria "XYZ" virar "XY" e passar como se fosse válido.
+  const uf = String(b.uf ?? '').trim().toUpperCase() || null;
+  if (uf && !/^[A-Z]{2}$/.test(uf)) return res.status(400).json({ erro: 'UF deve ter 2 letras' });
+
+  // Mesmo tratamento do PATCH /contato: só dígitos no telefone.
+  const telefone = String(b.telefone ?? '').replace(/[^\d]/g, '').slice(0, 15) || null;
+  const email = txt(b.email, 160);
+  const website = txt(b.website, 200);
+
+  let buscaId = null;
+  if (b.busca_id != null && b.busca_id !== '') {
+    buscaId = parseInt(b.busca_id, 10);
+    if (isNaN(buscaId)) return res.status(400).json({ erro: 'radar inválido' });
+  }
+
+  try {
+    // O RLS já limita ao tenant da conexão, então isso também garante que não dá
+    // pra pendurar o lead num radar de outro cliente.
+    if (buscaId !== null) {
+      const { rows:[busca] } = await pool.query('SELECT id FROM buscas WHERE id=$1', [buscaId]);
+      if (!busca) return res.status(400).json({ erro: 'radar não encontrado' });
+    }
+
+    const cv = {};
+    if (telefone) { cv.telefone = telefone; cv.whatsapp = telefone; }
+    if (email) cv.email = email;
+    if (website) cv.website = website;
+    cv.fonte = 'manual';
+    cv.validado = !!(telefone || email);
+
+    // contatos[] é o que o painel do lead lista; contato_validado é o que a
+    // lista usa pros ícones e o que vai pro CRM. Os dois precisam existir.
+    const contatos = [];
+    if (email) contatos.push({ tipo:'email', valor:email, fonte:'Cadastro manual', selo:'manual', validado:true });
+    if (telefone) contatos.push({ tipo:'telefone', valor:telefone, fonte:'Cadastro manual', selo:'manual', validado:true });
+    if (website) contatos.push({ tipo:'site', valor:website, fonte:'Cadastro manual', selo:'manual', validado:true });
+
+    const completo = !!(telefone && email);
+    const contatoStatus = (telefone || email) ? (completo ? 'completo' : 'decisao') : 'sem_contato';
+
+    const { rows:[lead] } = await pool.query(
+      `INSERT INTO leads (busca_id, origem, estagio, fantasia, razao, cnpj, setor, cnae, porte,
+         cidade, uf, decisor, cargo, score, tem_email, tem_telefone, status,
+         situacao, abertura, capital, endereco, contatos, contato_validado,
+         contato_status, contato_pendente, criado_em, atualizado_em)
+       VALUES ($1,'manual','pronto',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
+               $16,$17,$18,$19,$20::jsonb,$21::jsonb,$22,$23,now(),now())
+       RETURNING *`,
+      [buscaId, fantasia, txt(b.razao,200), txt(b.cnpj,20), txt(b.setor,120), txt(b.cnae,20),
+       txt(b.porte,40), txt(b.cidade,120), uf, txt(b.decisor,120), txt(b.cargo,120), score,
+       !!email, !!telefone, status,
+       txt(b.situacao,60), txt(b.abertura,40), txt(b.capital,40), txt(b.endereco,240),
+       JSON.stringify(contatos), JSON.stringify(cv), contatoStatus, !completo]
+    );
+    res.status(201).json(lead);
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
 app.get('/api/leads/:id', requireAuth, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });

@@ -824,7 +824,103 @@ ${lista.map(secaoLeadHtml).join('\n')}
   w.document.close();
 }
 
-function Leads({ refreshKey, onOpenLead, onCrm }) {
+// Cadastro manual de lead — só aparece pro MASTER. Serve pra testar o fluxo
+// (curadoria, envio ao CRM, briefing) sem precisar rodar um radar de verdade.
+function NovoLeadModal({ buscas, onClose, onCriado }) {
+  const [f, setF] = useState({ fantasia:'', razao:'', cnpj:'', setor:'', porte:'', cidade:'', uf:'',
+    decisor:'', cargo:'', email:'', telefone:'', website:'', score:'', status:'Novo', busca_id:'' });
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState(null);
+  const set = (k) => (e) => setF(o => ({ ...o, [k]: e.target.value }));
+
+  const salvar = async (e) => {
+    e.preventDefault();
+    if (!f.fantasia.trim()) { setErro('Informe ao menos o nome fantasia.'); return; }
+    setSalvando(true); setErro(null);
+    try {
+      const r = await fetch('/api/leads', {
+        method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify(f)
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { setErro(d.erro || 'Não foi possível criar o lead.'); setSalvando(false); return; }
+      onCriado(d);
+    } catch (_) { setErro('Erro de conexão. Tente novamente.'); setSalvando(false); }
+  };
+
+  const inp = { width:'100%', height:38, borderRadius:9, border:'1px solid var(--border)',
+    background:'var(--panel2)', color:'var(--text)', padding:'0 11px', fontSize:13, fontFamily:'inherit' };
+  const campo = (rot, k, extra) => (
+    <div>
+      <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:6 }}>{rot}</label>
+      <input value={f[k]} onChange={set(k)} style={inp} {...(extra||{})}/>
+    </div>
+  );
+
+  return (
+    <div style={{ position:'fixed', inset:0, zIndex:80, display:'flex', alignItems:'center', justifyContent:'center', padding:16 }}>
+      <div onClick={onClose} style={{ position:'absolute', inset:0, background:'rgba(5,9,20,.6)' }}/>
+      <form onSubmit={salvar} style={{ position:'relative', width:620, maxWidth:'96vw', maxHeight:'90vh',
+        overflowY:'auto', background:'var(--panel)', border:'1px solid var(--border)', borderRadius:16 }}>
+        <div style={{ padding:'22px 24px 0' }}>
+          <h2 style={{ fontSize:17, fontWeight:600, margin:'0 0 4px' }}>Novo lead (manual)</h2>
+          <p style={{ fontSize:12.5, color:'var(--dim)', margin:'0 0 18px', lineHeight:1.5 }}>
+            Entra na lista como se o motor tivesse terminado, mas marcado como origem manual.
+            Só o nome fantasia é obrigatório.
+          </p>
+          {erro && <div style={{ fontSize:13, color:C.red, background:'rgba(248,113,113,.1)',
+            border:'1px solid rgba(248,113,113,.25)', borderRadius:9, padding:'10px 12px', marginBottom:16 }}>{erro}</div>}
+        </div>
+        <div style={{ padding:'0 24px 4px' }}>
+          <div className="h-split" style={{ gap:'14px 16px' }}>
+            <div style={{ gridColumn:'1 / -1' }}>{campo('Nome fantasia *', 'fantasia', { autoFocus:true, placeholder:'Ex: Casa dos Filtros' })}</div>
+            <div style={{ gridColumn:'1 / -1' }}>{campo('Razão social', 'razao')}</div>
+            {campo('CNPJ', 'cnpj', { placeholder:'00.000.000/0001-00' })}
+            {campo('Setor', 'setor', { placeholder:'Ex: Comércio varejista' })}
+            {campo('Porte', 'porte', { placeholder:'Micro / Pequeno / Médio / Grande' })}
+            {campo('Cidade', 'cidade')}
+            {campo('UF', 'uf', { maxLength:2, placeholder:'SP' })}
+            {campo('Decisor', 'decisor')}
+            {campo('Cargo', 'cargo', { placeholder:'Ex: Sócio-Administrador' })}
+            {campo('E-mail', 'email', { type:'email', placeholder:'contato@empresa.com.br' })}
+            {campo('Telefone / WhatsApp', 'telefone', { placeholder:'(11) 98888-0000' })}
+            {campo('Site', 'website', { placeholder:'www.empresa.com.br' })}
+            <div>
+              <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:6 }}>Score (0–100)</label>
+              <input value={f.score} onChange={set('score')} type="number" min={0} max={100} placeholder="0" style={inp}/>
+            </div>
+            <div>
+              <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:6 }}>Status</label>
+              <select value={f.status} onChange={set('status')} style={{ ...inp, cursor:'pointer' }}>
+                {['Novo','Qualificado','Incompleto','Descartado','Enviado'].map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div style={{ gridColumn:'1 / -1' }}>
+              <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:6 }}>Radar (opcional)</label>
+              <select value={f.busca_id} onChange={set('busca_id')} style={{ ...inp, cursor:'pointer' }}>
+                <option value="">Sem radar — lead avulso</option>
+                {buscas.map(b => <option key={b.id} value={b.id}>{b.nome}</option>)}
+              </select>
+            </div>
+          </div>
+        </div>
+        <div style={{ display:'flex', justifyContent:'flex-end', gap:10, padding:'18px 24px 22px' }}>
+          <button type="button" onClick={onClose}
+            style={{ height:38, padding:'0 16px', borderRadius:9, border:'1px solid var(--border)',
+              background:'transparent', color:'var(--dim)', fontSize:13, fontFamily:'inherit', cursor:'pointer' }}>Cancelar</button>
+          <button type="submit" disabled={salvando}
+            style={{ height:38, padding:'0 18px', borderRadius:9, border:'none', background:'var(--gold)',
+              color:'#0E1936', fontWeight:600, fontSize:13, fontFamily:'inherit',
+              cursor: salvando ? 'default' : 'pointer', opacity: salvando ? .6 : 1 }}>
+            {salvando ? 'Criando…' : 'Criar lead'}
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+function Leads({ refreshKey, onOpenLead, onCrm, user }) {
   const [leads, setLeads] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -842,6 +938,7 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
   const [exportIds, setExportIds] = useState(null);
   const [tick, setTick] = useState(0);   // força recarregar a lista após ações em lote
   const [varredura, setVarredura] = useState(null);   // { criterio, candidatos } achados após um joinha
+  const [novoLead, setNovoLead] = useState(false);    // modal de cadastro manual (só MASTER)
 
   // Atualiza UMA linha no lugar, sem refazer a busca — evita o pisca e a perda
   // da posição de rolagem quando o usuário marca vários leads seguidos.
@@ -1076,6 +1173,15 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
           <SvgMulti w={14} h={14} sw={1.8}><rect x={3} y={5} width={18} height={14} rx={2}/><path d="M3 7l9 6 9-6"/></SvgMulti>
           Só e-mail válido
         </button>
+        {user?.master && (
+          <button onClick={() => setNovoLead(true)} title="Cadastrar um lead à mão para testes"
+            style={{ height:38, padding:'0 13px', borderRadius:9, fontSize:12.5, fontFamily:'inherit',
+              cursor:'pointer', display:'flex', alignItems:'center', gap:7, whiteSpace:'nowrap',
+              border:'1px dashed var(--border)', background:'transparent', color:'var(--dim)' }}>
+            <Svg d="M12 5v14M5 12h14" w={14} h={14} sw={2}/>
+            Novo lead
+          </button>
+        )}
       </div>
 
       {varredura && (
@@ -1251,6 +1357,18 @@ function Leads({ refreshKey, onOpenLead, onCrm }) {
       </div>
 
       {exportIds && <ExportModal ids={exportIds} onClose={() => setExportIds(null)}/>}
+      {novoLead && (
+        <NovoLeadModal
+          buscas={buscasOpts}
+          onClose={() => setNovoLead(false)}
+          onCriado={(lead) => {
+            setNovoLead(false);
+            // Recarrega a lista e já abre o lead criado, que é o que se quer
+            // logo depois de cadastrar pra teste.
+            setTick(t => t + 1);
+            onOpenLead(lead.id);
+          }}/>
+      )}
     </div>
   );
 }
@@ -4836,7 +4954,7 @@ function App() {
     switch(screen) {
       case 'dashboard': return <Dashboard onOpenBusca={openBusca}/>;
       case 'leads': return (
-        <Leads refreshKey={leadsRefreshKey} onOpenLead={setOpenLeadId} onCrm={setCrmIds}/>
+        <Leads refreshKey={leadsRefreshKey} onOpenLead={setOpenLeadId} onCrm={setCrmIds} user={user}/>
       );
       case 'buscas': return <Buscas onOpen={openBusca}/>;
       case 'buscaDetail': return <BuscaDetail buscaId={buscaDetailId} onBack={() => setScreen('buscas')} onOpenLead={setOpenLeadId} onDuplicar={duplicarBusca}/>;
