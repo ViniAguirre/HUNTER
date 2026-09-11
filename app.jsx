@@ -387,6 +387,28 @@ function TrocarSenhaModal({ onClose }) {
   );
 }
 
+// Versão no ar. Sem isso, "o redeploy pegou a build nova?" só dava pra
+// responder no chute — o carimbo vem da própria imagem (/api/health), então o
+// que aparece aqui é exatamente o commit que está rodando neste servidor.
+function VersaoBuild() {
+  const [b, setB] = useState(null);
+  useEffect(() => {
+    fetch('/api/health', { credentials:'same-origin' })
+      .then(r => r.json())
+      .then(d => setB(d && d.build ? d.build : null))
+      .catch(() => {});
+  }, []);
+  if (!b || !b.commit) return null;
+  const quando = b.em ? new Date(b.em).toLocaleString('pt-BR') : null;
+  return (
+    <div className="h-side-label" title={quando ? 'Build de ' + quando : 'Versão no ar'}
+      style={{ fontSize:10, color:'var(--faint)', marginTop:10, whiteSpace:'nowrap',
+        overflow:'hidden', textOverflow:'ellipsis' }}>
+      versão {b.commit}{quando ? ' · ' + quando : ''}
+    </div>
+  );
+}
+
 function Sidebar({ screen, onNav, onLogout, user }) {
   const [modalSenha, setModalSenha] = useState(false);
   const nome = user?.nome || '…';
@@ -461,6 +483,7 @@ function Sidebar({ screen, onNav, onLogout, user }) {
             <span className="h-side-label">Sair</span>
           </button>
         </div>
+        <VersaoBuild/>
       </div>
       {modalSenha && <TrocarSenhaModal onClose={() => setModalSenha(false)}/>}
     </aside>
@@ -3271,6 +3294,7 @@ function IntegracaoGK({ row, meta, onSaved }) {
   const [erro, setErro] = useState(null);
   const [msg, setMsg] = useState(null);
   const [avisoContato, setAvisoContato] = useState(null);   // rota de contato reprovada no teste
+  const [notaContato, setNotaContato] = useState(null);     // rota existe, só não deixa ler (esperado)
   const [desconectando, setDesconectando] = useState(false);
 
   const conectado = !!(row && row.ativo && row.tem_chave && cfg.backend && cfg.queueId);
@@ -3306,6 +3330,9 @@ function IntegracaoGK({ row, meta, onSaved }) {
       // que o teste antigo não tocava. Sem esse aviso a tela dava "conectado"
       // com o envio quebrado, e o erro só aparecia na fila de falhas.
       setAvisoContato(d.contato && d.contato.ok === false ? d.contato.motivo : null);
+      // Rota respondeu, mas só aceita escrita: é o comportamento normal do CRM,
+      // não um defeito — vai como observação, não como alerta.
+      setNotaContato(d.contato && d.contato.ok && d.contato.somenteEscrita ? d.contato.motivo : null);
       setMsg('Conexão OK — selecione empresa e fila e salve.');
     } catch (e) { setErro(e.message); }
     finally { setConectando(false); }
@@ -3367,6 +3394,14 @@ function IntegracaoGK({ row, meta, onSaved }) {
             Token Bearer {row?.chave_mascarada && <span style={{ color:'var(--faint)' }}>· salvo {row.chave_mascarada}</span>}
           </label>
           <input value={token} onChange={e=>setToken(e.target.value)} placeholder="API.GKPADRAO.xxxxxxxx" style={inputStyle}/>
+          {/* A doc do GK diz, na rota de contato, "token cadastrado na conexão".
+              É outro token que não o geral da empresa — e ele muda quando a
+              conexão é recriada no CRM, que é como o envio para de funcionar
+              sem ninguém ter mexido aqui. */}
+          <div style={{ fontSize:10.5, color:'var(--faint)', marginTop:5, lineHeight:1.45 }}>
+            Use o token da <b>conexão</b> no CRM (tela Conexões). Se a conexão for recriada, o token muda
+            e precisa ser colado aqui de novo.
+          </div>
         </div>
       </div>
 
@@ -3409,6 +3444,12 @@ function IntegracaoGK({ row, meta, onSaved }) {
           border:`1px solid ${C.amber}`, borderRadius:9, padding:'9px 11px', marginBottom:8, lineHeight:1.5 }}>
           <b>Atenção:</b> a conexão lista as filas, mas a checagem da rota que o envio de leads usa
           não passou: {avisoContato}.
+        </div>
+      )}
+      {notaContato && (
+        <div style={{ fontSize:12, color:'var(--dim)', background:'var(--panel2)',
+          border:'1px solid var(--border)', borderRadius:9, padding:'9px 11px', marginBottom:8, lineHeight:1.5 }}>
+          <b>Observação:</b> {notaContato}.
         </div>
       )}
 

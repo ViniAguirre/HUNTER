@@ -32,6 +32,11 @@ jobs:
           context: .
           push: true
           tags: ghcr.io/viniaguirre/hunter:latest
+          # Carimba o commit na imagem pra /api/health dizer qual versão está no
+          # ar — assim dá pra confirmar se o redeploy pegou a build nova.
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            BUILD_TIME=${{ github.event.head_commit.timestamp }}
 
       - name: Avisar o Portainer pra atualizar
         continue-on-error: true

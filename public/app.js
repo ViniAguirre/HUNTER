@@ -877,6 +877,32 @@ function TrocarSenhaModal({
     }
   }, salvando ? 'Salvando…' : 'Salvar'))));
 }
+
+// Versão no ar. Sem isso, "o redeploy pegou a build nova?" só dava pra
+// responder no chute — o carimbo vem da própria imagem (/api/health), então o
+// que aparece aqui é exatamente o commit que está rodando neste servidor.
+function VersaoBuild() {
+  const [b, setB] = useState(null);
+  useEffect(() => {
+    fetch('/api/health', {
+      credentials: 'same-origin'
+    }).then(r => r.json()).then(d => setB(d && d.build ? d.build : null)).catch(() => {});
+  }, []);
+  if (!b || !b.commit) return null;
+  const quando = b.em ? new Date(b.em).toLocaleString('pt-BR') : null;
+  return /*#__PURE__*/React.createElement("div", {
+    className: "h-side-label",
+    title: quando ? 'Build de ' + quando : 'Versão no ar',
+    style: {
+      fontSize: 10,
+      color: 'var(--faint)',
+      marginTop: 10,
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis'
+    }
+  }, "vers\xE3o ", b.commit, quando ? ' · ' + quando : '');
+}
 function Sidebar({
   screen,
   onNav,
@@ -1087,7 +1113,7 @@ function Sidebar({
     sw: 1.7
   }), /*#__PURE__*/React.createElement("span", {
     className: "h-side-label"
-  }, "Sair")))), modalSenha && /*#__PURE__*/React.createElement(TrocarSenhaModal, {
+  }, "Sair"))), /*#__PURE__*/React.createElement(VersaoBuild, null)), modalSenha && /*#__PURE__*/React.createElement(TrocarSenhaModal, {
     onClose: () => setModalSenha(false)
   }));
 }
@@ -7054,6 +7080,7 @@ function IntegracaoGK({
   const [erro, setErro] = useState(null);
   const [msg, setMsg] = useState(null);
   const [avisoContato, setAvisoContato] = useState(null); // rota de contato reprovada no teste
+  const [notaContato, setNotaContato] = useState(null); // rota existe, só não deixa ler (esperado)
   const [desconectando, setDesconectando] = useState(false);
   const conectado = !!(row && row.ativo && row.tem_chave && cfg.backend && cfg.queueId);
   const desconectar = async () => {
@@ -7107,6 +7134,9 @@ function IntegracaoGK({
       // que o teste antigo não tocava. Sem esse aviso a tela dava "conectado"
       // com o envio quebrado, e o erro só aparecia na fila de falhas.
       setAvisoContato(d.contato && d.contato.ok === false ? d.contato.motivo : null);
+      // Rota respondeu, mas só aceita escrita: é o comportamento normal do CRM,
+      // não um defeito — vai como observação, não como alerta.
+      setNotaContato(d.contato && d.contato.ok && d.contato.somenteEscrita ? d.contato.motivo : null);
       setMsg('Conexão OK — selecione empresa e fila e salve.');
     } catch (e) {
       setErro(e.message);
@@ -7271,7 +7301,14 @@ function IntegracaoGK({
     onChange: e => setToken(e.target.value),
     placeholder: "API.GKPADRAO.xxxxxxxx",
     style: inputStyle
-  }))), /*#__PURE__*/React.createElement("div", {
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10.5,
+      color: 'var(--faint)',
+      marginTop: 5,
+      lineHeight: 1.45
+    }
+  }, "Use o token da ", /*#__PURE__*/React.createElement("b", null, "conex\xE3o"), " no CRM (tela Conex\xF5es). Se a conex\xE3o for recriada, o token muda e precisa ser colado aqui de novo."))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 10,
@@ -7354,7 +7391,18 @@ function IntegracaoGK({
       marginBottom: 8,
       lineHeight: 1.5
     }
-  }, /*#__PURE__*/React.createElement("b", null, "Aten\xE7\xE3o:"), " a conex\xE3o lista as filas, mas a checagem da rota que o envio de leads usa n\xE3o passou: ", avisoContato, "."), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("b", null, "Aten\xE7\xE3o:"), " a conex\xE3o lista as filas, mas a checagem da rota que o envio de leads usa n\xE3o passou: ", avisoContato, "."), notaContato && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--dim)',
+      background: 'var(--panel2)',
+      border: '1px solid var(--border)',
+      borderRadius: 9,
+      padding: '9px 11px',
+      marginBottom: 8,
+      lineHeight: 1.5
+    }
+  }, /*#__PURE__*/React.createElement("b", null, "Observa\xE7\xE3o:"), " ", notaContato, "."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 10
