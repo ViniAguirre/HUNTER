@@ -20,12 +20,37 @@ const axios = require('axios');
 const EP_CONTATO = '/api/contacts';
 const EP_CONTATO_ALT = '/contacts';
 
-function client(backend, token) {
+// O GK não usa o mesmo esquema de Authorization em todas as rotas: as de
+// empresa/fila aceitam "Bearer <token>", mas a de contato compara o header
+// INTEIRO com o token da empresa — com o prefixo, a comparação falha e ela
+// responde "Expired Session - New token generated!". O n8n que já entrega
+// contatos hoje manda o token CRU, sem prefixo; é daí que vem o 'raw'.
+function client(backend, token, esquema = 'bearer') {
   return axios.create({
     baseURL: String(backend || '').replace(/\/+$/, ''),
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    headers: {
+      Authorization: esquema === 'raw' ? String(token || '') : `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
     timeout: 15000,
   });
+}
+
+// Executa a chamada tentando os dois formatos de Authorization, na ordem dada.
+// Só re-tenta em 401/403: nesses a chamada comprovadamente não teve efeito,
+// então repetir um POST não corre risco de criar o registro duas vezes.
+async function comAuth(backend, token, fn, ordem = ['raw', 'bearer']) {
+  let ultimoErro;
+  for (const esquema of ordem) {
+    try {
+      return await fn(client(backend, token, esquema), esquema);
+    } catch (err) {
+      const s = err.response?.status;
+      if (s === 401 || s === 403) { ultimoErro = err; continue; }
+      throw err;
+    }
+  }
+  throw ultimoErro;
 }
 
 // Traduz erros de rede/HTTP em mensagens claras — incluindo a resposta real da
@@ -46,13 +71,14 @@ function traduzErro(err, contexto) {
 async function listarEmpresas(backend, token) {
   // Endpoint confirmado no CRM real: /api/companies/all (a doc dizia
   // /companies/all, que responde 401). Tentamos o confirmado primeiro.
-  const c = client(backend, token);
+  // Bearer primeiro aqui: é o esquema que já funciona nesta rota.
+  const puxar = (rota) => comAuth(backend, token, (c) => c.get(rota), ['bearer', 'raw']);
   try {
-    const { data } = await c.get('/api/companies/all');
+    const { data } = await puxar('/api/companies/all');
     return (data || []).map(x => ({ id: x.id, name: x.name }));
   } catch (err) {
     try {
-      const { data } = await c.get('/companies/all');
+      const { data } = await puxar('/companies/all');
       return (data || []).map(x => ({ id: x.id, name: x.name }));
     } catch (_) {
       throw traduzErro(err, 'Buscar empresas');
@@ -62,7 +88,7 @@ async function listarEmpresas(backend, token) {
 
 async function listarFilas(backend, token) {
   try {
-    const { data } = await client(backend, token).get('/api/company/queues');
+    const { data } = await comAuth(backend, token, (c) => c.get('/api/company/queues'), ['bearer', 'raw']);
     // A resposta real traz o nome em `name` (a doc dizia `queue`).
     return (data || []).map(q => ({ id: q.id, queue: q.name || q.queue || `Fila ${q.id}` }));
   } catch (err) { throw traduzErro(err, 'Buscar filas'); }
@@ -81,15 +107,15 @@ function amostraCorpo(data) {
   return (txt || '').slice(0, 200);
 }
 
-// Cria/atualiza o contato e devolve o contactId.
+// Cria/atualiza o contato e devolve o contactId. Token CRU primeiro: é o que o
+// n8n usa nesta mesma rota e comprovadamente funciona.
 async function upsertContato(backend, token, contato) {
-  const c = client(backend, token);
   const rotas = [EP_CONTATO, EP_CONTATO_ALT];
   for (let i = 0; i < rotas.length; i++) {
     const rota = rotas[i];
     let resp;
     try {
-      resp = await c.post(rota, contato);
+      resp = await comAuth(backend, token, (c) => c.post(rota, contato), ['raw', 'bearer']);
     } catch (err) {
       // 404 = rota inexistente nesta instalação: tenta a alternativa. Qualquer
       // outro erro é real e precisa chegar ao usuário como veio.
@@ -112,12 +138,11 @@ async function upsertContato(backend, token, contato) {
 // de "o token não vale pra essa rota" — o teste de conexão só olhava filas e
 // empresas, então dava verde mesmo com o envio quebrado.
 async function checarRotaContato(backend, token) {
-  const c = client(backend, token);
   const rotas = [EP_CONTATO, EP_CONTATO_ALT];
   for (let i = 0; i < rotas.length; i++) {
     const rota = rotas[i];
     try {
-      await c.get(rota);
+      await comAuth(backend, token, (c) => c.get(rota), ['raw', 'bearer']);
       return { ok: true, rota };
     } catch (err) {
       const s = err.response?.status;
@@ -141,9 +166,9 @@ async function checarRotaContato(backend, token) {
 
 async function abrirTicket(backend, token, { contactId, queueId, status }) {
   try {
-    const { data } = await client(backend, token).post('/api/tickets/createTicketAPI', {
-      contactId, queueId, status: status || 'pending',
-    });
+    const { data } = await comAuth(backend, token, (c) =>
+      c.post('/api/tickets/createTicketAPI', { contactId, queueId, status: status || 'pending' }),
+      ['bearer', 'raw']);
     return data;
   } catch (err) { throw traduzErro(err, 'Abrir ticket'); }
 }
