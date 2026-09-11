@@ -123,8 +123,14 @@ async function checarRotaContato(backend, token) {
       const s = err.response?.status;
       if (s === 404 && i < rotas.length - 1) continue;
       if (s === 405) return { ok: true, rota };   // existe, só não aceita GET
-      if (s === 401 || s === 403) return { ok: false, rota,
-        motivo: `o token não é aceito em ${rota} (HTTP ${s}) — no Whaticket essa rota exige sessão de usuário, não token de API` };
+      // Cuidado pra não afirmar demais: a sonda é um GET (leitura) e o envio é
+      // um POST. Uma rota pode recusar a leitura com o token e ainda aceitar a
+      // escrita — é o que parece acontecer aqui. O corpo vai junto porque
+      // distingue "o app negou" de "um WAF/Cloudflare barrou antes".
+      if (s === 401 || s === 403) return { ok: false, rota, aviso: true,
+        motivo: `a LEITURA de ${rota} foi recusada (HTTP ${s}): ${amostraCorpo(err.response?.data)}. `
+          + `O envio usa POST na mesma rota e pode passar mesmo assim — se os leads falharem, `
+          + `o motivo exato aparece em Monitoramento` };
       if (s === 404) return { ok: false,
         motivo: `nenhuma rota de contato encontrada (${rotas.join(' e ')} responderam 404)` };
       if (s) return { ok: false, rota, motivo: `${rota} respondeu HTTP ${s}: ${amostraCorpo(err.response?.data)}` };
