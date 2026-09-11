@@ -7354,7 +7354,7 @@ function IntegracaoGK({
       marginBottom: 8,
       lineHeight: 1.5
     }
-  }, /*#__PURE__*/React.createElement("b", null, "Aten\xE7\xE3o:"), " a conex\xE3o lista as filas, mas a rota que o envio de leads usa n\xE3o respondeu:", ' ', avisoContato, ". Os leads v\xE3o falhar no envio at\xE9 isso ser resolvido."), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("b", null, "Aten\xE7\xE3o:"), " a conex\xE3o lista as filas, mas a checagem da rota que o envio de leads usa n\xE3o passou: ", avisoContato, "."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 10

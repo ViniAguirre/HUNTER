@@ -3407,8 +3407,8 @@ function IntegracaoGK({ row, meta, onSaved }) {
       {avisoContato && (
         <div style={{ fontSize:12, color:C.amber, background:'rgba(251,191,36,.08)',
           border:`1px solid ${C.amber}`, borderRadius:9, padding:'9px 11px', marginBottom:8, lineHeight:1.5 }}>
-          <b>Atenção:</b> a conexão lista as filas, mas a rota que o envio de leads usa não respondeu:
-          {' '}{avisoContato}. Os leads vão falhar no envio até isso ser resolvido.
+          <b>Atenção:</b> a conexão lista as filas, mas a checagem da rota que o envio de leads usa
+          não passou: {avisoContato}.
         </div>
       )}
 
