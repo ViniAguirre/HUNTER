@@ -18,8 +18,13 @@ const C = {
   cyan: '#7AD9FF',
   gray: '#7C89A8'
 };
+
+// --funil-1..4: rampa SEQUENCIAL de um tom só (azul), clara→escura no tema claro
+// e escura→clara no escuro, pra etapa mais funda ser sempre a mais destacada. É
+// uma medida só (empresas) diminuindo, então não são 4 cores categóricas: a
+// identidade de cada etapa vem do rótulo ao lado, não da cor.
 function themeVars(t) {
-  return t === 'light' ? '--bg:#F4F6FA;--panel:#FFFFFF;--panel2:#EEF2F8;--hover:rgba(14,25,54,.04);--border:rgba(14,25,54,.12);--track:rgba(14,25,54,.10);--text:#0E1936;--dim:#4E586F;--faint:#77819A;--gold:#E7C053;--accent:#976F00;--blue:#2A73E6;--cyan:#1C86B8;--red:#E0544E;' : '--bg:#0E1936;--panel:#0A0F1F;--panel2:#101a3a;--hover:rgba(255,255,255,.04);--border:rgba(255,255,255,.08);--track:rgba(255,255,255,.08);--text:#ECEFF7;--dim:#8A95B4;--faint:#5E688C;--gold:#FBE49A;--accent:#FBE49A;--blue:#3A8EFF;--cyan:#7AD9FF;--red:#F87171;';
+  return t === 'light' ? '--bg:#F4F6FA;--panel:#FFFFFF;--panel2:#EEF2F8;--hover:rgba(14,25,54,.04);--border:rgba(14,25,54,.12);--track:rgba(14,25,54,.10);--text:#0E1936;--dim:#4E586F;--faint:#77819A;--gold:#E7C053;--accent:#976F00;--blue:#2A73E6;--cyan:#1C86B8;--red:#E0544E;--funil-1:#7FAFE6;--funil-2:#4F8ED9;--funil-3:#2A6ECB;--funil-4:#16498F;' : '--bg:#0E1936;--panel:#0A0F1F;--panel2:#101a3a;--hover:rgba(255,255,255,.04);--border:rgba(255,255,255,.08);--track:rgba(255,255,255,.08);--text:#ECEFF7;--dim:#8A95B4;--faint:#5E688C;--gold:#FBE49A;--accent:#FBE49A;--blue:#3A8EFF;--cyan:#7AD9FF;--red:#F87171;--funil-1:#2A61C6;--funil-2:#3579D8;--funil-3:#4A9BEE;--funil-4:#6FC0F7;';
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -1387,142 +1392,315 @@ function Topbar({
 }
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
-function Dashboard({
-  onOpenBusca
+
+// Janelas prontas do filtro. Tudo no fuso do NAVEGADOR: "hoje" pro usuário é a
+// meia-noite dele, não a do servidor — o backend recebe instante ISO já
+// resolvido e não precisa adivinhar fuso nenhum.
+const meiaNoite = (deslocDias = 0) => {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + deslocDias);
+  return d;
+};
+const PERIODOS = [{
+  chave: 'hoje',
+  rotulo: 'Hoje',
+  janela: () => ({
+    de: meiaNoite(0),
+    ate: null
+  })
+}, {
+  chave: '7d',
+  rotulo: '7 dias',
+  janela: () => ({
+    de: meiaNoite(-6),
+    ate: null
+  })
+}, {
+  chave: '30d',
+  rotulo: '30 dias',
+  janela: () => ({
+    de: meiaNoite(-29),
+    ate: null
+  })
+}, {
+  chave: 'tudo',
+  rotulo: 'Tudo',
+  janela: () => ({
+    de: null,
+    ate: null
+  })
+}];
+const pct = (parte, todo) => todo ? Math.round(parte / todo * 100) : 0;
+// <input type="date"> fala 'AAAA-MM-DD' local; o filtro precisa do instante.
+const doInput = (v, fimDoDia = false) => {
+  if (!v) return null;
+  const [a, m, d] = v.split('-').map(Number);
+  if (!a || !m || !d) return null;
+  // Fim do período é EXCLUSIVO no backend: pra incluir o dia escolhido inteiro,
+  // manda a meia-noite do dia seguinte.
+  return new Date(a, m - 1, d + (fimDoDia ? 1 : 0));
+};
+function FiltroPeriodo({
+  periodo,
+  setPeriodo,
+  custom,
+  setCustom
 }) {
-  const [data, setData] = useState(null);
-  const [alertas, setAlertas] = useState([]);
-  useEffect(() => {
-    fetch('/api/dashboard', {
-      credentials: 'same-origin'
-    }).then(r => r.json()).then(setData).catch(() => {});
-    fetch('/api/alertas', {
-      credentials: 'same-origin'
-    }).then(r => r.json()).then(d => setAlertas(Array.isArray(d?.alertas) ? d.alertas : [])).catch(() => {});
-  }, []);
-  if (!data) {
-    return /*#__PURE__*/React.createElement("div", {
-      style: {
-        color: 'var(--faint)',
-        padding: 40,
-        textAlign: 'center'
-      }
-    }, "Carregando\u2026");
-  }
-  const {
-    metricas = {},
-    buscasAtivas = [],
-    atividade = []
-  } = data || {};
-  const qual = parseInt(metricas.leadsQualificados) || 0;
-  const fora = parseInt(metricas.leadsForaPerfil) || 0;
-  const verificados = qual + fora; // passaram pela segmentação (Score 1)
-  const taxaQ = verificados ? Math.round(qual / verificados * 100) : 0;
-  const metrics = [{
-    label: 'Radares ativos',
-    value: fmtNum(metricas.buscasAtivas),
-    icon: 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-4.3-4.3',
-    iColor: C.blue,
-    trend: 'em produção',
-    tColor: 'var(--dim)'
-  }, {
-    label: 'Empresas encontradas',
-    value: fmtNum(metricas.empresasEncontradas),
-    icon: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 3v3M12 18v3M3 12h3M18 12h3',
-    iColor: C.gold,
-    trend: `${fmtNum(verificados)} verificadas`,
-    tColor: 'var(--dim)'
-  }, {
-    label: 'Leads qualificados',
-    value: fmtNum(metricas.leadsQualificados),
-    icon: 'M20 6L9 17l-5-5',
-    iColor: C.green,
-    trend: `${taxaQ}% aproveit. · ${fmtNum(fora)} fora do perfil`,
-    tColor: 'var(--dim)'
-  }, {
-    label: 'Enviados ao CRM',
-    value: fmtNum(metricas.leadsCRM),
-    icon: 'M5 12h14M13 5l7 7-7 7',
-    iColor: C.cyan,
-    trend: 'total enviado',
-    tColor: 'var(--dim)'
-  }];
-  const hlLabel = {
-    green: 'produzindo',
-    amber: 'atenção',
-    red: 'parada',
-    gray: 'encerrada'
+  const chip = ativo => ({
+    height: 32,
+    padding: '0 13px',
+    borderRadius: 8,
+    fontSize: 12.5,
+    fontFamily: 'inherit',
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+    border: `1px solid ${ativo ? 'var(--accent)' : 'var(--border)'}`,
+    background: ativo ? 'var(--panel2)' : 'var(--panel)',
+    color: ativo ? 'var(--accent)' : 'var(--dim)',
+    fontWeight: ativo ? 600 : 400
+  });
+  const dataInput = {
+    height: 32,
+    padding: '0 9px',
+    borderRadius: 8,
+    border: '1px solid var(--border)',
+    background: 'var(--panel)',
+    color: 'var(--text)',
+    fontSize: 12.5,
+    fontFamily: 'inherit',
+    colorScheme: 'inherit',
+    minWidth: 0,
+    flex: '0 1 148px'
   };
-  const corAlerta = t => t === 'erro' ? C.red : t === 'aviso' ? C.amber : C.blue;
   return /*#__PURE__*/React.createElement("div", {
     style: {
-      maxWidth: 1180
+      display: 'flex',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      gap: 8,
+      marginBottom: 16
     }
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "h-cards",
+  }, PERIODOS.map(p => /*#__PURE__*/React.createElement("button", {
+    key: p.chave,
+    onClick: () => setPeriodo(p.chave),
+    style: chip(periodo === p.chave)
+  }, p.rotulo)), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setPeriodo('custom'),
+    style: chip(periodo === 'custom')
+  }, "Personalizado"), periodo === 'custom' && /*#__PURE__*/React.createElement("div", {
     style: {
-      '--card': '200px',
-      gap: 16,
-      marginBottom: 24
+      display: 'flex',
+      alignItems: 'center',
+      gap: 6,
+      flexWrap: 'wrap'
     }
-  }, metrics.map(m => /*#__PURE__*/React.createElement("div", {
-    key: m.label,
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    value: custom.de,
+    max: custom.ate || undefined,
+    onChange: e => setCustom(c => ({
+      ...c,
+      de: e.target.value
+    })),
+    style: dataInput
+  }), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 12,
+      color: 'var(--faint)'
+    }
+  }, "at\xE9"), /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    value: custom.ate,
+    min: custom.de || undefined,
+    onChange: e => setCustom(c => ({
+      ...c,
+      ate: e.target.value
+    })),
+    style: dataInput
+  })));
+}
+
+// O funil. A LARGURA de cada faixa é o valor da etapa dividido pelo topo — sem
+// piso artificial, senão uma etapa de 3 leads pareceria do tamanho de uma de
+// 300. Cada faixa é um trapézio que vai da própria largura até a largura da
+// etapa seguinte, então as duas bordas são números reais; a última fica reta,
+// de propósito, pra não inventar uma ponta que não corresponde a nada.
+function Funil({
+  etapas,
+  carregando
+}) {
+  const [hover, setHover] = useState(null);
+  const topo = etapas[0]?.valor || 0;
+  const larg = v => {
+    if (!topo || !v) return v > 0 ? 1.5 : 0; // 1.5%: etapa não-zero nunca some
+    return Math.max(v / topo * 100, 1.5);
+  };
+  const clip = (wt, wb) => {
+    const t = (100 - wt) / 2,
+      b = (100 - wb) / 2;
+    return `polygon(${t}% 0, ${100 - t}% 0, ${100 - b}% 100%, ${b}% 100%)`;
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    className: "h-funil",
     style: {
       background: 'var(--panel)',
       border: '1px solid var(--border)',
       borderRadius: 14,
-      padding: '18px 20px'
+      padding: '16px 18px 18px'
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
-      alignItems: 'center',
+      alignItems: 'baseline',
       justifyContent: 'space-between',
+      gap: 10,
       marginBottom: 14
     }
-  }, /*#__PURE__*/React.createElement("span", {
+  }, /*#__PURE__*/React.createElement("h3", {
     style: {
-      fontSize: 12.5,
-      color: 'var(--dim)'
-    }
-  }, m.label), /*#__PURE__*/React.createElement(Svg, {
-    d: m.icon,
-    color: m.iColor,
-    sw: 1.7
-  })), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 30,
+      fontSize: 14,
       fontWeight: 600,
-      letterSpacing: '-.02em',
-      lineHeight: 1
+      margin: 0
     }
-  }, m.value), /*#__PURE__*/React.createElement("div", {
+  }, "Funil da opera\xE7\xE3o"), /*#__PURE__*/React.createElement("span", {
     style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 5,
-      marginTop: 10,
-      fontSize: 12,
-      color: m.tColor
+      fontSize: 11,
+      color: 'var(--faint)'
     }
-  }, /*#__PURE__*/React.createElement("span", null, m.trend))))), /*#__PURE__*/React.createElement("div", {
-    className: "h-split",
+  }, "por data de entrada no funil")), carregando && /*#__PURE__*/React.createElement("div", {
     style: {
-      '--split': '1.55fr 1fr',
-      gap: 16
+      padding: '30px 0',
+      textAlign: 'center',
+      fontSize: 13,
+      color: 'var(--faint)'
     }
-  }, /*#__PURE__*/React.createElement("div", {
+  }, "Carregando\u2026"), !carregando && topo === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '30px 0',
+      textAlign: 'center',
+      fontSize: 13,
+      color: 'var(--faint)'
+    }
+  }, "Nenhuma empresa entrou no funil neste per\xEDodo."), !carregando && topo > 0 && etapas.map((e, i) => {
+    const prox = etapas[i + 1];
+    const wt = larg(e.valor);
+    const wb = prox ? larg(prox.valor) : wt;
+    const anterior = i > 0 ? etapas[i - 1] : null;
+    const conv = anterior ? pct(e.valor, anterior.valor) : 100;
+    return /*#__PURE__*/React.createElement("div", {
+      key: e.chave,
+      className: "h-funil-linha",
+      onMouseEnter: () => setHover(i),
+      onMouseLeave: () => setHover(null),
+      style: {
+        display: 'grid',
+        gridTemplateColumns: '148px 1fr 74px',
+        alignItems: 'center',
+        gap: 12,
+        padding: '4px 0',
+        position: 'relative'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11.5,
+        color: 'var(--dim)',
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis'
+      }
+    }, e.rotulo), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 21,
+        fontWeight: 600,
+        letterSpacing: '-.02em',
+        lineHeight: 1.15
+      }
+    }, fmtNum(e.valor))), /*#__PURE__*/React.createElement("div", {
+      style: {
+        height: 46
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        height: '100%',
+        width: '100%',
+        background: `var(--funil-${i + 1})`,
+        clipPath: clip(wt, wb),
+        opacity: hover === null || hover === i ? 1 : .55,
+        transition: 'opacity .12s'
+      }
+    })), /*#__PURE__*/React.createElement("div", {
+      style: {
+        textAlign: 'right'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 13,
+        fontWeight: 600
+      }
+    }, conv, "%"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 10,
+        color: 'var(--faint)'
+      }
+    }, i === 0 ? 'do topo' : 'da anterior')), hover === i && /*#__PURE__*/React.createElement("div", {
+      className: "h-funil-tip",
+      style: {
+        position: 'absolute',
+        top: -4,
+        zIndex: 5,
+        pointerEvents: 'none',
+        background: 'var(--panel2)',
+        border: '1px solid var(--border)',
+        borderRadius: 8,
+        padding: '7px 10px',
+        fontSize: 11.5,
+        lineHeight: 1.5,
+        color: 'var(--text)',
+        boxShadow: '0 6px 18px rgba(0,0,0,.28)',
+        whiteSpace: 'nowrap'
+      }
+    }, /*#__PURE__*/React.createElement("b", null, e.rotulo), /*#__PURE__*/React.createElement("br", null), fmtNum(e.valor), " de ", fmtNum(topo), " \xB7 ", pct(e.valor, topo), "% do topo", anterior && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("br", null), conv, "% de \u201C", anterior.rotulo, "\u201D")));
+  }));
+}
+const COR_STATUS_RADAR = {
+  Ativa: C.green,
+  Pausada: C.amber,
+  Esgotada: C.gray,
+  Encerrada: C.gray
+};
+
+// Quanto cada radar colocou em cada etapa. Clicar filtra o funil pelo radar —
+// é o "onde os leads de cada radar estão" sem sair da tela.
+function RadaresFunil({
+  radares,
+  selecionado,
+  onSelecionar,
+  onAbrir,
+  carregando
+}) {
+  const cols = '1.6fr .78fr .78fr .7fr .62fr';
+  // Sem .h-tabela de propósito: o modo cartão daquela classe é pra tabela larga
+  // (Leads). Aqui são 5 colunas curtas que cabem em 520px — dividindo a linha com
+  // o funil, o modo cartão disparava já no desktop e empilhava rótulo e número
+  // sem necessidade. Se estreitar demais, rola na horizontal.
+  return /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'var(--panel)',
       border: '1px solid var(--border)',
       borderRadius: 14,
-      padding: '6px 6px 8px'
+      overflow: 'hidden'
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
+      gap: 10,
       padding: '14px 16px 12px'
     }
   }, /*#__PURE__*/React.createElement("h3", {
@@ -1531,73 +1709,228 @@ function Dashboard({
       fontWeight: 600,
       margin: 0
     }
-  }, "Radares ativos"), /*#__PURE__*/React.createElement("a", {
-    onClick: () => onOpenBusca(null),
+  }, "Radares no funil"), selecionado != null && /*#__PURE__*/React.createElement("button", {
+    onClick: () => onSelecionar(null),
     style: {
-      fontSize: 12,
+      background: 'none',
+      border: 'none',
       color: C.blue,
+      fontSize: 12,
       cursor: 'pointer',
-      textDecoration: 'none'
+      fontFamily: 'inherit',
+      padding: 0
     }
-  }, "Ver todas")), buscasAtivas.length === 0 && /*#__PURE__*/React.createElement("div", {
+  }, "Ver todos")), /*#__PURE__*/React.createElement("div", {
+    className: "h-scroll"
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h-tw",
     style: {
-      padding: '20px 16px',
-      fontSize: 13,
-      color: 'var(--faint)'
+      '--tw': '430px'
     }
-  }, "Nenhum radar ativo."), buscasAtivas.map(b => /*#__PURE__*/React.createElement("div", {
-    key: b.id,
-    onClick: () => onOpenBusca(b.id),
-    className: "row-hover",
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h-thead",
     style: {
-      display: 'flex',
+      display: 'grid',
+      gridTemplateColumns: cols,
       alignItems: 'center',
-      gap: 14,
-      padding: '12px 16px',
-      borderRadius: 10,
-      cursor: 'pointer'
-    }
-  }, /*#__PURE__*/React.createElement(StatusDot, {
-    color: healthColors[b.health],
-    pulse: b.health === 'green'
-  }), /*#__PURE__*/React.createElement("div", {
-    style: {
-      flex: 1,
-      minWidth: 0
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 13.5,
-      fontWeight: 500,
-      whiteSpace: 'nowrap',
-      overflow: 'hidden',
-      textOverflow: 'ellipsis'
-    }
-  }, b.nome), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11.5,
+      gap: 8,
+      padding: '10px 16px',
+      borderTop: '1px solid var(--border)',
+      borderBottom: '1px solid var(--border)',
+      fontSize: 10.5,
+      fontWeight: 600,
+      letterSpacing: '.04em',
       color: 'var(--faint)',
-      marginTop: 2
+      textTransform: 'uppercase'
     }
-  }, hlLabel[b.health] || '—')), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("div", null, "Radar"), /*#__PURE__*/React.createElement("div", {
     style: {
-      textAlign: 'right',
-      flexShrink: 0
+      textAlign: 'right'
     }
-  }, /*#__PURE__*/React.createElement("div", {
+  }, "Encontr."), /*#__PURE__*/React.createElement("div", {
     style: {
-      fontSize: 14,
-      fontWeight: 600
+      textAlign: 'right'
     }
-  }, fmtNum(b.enc)), /*#__PURE__*/React.createElement("div", {
+  }, "Segment."), /*#__PURE__*/React.createElement("div", {
     style: {
-      fontSize: 11,
-      color: 'var(--faint)'
+      textAlign: 'right'
     }
-  }, "encontrados"))))), /*#__PURE__*/React.createElement("div", {
+  }, "Qualif."), /*#__PURE__*/React.createElement("div", {
     style: {
-      display: 'flex',
-      flexDirection: 'column',
+      textAlign: 'right'
+    }
+  }, "CRM")), carregando && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '24px 16px',
+      fontSize: 13,
+      color: 'var(--faint)',
+      textAlign: 'center'
+    }
+  }, "Carregando\u2026"), !carregando && radares.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '24px 16px',
+      fontSize: 13,
+      color: 'var(--faint)',
+      textAlign: 'center'
+    }
+  }, "Nenhum radar com movimento neste per\xEDodo."), !carregando && radares.map(r => {
+    const sel = selecionado === r.id;
+    return /*#__PURE__*/React.createElement("div", {
+      key: r.id,
+      className: "row-hover h-linha",
+      onClick: () => onSelecionar(sel ? null : r.id),
+      style: {
+        display: 'grid',
+        gridTemplateColumns: cols,
+        alignItems: 'center',
+        gap: 8,
+        padding: '11px 16px',
+        borderBottom: '1px solid var(--border)',
+        cursor: 'pointer',
+        background: sel ? 'var(--panel2)' : 'transparent'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      className: "h-titulo",
+      style: {
+        minWidth: 0,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      title: r.status || '—',
+      style: {
+        width: 6,
+        height: 6,
+        borderRadius: '50%',
+        flexShrink: 0,
+        background: COR_STATUS_RADAR[r.status] || 'var(--border)'
+      }
+    }), /*#__PURE__*/React.createElement("span", {
+      onClick: e => {
+        e.stopPropagation();
+        onAbrir(r.id);
+      },
+      title: `${r.nome} — clique no nome para abrir o radar`,
+      style: {
+        fontSize: 13,
+        fontWeight: 500,
+        whiteSpace: 'nowrap',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis'
+      }
+    }, r.nome)), /*#__PURE__*/React.createElement("div", {
+      "data-rot": "Encontradas",
+      style: {
+        fontSize: 12.5,
+        textAlign: 'right'
+      }
+    }, fmtNum(r.encontradas)), /*#__PURE__*/React.createElement("div", {
+      "data-rot": "Segmentadas",
+      style: {
+        fontSize: 12.5,
+        textAlign: 'right'
+      }
+    }, fmtNum(r.segmentadas)), /*#__PURE__*/React.createElement("div", {
+      "data-rot": "Qualificados",
+      style: {
+        fontSize: 12.5,
+        textAlign: 'right'
+      }
+    }, fmtNum(r.qualificados)), /*#__PURE__*/React.createElement("div", {
+      "data-rot": "Enviados ao CRM",
+      style: {
+        fontSize: 12.5,
+        textAlign: 'right',
+        fontWeight: 600
+      }
+    }, fmtNum(r.enviados)));
+  }))));
+}
+function Dashboard({
+  onOpenBusca
+}) {
+  const [alertas, setAlertas] = useState([]);
+  const [atividade, setAtividade] = useState([]);
+  const [funil, setFunil] = useState(null);
+  const [carregando, setCarregando] = useState(true);
+  const [periodo, setPeriodo] = useState('30d');
+  const [custom, setCustom] = useState({
+    de: '',
+    ate: ''
+  });
+  const [radarSel, setRadarSel] = useState(null);
+  const janela = useMemo(() => {
+    if (periodo === 'custom') return {
+      de: doInput(custom.de),
+      ate: doInput(custom.ate, true)
+    };
+    return (PERIODOS.find(p => p.chave === periodo) || PERIODOS[3]).janela();
+  }, [periodo, custom.de, custom.ate]);
+  useEffect(() => {
+    fetch('/api/dashboard', {
+      credentials: 'same-origin'
+    }).then(r => r.json()).then(d => setAtividade(Array.isArray(d?.atividade) ? d.atividade : [])).catch(() => {});
+    fetch('/api/alertas', {
+      credentials: 'same-origin'
+    }).then(r => r.json()).then(d => setAlertas(Array.isArray(d?.alertas) ? d.alertas : [])).catch(() => {});
+  }, []);
+
+  // O radar entra como parâmetro do funil, mas NÃO da tabela: ela precisa seguir
+  // listando todos os radares pra dar pra trocar de um pro outro.
+  useEffect(() => {
+    const q = [];
+    if (janela.de) q.push('de=' + encodeURIComponent(janela.de.toISOString()));
+    if (janela.ate) q.push('ate=' + encodeURIComponent(janela.ate.toISOString()));
+    if (radarSel != null) q.push('busca_id=' + radarSel);
+    let vivo = true;
+    setCarregando(true);
+    fetch('/api/funil' + (q.length ? '?' + q.join('&') : ''), {
+      credentials: 'same-origin'
+    }).then(r => r.json()).then(d => {
+      if (vivo) {
+        setFunil(d);
+        setCarregando(false);
+      }
+    }).catch(() => {
+      if (vivo) setCarregando(false);
+    });
+    return () => {
+      vivo = false;
+    };
+  }, [janela.de && janela.de.getTime(), janela.ate && janela.ate.getTime(), radarSel]);
+  const etapas = funil?.etapas || [];
+  const radares = funil?.radares || [];
+  const corAlerta = t => t === 'erro' ? C.red : t === 'aviso' ? C.amber : C.blue;
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      maxWidth: 1180
+    }
+  }, /*#__PURE__*/React.createElement(FiltroPeriodo, {
+    periodo: periodo,
+    setPeriodo: setPeriodo,
+    custom: custom,
+    setCustom: setCustom
+  }), /*#__PURE__*/React.createElement("div", {
+    className: "h-split",
+    style: {
+      '--split': '1.25fr 1fr',
+      gap: 16,
+      marginBottom: 16
+    }
+  }, /*#__PURE__*/React.createElement(Funil, {
+    etapas: etapas,
+    carregando: carregando
+  }), /*#__PURE__*/React.createElement(RadaresFunil, {
+    radares: radares,
+    selecionado: radarSel,
+    carregando: carregando,
+    onSelecionar: setRadarSel,
+    onAbrir: onOpenBusca
+  })), /*#__PURE__*/React.createElement("div", {
+    className: "h-split",
+    style: {
+      '--split': '1fr 1fr',
       gap: 16
     }
   }, /*#__PURE__*/React.createElement("div", {
@@ -1652,8 +1985,7 @@ function Dashboard({
       background: 'var(--panel)',
       border: '1px solid var(--border)',
       borderRadius: 14,
-      padding: 16,
-      flex: 1
+      padding: 16
     }
   }, /*#__PURE__*/React.createElement("h3", {
     style: {
@@ -1694,7 +2026,7 @@ function Dashboard({
       fontWeight: 600,
       color: scoreColor(a.score)
     }
-  }, a.score)))))));
+  }, a.score))))));
 }
 
 // ── Leads ─────────────────────────────────────────────────────────────────────
