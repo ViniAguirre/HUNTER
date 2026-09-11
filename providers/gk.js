@@ -9,22 +9,22 @@
  *   GET  /companies/all              → [{id, name}]
  *   GET  /api/company/queues         → [{id, queue}]
  *   POST /api/tickets/createTicketAPI → cria ticket {contactId, queueId, status}
- * Endpoint de contato NÃO veio na doc — usando o padrão abaixo (ajustável):
+ *   POST /api/contacts               → cria contato (doc "API Criar Contato")
  */
 const axios = require('axios');
 
-// A rota de contato nunca veio na doc do GK. No Whaticket de origem ela é
-// montada como "/contacts"; nesta instalação as outras rotas vivem sob "/api",
-// então tentamos a de "/api" primeiro e caímos na outra se der 404 — o mesmo
-// que já era preciso fazer em listarEmpresas.
+// Confirmado na doc oficial do GK ("API Criar Contato"): POST em
+// {BACKEND_URL}/api/contacts. A alternativa sem "/api" fica só como rede de
+// segurança pra instalação antiga que ainda monte a rota no caminho do
+// Whaticket de origem.
 const EP_CONTATO = '/api/contacts';
 const EP_CONTATO_ALT = '/contacts';
 
-// O GK não usa o mesmo esquema de Authorization em todas as rotas: as de
-// empresa/fila aceitam "Bearer <token>", mas a de contato compara o header
-// INTEIRO com o token da empresa — com o prefixo, a comparação falha e ela
-// responde "Expired Session - New token generated!". O n8n que já entrega
-// contatos hoje manda o token CRU, sem prefixo; é daí que vem o 'raw'.
+// A doc do GK pede "Authorization: Bearer <token>" em todas as rotas, contato
+// incluído — então é esse o esquema principal. O 'raw' (token sem prefixo)
+// continua como tentativa de reserva porque é assim que o n8n que entrega
+// contatos hoje está configurado, e uma instalação pode comparar o header
+// inteiro. Só é usado depois que o Bearer volta 401/403.
 function client(backend, token, esquema = 'bearer') {
   return axios.create({
     baseURL: String(backend || '').replace(/\/+$/, ''),
@@ -39,7 +39,7 @@ function client(backend, token, esquema = 'bearer') {
 // Executa a chamada tentando os dois formatos de Authorization, na ordem dada.
 // Só re-tenta em 401/403: nesses a chamada comprovadamente não teve efeito,
 // então repetir um POST não corre risco de criar o registro duas vezes.
-async function comAuth(backend, token, fn, ordem = ['raw', 'bearer']) {
+async function comAuth(backend, token, fn, ordem = ['bearer', 'raw']) {
   let ultimoErro;
   for (const esquema of ordem) {
     try {
@@ -107,19 +107,33 @@ function amostraCorpo(data) {
   return (txt || '').slice(0, 200);
 }
 
-// Cria/atualiza o contato e devolve o contactId. Token CRU primeiro: é o que o
-// n8n usa nesta mesma rota e comprovadamente funciona.
+// Cria/atualiza o contato e devolve o contactId. Bearer primeiro, como manda a
+// doc; se voltar 401/403 ainda tenta o token cru antes de desistir.
 async function upsertContato(backend, token, contato) {
   const rotas = [EP_CONTATO, EP_CONTATO_ALT];
   for (let i = 0; i < rotas.length; i++) {
     const rota = rotas[i];
     let resp;
     try {
-      resp = await comAuth(backend, token, (c) => c.post(rota, contato), ['raw', 'bearer']);
+      resp = await comAuth(backend, token, (c) => c.post(rota, contato), ['bearer', 'raw']);
     } catch (err) {
       // 404 = rota inexistente nesta instalação: tenta a alternativa. Qualquer
       // outro erro é real e precisa chegar ao usuário como veio.
       if (err.response?.status === 404 && i < rotas.length - 1) continue;
+      const s = err.response?.status;
+      // 401/403 aqui é quase sempre o token errado, não a rota: a doc do GK diz
+      // que o token desta rota é o "cadastrado na conexão" — o da tela de
+      // Conexões do CRM, não o token geral da empresa. E ele muda quando a
+      // conexão é recriada, que é como uma integração que funcionava para de
+      // funcionar sozinha. Sem dizer isso, o erro bruto do CRM ("Expired
+      // Session") mandava procurar no lugar errado.
+      if (s === 401 || s === 403) {
+        throw new Error(
+          `Criar/atualizar contato (${rota}): o CRM recusou o token [HTTP ${s}] `
+          + `${amostraCorpo(err.response?.data)} — confira em Conexões, no CRM, o token da conexão `
+          + `usada para esta integração e cole o valor atual aqui (ele muda se a conexão for recriada)`
+        );
+      }
       throw traduzErro(err, `Criar/atualizar contato (${rota})`);
     }
     const id = extrairContactId(resp.data);
@@ -142,20 +156,23 @@ async function checarRotaContato(backend, token) {
   for (let i = 0; i < rotas.length; i++) {
     const rota = rotas[i];
     try {
-      await comAuth(backend, token, (c) => c.get(rota), ['raw', 'bearer']);
+      await comAuth(backend, token, (c) => c.get(rota), ['bearer', 'raw']);
       return { ok: true, rota };
     } catch (err) {
       const s = err.response?.status;
       if (s === 404 && i < rotas.length - 1) continue;
       if (s === 405) return { ok: true, rota };   // existe, só não aceita GET
-      // Cuidado pra não afirmar demais: a sonda é um GET (leitura) e o envio é
-      // um POST. Uma rota pode recusar a leitura com o token e ainda aceitar a
-      // escrita — é o que parece acontecer aqui. O corpo vai junto porque
-      // distingue "o app negou" de "um WAF/Cloudflare barrou antes".
-      if (s === 401 || s === 403) return { ok: false, rota, aviso: true,
-        motivo: `a LEITURA de ${rota} foi recusada (HTTP ${s}): ${amostraCorpo(err.response?.data)}. `
-          + `O envio usa POST na mesma rota e pode passar mesmo assim — se os leads falharem, `
-          + `o motivo exato aparece em Monitoramento` };
+      // 401/403 aqui NÃO é conexão quebrada. A sonda é um GET (leitura) e o
+      // envio é um POST (escrita): no Whaticket a leitura de contatos é
+      // guardada pela sessão do usuário e recusa qualquer token de API, com
+      // ou sem "Bearer". Quem respondeu foi o próprio CRM, então a rota
+      // existe. Tratar isso como falha fazia a tela acusar erro numa conexão
+      // que podia estar boa — e o usuário desistir antes de testar o envio.
+      if (s === 401 || s === 403) return { ok: true, rota, somenteEscrita: true,
+        motivo: `a leitura de ${rota} é bloqueada pelo CRM (HTTP ${s}: ${amostraCorpo(err.response?.data)}) — `
+          + `isso é esperado, essa rota só libera leitura pra sessão de usuário. O envio de leads usa POST `
+          + `na mesma rota e não passa por essa checagem. Pra confirmar de verdade, envie um lead e veja o `
+          + `resultado em Monitoramento` };
       if (s === 404) return { ok: false,
         motivo: `nenhuma rota de contato encontrada (${rotas.join(' e ')} responderam 404)` };
       if (s) return { ok: false, rota, motivo: `${rota} respondeu HTTP ${s}: ${amostraCorpo(err.response?.data)}` };
@@ -173,6 +190,19 @@ async function abrirTicket(backend, token, { contactId, queueId, status }) {
   } catch (err) { throw traduzErro(err, 'Abrir ticket'); }
 }
 
+// A doc do GK mostra o número com DDI: 5541992018982. Os telefones do Hunter
+// vêm como (41) 99201-8982, e sem o 55 na frente o contato entra no CRM com um
+// número que não existe no WhatsApp — o contato até é criado, mas o ticket
+// nunca casa com a conversa. DDI só entra quando o número tem cara de nacional
+// (10 ou 11 dígitos); o que já vem com 55 e comprimento de DDI fica como está.
+function normalizarNumero(bruto) {
+  const d = String(bruto || '').replace(/\D/g, '');
+  if (!d) return '';
+  if (d.length >= 12 && d.startsWith('55')) return d;
+  if (d.length === 10 || d.length === 11) return '55' + d;
+  return d;
+}
+
 // Monta o payload de contato a partir da empresa + lead do Hunter.
 // number precisa ser dígitos (5511999999999). Sem telefone válido, o contato
 // não pode ser criado — quem chama trata isso.
@@ -184,7 +214,7 @@ function montarContato(empresa, lead, extras = {}) {
   // tem. Sem isso o contato ia pro CRM como "Contato", sem CNPJ nem cidade, e
   // ninguém conseguia achar o lead do outro lado.
   const de = (campo) => e[campo] || l[campo] || '';
-  const tel = (extras.telefone || '').replace(/\D/g, '');
+  const tel = normalizarNumero(extras.telefone);
   const extraInfo = [
     { name: 'Origem', value: 'Hunter' },
     // Identificador de ida-e-volta: quando o contato for marcado como convertido,
@@ -213,4 +243,4 @@ function montarContato(empresa, lead, extras = {}) {
 }
 
 module.exports = { listarEmpresas, listarFilas, upsertContato, abrirTicket, montarContato,
-  checarRotaContato, EP_CONTATO, EP_CONTATO_ALT };
+  checarRotaContato, normalizarNumero, EP_CONTATO, EP_CONTATO_ALT };

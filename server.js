@@ -725,8 +725,14 @@ app.use(express.json({ limit: '12mb' }));   // 12mb cobre upload de PDF/CSV em b
 app.use(cookieParser());
 
 // healthcheck
+// commit e hora da build vêm carimbados na imagem (Dockerfile + workflow).
+// Servem pra responder, sem adivinhação, se o serviço no ar já é a versão nova.
+const BUILD = {
+  commit: (process.env.HUNTER_GIT_SHA || '').slice(0, 7) || 'desconhecida',
+  em: process.env.HUNTER_BUILD_TIME || null,
+};
 app.get('/api/health', (req, res) =>
-  res.json({ ok: true, versao: 'fase3', ts: new Date().toISOString() })
+  res.json({ ok: true, versao: 'fase3', build: BUILD, ts: new Date().toISOString() })
 );
 
 // ── API: auth ─────────────────────────────────────────────────────────────────
