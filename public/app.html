@@ -52,6 +52,19 @@ input:focus,textarea:focus{border-color:var(--blue)!important;outline:none;}
    de 1000px a 1300px em que a janela já era "grande" mas, depois de descontar
    a sidebar e o padding, a tabela ainda não cabia e escondia até 234px. */
 .h-tabela{container-type:inline-size;}
+/* Funil: mede o PRÓPRIO painel, não a janela — ele divide a linha com a tabela
+   de radares, então a largura útil dele é bem menor que a da tela. Estreitou, o
+   rótulo e a conversão sobem pra uma linha só e o trapézio fica com a largura
+   inteira embaixo; do contrário sobravam ~80px pro desenho e ele virava um risco. */
+.h-funil{container-type:inline-size;}
+.h-funil-tip{right:86px;}
+@container (max-width:430px){
+  .h-funil-linha{grid-template-columns:1fr 74px!important;row-gap:2px;}
+  .h-funil-linha > *:nth-child(1){grid-area:1 / 1;}
+  .h-funil-linha > *:nth-child(3){grid-area:1 / 2;}
+  .h-funil-linha > *:nth-child(2){grid-area:2 / 1 / 3 / 3;}
+  .h-funil-tip{right:8px;}
+}
 @container (max-width:1000px){
   .h-tabela .h-tw{
     min-width:0!important;

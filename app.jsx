@@ -5,10 +5,14 @@ const { useState, useRef, useEffect, useMemo } = React;
 // legível no claro. Assim os detalhes aparecem bem nos dois modos.
 const C = { green:'#34D399', amber:'#FBBF24', red:'#F87171', blue:'#3A8EFF', gold:'var(--accent)', cyan:'#7AD9FF', gray:'#7C89A8' };
 
+// --funil-1..4: rampa SEQUENCIAL de um tom só (azul), clara→escura no tema claro
+// e escura→clara no escuro, pra etapa mais funda ser sempre a mais destacada. É
+// uma medida só (empresas) diminuindo, então não são 4 cores categóricas: a
+// identidade de cada etapa vem do rótulo ao lado, não da cor.
 function themeVars(t) {
   return t === 'light'
-    ? '--bg:#F4F6FA;--panel:#FFFFFF;--panel2:#EEF2F8;--hover:rgba(14,25,54,.04);--border:rgba(14,25,54,.12);--track:rgba(14,25,54,.10);--text:#0E1936;--dim:#4E586F;--faint:#77819A;--gold:#E7C053;--accent:#976F00;--blue:#2A73E6;--cyan:#1C86B8;--red:#E0544E;'
-    : '--bg:#0E1936;--panel:#0A0F1F;--panel2:#101a3a;--hover:rgba(255,255,255,.04);--border:rgba(255,255,255,.08);--track:rgba(255,255,255,.08);--text:#ECEFF7;--dim:#8A95B4;--faint:#5E688C;--gold:#FBE49A;--accent:#FBE49A;--blue:#3A8EFF;--cyan:#7AD9FF;--red:#F87171;';
+    ? '--bg:#F4F6FA;--panel:#FFFFFF;--panel2:#EEF2F8;--hover:rgba(14,25,54,.04);--border:rgba(14,25,54,.12);--track:rgba(14,25,54,.10);--text:#0E1936;--dim:#4E586F;--faint:#77819A;--gold:#E7C053;--accent:#976F00;--blue:#2A73E6;--cyan:#1C86B8;--red:#E0544E;--funil-1:#7FAFE6;--funil-2:#4F8ED9;--funil-3:#2A6ECB;--funil-4:#16498F;'
+    : '--bg:#0E1936;--panel:#0A0F1F;--panel2:#101a3a;--hover:rgba(255,255,255,.04);--border:rgba(255,255,255,.08);--track:rgba(255,255,255,.08);--text:#ECEFF7;--dim:#8A95B4;--faint:#5E688C;--gold:#FBE49A;--accent:#FBE49A;--blue:#3A8EFF;--cyan:#7AD9FF;--red:#F87171;--funil-1:#2A61C6;--funil-2:#3579D8;--funil-3:#4A9BEE;--funil-4:#6FC0F7;';
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -595,14 +599,227 @@ function Topbar({ screen, theme, onTheme, onNova, user }) {
 }
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
+
+// Janelas prontas do filtro. Tudo no fuso do NAVEGADOR: "hoje" pro usuário é a
+// meia-noite dele, não a do servidor — o backend recebe instante ISO já
+// resolvido e não precisa adivinhar fuso nenhum.
+const meiaNoite = (deslocDias = 0) => {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() + deslocDias);
+  return d;
+};
+const PERIODOS = [
+  { chave:'hoje', rotulo:'Hoje',   janela: () => ({ de: meiaNoite(0),   ate: null }) },
+  { chave:'7d',   rotulo:'7 dias', janela: () => ({ de: meiaNoite(-6),  ate: null }) },
+  { chave:'30d',  rotulo:'30 dias',janela: () => ({ de: meiaNoite(-29), ate: null }) },
+  { chave:'tudo', rotulo:'Tudo',   janela: () => ({ de: null, ate: null }) },
+];
+
+const pct = (parte, todo) => (todo ? Math.round((parte / todo) * 100) : 0);
+// <input type="date"> fala 'AAAA-MM-DD' local; o filtro precisa do instante.
+const doInput = (v, fimDoDia = false) => {
+  if (!v) return null;
+  const [a, m, d] = v.split('-').map(Number);
+  if (!a || !m || !d) return null;
+  // Fim do período é EXCLUSIVO no backend: pra incluir o dia escolhido inteiro,
+  // manda a meia-noite do dia seguinte.
+  return new Date(a, m - 1, d + (fimDoDia ? 1 : 0));
+};
+
+function FiltroPeriodo({ periodo, setPeriodo, custom, setCustom }) {
+  const chip = (ativo) => ({
+    height:32, padding:'0 13px', borderRadius:8, fontSize:12.5, fontFamily:'inherit',
+    cursor:'pointer', whiteSpace:'nowrap',
+    border:`1px solid ${ativo ? 'var(--accent)' : 'var(--border)'}`,
+    background: ativo ? 'var(--panel2)' : 'var(--panel)',
+    color: ativo ? 'var(--accent)' : 'var(--dim)',
+    fontWeight: ativo ? 600 : 400,
+  });
+  const dataInput = {
+    height:32, padding:'0 9px', borderRadius:8, border:'1px solid var(--border)',
+    background:'var(--panel)', color:'var(--text)', fontSize:12.5, fontFamily:'inherit',
+    colorScheme:'inherit', minWidth:0, flex:'0 1 148px',
+  };
+  return (
+    <div style={{ display:'flex', flexWrap:'wrap', alignItems:'center', gap:8, marginBottom:16 }}>
+      {PERIODOS.map(p => (
+        <button key={p.chave} onClick={() => setPeriodo(p.chave)} style={chip(periodo === p.chave)}>{p.rotulo}</button>
+      ))}
+      <button onClick={() => setPeriodo('custom')} style={chip(periodo === 'custom')}>Personalizado</button>
+      {periodo === 'custom' && (
+        <div style={{ display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
+          <input type="date" value={custom.de} max={custom.ate || undefined}
+            onChange={e => setCustom(c => ({ ...c, de: e.target.value }))} style={dataInput}/>
+          <span style={{ fontSize:12, color:'var(--faint)' }}>até</span>
+          <input type="date" value={custom.ate} min={custom.de || undefined}
+            onChange={e => setCustom(c => ({ ...c, ate: e.target.value }))} style={dataInput}/>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// O funil. A LARGURA de cada faixa é o valor da etapa dividido pelo topo — sem
+// piso artificial, senão uma etapa de 3 leads pareceria do tamanho de uma de
+// 300. Cada faixa é um trapézio que vai da própria largura até a largura da
+// etapa seguinte, então as duas bordas são números reais; a última fica reta,
+// de propósito, pra não inventar uma ponta que não corresponde a nada.
+function Funil({ etapas, carregando }) {
+  const [hover, setHover] = useState(null);
+  const topo = etapas[0]?.valor || 0;
+  const larg = (v) => {
+    if (!topo || !v) return v > 0 ? 1.5 : 0;   // 1.5%: etapa não-zero nunca some
+    return Math.max((v / topo) * 100, 1.5);
+  };
+  const clip = (wt, wb) => {
+    const t = (100 - wt) / 2, b = (100 - wb) / 2;
+    return `polygon(${t}% 0, ${100 - t}% 0, ${100 - b}% 100%, ${b}% 100%)`;
+  };
+  return (
+    <div className="h-funil" style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:'16px 18px 18px' }}>
+      <div style={{ display:'flex', alignItems:'baseline', justifyContent:'space-between', gap:10, marginBottom:14 }}>
+        <h3 style={{ fontSize:14, fontWeight:600, margin:0 }}>Funil da operação</h3>
+        <span style={{ fontSize:11, color:'var(--faint)' }}>por data de entrada no funil</span>
+      </div>
+      {carregando && <div style={{ padding:'30px 0', textAlign:'center', fontSize:13, color:'var(--faint)' }}>Carregando…</div>}
+      {!carregando && topo === 0 && (
+        <div style={{ padding:'30px 0', textAlign:'center', fontSize:13, color:'var(--faint)' }}>
+          Nenhuma empresa entrou no funil neste período.
+        </div>
+      )}
+      {!carregando && topo > 0 && etapas.map((e, i) => {
+        const prox = etapas[i + 1];
+        const wt = larg(e.valor);
+        const wb = prox ? larg(prox.valor) : wt;
+        const anterior = i > 0 ? etapas[i - 1] : null;
+        const conv = anterior ? pct(e.valor, anterior.valor) : 100;
+        return (
+          <div key={e.chave} className="h-funil-linha"
+            onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}
+            style={{ display:'grid', gridTemplateColumns:'148px 1fr 74px', alignItems:'center',
+              gap:12, padding:'4px 0', position:'relative' }}>
+            <div style={{ minWidth:0 }}>
+              <div style={{ fontSize:11.5, color:'var(--dim)', whiteSpace:'nowrap',
+                overflow:'hidden', textOverflow:'ellipsis' }}>{e.rotulo}</div>
+              <div style={{ fontSize:21, fontWeight:600, letterSpacing:'-.02em', lineHeight:1.15 }}>{fmtNum(e.valor)}</div>
+            </div>
+            <div style={{ height:46 }}>
+              <div style={{ height:'100%', width:'100%',
+                background:`var(--funil-${i + 1})`, clipPath: clip(wt, wb),
+                opacity: hover === null || hover === i ? 1 : .55, transition:'opacity .12s' }}/>
+            </div>
+            <div style={{ textAlign:'right' }}>
+              <div style={{ fontSize:13, fontWeight:600 }}>{conv}%</div>
+              <div style={{ fontSize:10, color:'var(--faint)' }}>{i === 0 ? 'do topo' : 'da anterior'}</div>
+            </div>
+            {hover === i && (
+              <div className="h-funil-tip" style={{ position:'absolute', top:-4, zIndex:5, pointerEvents:'none',
+                background:'var(--panel2)', border:'1px solid var(--border)', borderRadius:8,
+                padding:'7px 10px', fontSize:11.5, lineHeight:1.5, color:'var(--text)',
+                boxShadow:'0 6px 18px rgba(0,0,0,.28)', whiteSpace:'nowrap' }}>
+                <b>{e.rotulo}</b><br/>
+                {fmtNum(e.valor)} de {fmtNum(topo)} · {pct(e.valor, topo)}% do topo
+                {anterior && <><br/>{conv}% de “{anterior.rotulo}”</>}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+const COR_STATUS_RADAR = { Ativa: C.green, Pausada: C.amber, Esgotada: C.gray, Encerrada: C.gray };
+
+// Quanto cada radar colocou em cada etapa. Clicar filtra o funil pelo radar —
+// é o "onde os leads de cada radar estão" sem sair da tela.
+function RadaresFunil({ radares, selecionado, onSelecionar, onAbrir, carregando }) {
+  const cols = '1.6fr .78fr .78fr .7fr .62fr';
+  // Sem .h-tabela de propósito: o modo cartão daquela classe é pra tabela larga
+  // (Leads). Aqui são 5 colunas curtas que cabem em 520px — dividindo a linha com
+  // o funil, o modo cartão disparava já no desktop e empilhava rótulo e número
+  // sem necessidade. Se estreitar demais, rola na horizontal.
+  return (
+    <div style={{ background:'var(--panel)', border:'1px solid var(--border)',
+      borderRadius:14, overflow:'hidden' }}>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between',
+        gap:10, padding:'14px 16px 12px' }}>
+        <h3 style={{ fontSize:14, fontWeight:600, margin:0 }}>Radares no funil</h3>
+        {selecionado != null && (
+          <button onClick={() => onSelecionar(null)}
+            style={{ background:'none', border:'none', color:C.blue, fontSize:12,
+              cursor:'pointer', fontFamily:'inherit', padding:0 }}>Ver todos</button>
+        )}
+      </div>
+      <div className="h-scroll">
+      <div className="h-tw" style={{ '--tw':'430px' }}>
+        <div className="h-thead" style={{ display:'grid', gridTemplateColumns:cols, alignItems:'center',
+          gap:8, padding:'10px 16px', borderTop:'1px solid var(--border)', borderBottom:'1px solid var(--border)',
+          fontSize:10.5, fontWeight:600, letterSpacing:'.04em', color:'var(--faint)', textTransform:'uppercase' }}>
+          <div>Radar</div><div style={{ textAlign:'right' }}>Encontr.</div>
+          <div style={{ textAlign:'right' }}>Segment.</div>
+          <div style={{ textAlign:'right' }}>Qualif.</div>
+          <div style={{ textAlign:'right' }}>CRM</div>
+        </div>
+        {carregando && (
+          <div style={{ padding:'24px 16px', fontSize:13, color:'var(--faint)', textAlign:'center' }}>Carregando…</div>
+        )}
+        {!carregando && radares.length === 0 && (
+          <div style={{ padding:'24px 16px', fontSize:13, color:'var(--faint)', textAlign:'center' }}>
+            Nenhum radar com movimento neste período.
+          </div>
+        )}
+        {!carregando && radares.map(r => {
+          const sel = selecionado === r.id;
+          return (
+            <div key={r.id} className="row-hover h-linha"
+              onClick={() => onSelecionar(sel ? null : r.id)}
+              style={{ display:'grid', gridTemplateColumns:cols, alignItems:'center', gap:8,
+                padding:'11px 16px', borderBottom:'1px solid var(--border)', cursor:'pointer',
+                background: sel ? 'var(--panel2)' : 'transparent' }}>
+              <div className="h-titulo" style={{ minWidth:0, display:'flex', alignItems:'center', gap:8 }}>
+                {/* A bolinha guarda o sinal do painel antigo de radares ativos: se o
+                    radar ainda está produzindo ou não. A seleção quem mostra é o
+                    fundo da linha, então a cor aqui fica livre pro status. */}
+                <span title={r.status || '—'} style={{ width:6, height:6, borderRadius:'50%', flexShrink:0,
+                  background: COR_STATUS_RADAR[r.status] || 'var(--border)' }}/>
+                <span onClick={e => { e.stopPropagation(); onAbrir(r.id); }}
+                  title={`${r.nome} — clique no nome para abrir o radar`}
+                  style={{ fontSize:13, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden',
+                    textOverflow:'ellipsis' }}>{r.nome}</span>
+              </div>
+              <div data-rot="Encontradas" style={{ fontSize:12.5, textAlign:'right' }}>{fmtNum(r.encontradas)}</div>
+              <div data-rot="Segmentadas" style={{ fontSize:12.5, textAlign:'right' }}>{fmtNum(r.segmentadas)}</div>
+              <div data-rot="Qualificados" style={{ fontSize:12.5, textAlign:'right' }}>{fmtNum(r.qualificados)}</div>
+              <div data-rot="Enviados ao CRM" style={{ fontSize:12.5, textAlign:'right', fontWeight:600 }}>{fmtNum(r.enviados)}</div>
+            </div>
+          );
+        })}
+      </div>
+      </div>
+    </div>
+  );
+}
+
 function Dashboard({ onOpenBusca }) {
-  const [data, setData] = useState(null);
   const [alertas, setAlertas] = useState([]);
+  const [atividade, setAtividade] = useState([]);
+  const [funil, setFunil] = useState(null);
+  const [carregando, setCarregando] = useState(true);
+  const [periodo, setPeriodo] = useState('30d');
+  const [custom, setCustom] = useState({ de:'', ate:'' });
+  const [radarSel, setRadarSel] = useState(null);
+
+  const janela = useMemo(() => {
+    if (periodo === 'custom') return { de: doInput(custom.de), ate: doInput(custom.ate, true) };
+    return (PERIODOS.find(p => p.chave === periodo) || PERIODOS[3]).janela();
+  }, [periodo, custom.de, custom.ate]);
 
   useEffect(() => {
     fetch('/api/dashboard', { credentials:'same-origin' })
       .then(r => r.json())
-      .then(setData)
+      .then(d => setAtividade(Array.isArray(d?.atividade) ? d.atividade : []))
       .catch(() => {});
     fetch('/api/alertas', { credentials:'same-origin' })
       .then(r => r.json())
@@ -610,96 +827,63 @@ function Dashboard({ onOpenBusca }) {
       .catch(() => {});
   }, []);
 
-  if (!data) {
-    return <div style={{ color:'var(--faint)', padding:40, textAlign:'center' }}>Carregando…</div>;
-  }
+  // O radar entra como parâmetro do funil, mas NÃO da tabela: ela precisa seguir
+  // listando todos os radares pra dar pra trocar de um pro outro.
+  useEffect(() => {
+    const q = [];
+    if (janela.de) q.push('de=' + encodeURIComponent(janela.de.toISOString()));
+    if (janela.ate) q.push('ate=' + encodeURIComponent(janela.ate.toISOString()));
+    if (radarSel != null) q.push('busca_id=' + radarSel);
+    let vivo = true;
+    setCarregando(true);
+    fetch('/api/funil' + (q.length ? '?' + q.join('&') : ''), { credentials:'same-origin' })
+      .then(r => r.json())
+      .then(d => { if (vivo) { setFunil(d); setCarregando(false); } })
+      .catch(() => { if (vivo) setCarregando(false); });
+    return () => { vivo = false; };
+  }, [janela.de && janela.de.getTime(), janela.ate && janela.ate.getTime(), radarSel]);
 
-  const { metricas = {}, buscasAtivas = [], atividade = [] } = data || {};
-  const qual = parseInt(metricas.leadsQualificados) || 0;
-  const fora = parseInt(metricas.leadsForaPerfil) || 0;
-  const verificados = qual + fora;   // passaram pela segmentação (Score 1)
-  const taxaQ = verificados ? Math.round(qual / verificados * 100) : 0;
-
-  const metrics = [
-    { label:'Radares ativos', value:fmtNum(metricas.buscasAtivas), icon:'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-4.3-4.3', iColor:C.blue, trend:'em produção', tColor:'var(--dim)' },
-    { label:'Empresas encontradas', value:fmtNum(metricas.empresasEncontradas), icon:'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 3v3M12 18v3M3 12h3M18 12h3', iColor:C.gold, trend:`${fmtNum(verificados)} verificadas`, tColor:'var(--dim)' },
-    { label:'Leads qualificados', value:fmtNum(metricas.leadsQualificados), icon:'M20 6L9 17l-5-5', iColor:C.green, trend:`${taxaQ}% aproveit. · ${fmtNum(fora)} fora do perfil`, tColor:'var(--dim)' },
-    { label:'Enviados ao CRM', value:fmtNum(metricas.leadsCRM), icon:'M5 12h14M13 5l7 7-7 7', iColor:C.cyan, trend:'total enviado', tColor:'var(--dim)' },
-  ];
-
-  const hlLabel = { green:'produzindo', amber:'atenção', red:'parada', gray:'encerrada' };
+  const etapas = funil?.etapas || [];
+  const radares = funil?.radares || [];
   const corAlerta = t => t === 'erro' ? C.red : t === 'aviso' ? C.amber : C.blue;
 
   return (
     <div style={{ maxWidth:1180 }}>
-      <div className="h-cards" style={{ '--card':'200px', gap:16, marginBottom:24 }}>
-        {metrics.map(m => (
-          <div key={m.label} style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:'18px 20px' }}>
-            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:14 }}>
-              <span style={{ fontSize:12.5, color:'var(--dim)' }}>{m.label}</span>
-              <Svg d={m.icon} color={m.iColor} sw={1.7}/>
-            </div>
-            <div style={{ fontSize:30, fontWeight:600, letterSpacing:'-.02em', lineHeight:1 }}>{m.value}</div>
-            <div style={{ display:'flex', alignItems:'center', gap:5, marginTop:10, fontSize:12, color:m.tColor }}>
-              <span>{m.trend}</span>
-            </div>
-          </div>
-        ))}
+      <FiltroPeriodo periodo={periodo} setPeriodo={setPeriodo} custom={custom} setCustom={setCustom}/>
+
+      <div className="h-split" style={{ '--split':'1.25fr 1fr', gap:16, marginBottom:16 }}>
+        <Funil etapas={etapas} carregando={carregando}/>
+        <RadaresFunil radares={radares} selecionado={radarSel} carregando={carregando}
+          onSelecionar={setRadarSel} onAbrir={onOpenBusca}/>
       </div>
 
-      <div className="h-split" style={{ '--split':'1.55fr 1fr', gap:16 }}>
-        <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:'6px 6px 8px' }}>
-          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:'14px 16px 12px' }}>
-            <h3 style={{ fontSize:14, fontWeight:600, margin:0 }}>Radares ativos</h3>
-            <a onClick={() => onOpenBusca(null)} style={{ fontSize:12, color:C.blue, cursor:'pointer', textDecoration:'none' }}>Ver todas</a>
-          </div>
-          {buscasAtivas.length === 0 && (
-            <div style={{ padding:'20px 16px', fontSize:13, color:'var(--faint)' }}>Nenhum radar ativo.</div>
+      <div className="h-split" style={{ '--split':'1fr 1fr', gap:16 }}>
+        <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:16 }}>
+          <h3 style={{ fontSize:14, fontWeight:600, margin:'0 0 4px' }}>Alertas</h3>
+          {alertas.length === 0 && (
+            <div style={{ fontSize:12.5, color:'var(--faint)', padding:'11px 0' }}>Nenhum alerta no momento.</div>
           )}
-          {buscasAtivas.map(b => (
-            <div key={b.id} onClick={() => onOpenBusca(b.id)} className="row-hover"
-              style={{ display:'flex', alignItems:'center', gap:14, padding:'12px 16px', borderRadius:10, cursor:'pointer' }}>
-              <StatusDot color={healthColors[b.health]} pulse={b.health==='green'}/>
-              <div style={{ flex:1, minWidth:0 }}>
-                <div style={{ fontSize:13.5, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{b.nome}</div>
-                <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:2 }}>{hlLabel[b.health]||'—'}</div>
-              </div>
-              <div style={{ textAlign:'right', flexShrink:0 }}>
-                <div style={{ fontSize:14, fontWeight:600 }}>{fmtNum(b.enc)}</div>
-                <div style={{ fontSize:11, color:'var(--faint)' }}>encontrados</div>
+          {alertas.map((a,i) => (
+            <div key={i} style={{ display:'flex', gap:10, padding:'11px 0', borderBottom:'1px solid var(--border)' }}>
+              <span style={{ width:7, height:7, borderRadius:'50%', flexShrink:0, marginTop:5, background:corAlerta(a.tipo) }}/>
+              <div style={{ fontSize:12.5, lineHeight:1.45 }}>
+                <span>{a.titulo}</span>
+                <div style={{ color:'var(--faint)', fontSize:11.5, marginTop:1 }}>{a.detalhe}{a.quando ? ` · ${timeAgo(a.quando)}` : ''}</div>
               </div>
             </div>
           ))}
         </div>
-
-        <div style={{ display:'flex', flexDirection:'column', gap:16 }}>
-          <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:16 }}>
-            <h3 style={{ fontSize:14, fontWeight:600, margin:'0 0 4px' }}>Alertas</h3>
-            {alertas.length === 0 && (
-              <div style={{ fontSize:12.5, color:'var(--faint)', padding:'11px 0' }}>Nenhum alerta no momento.</div>
-            )}
-            {alertas.map((a,i) => (
-              <div key={i} style={{ display:'flex', gap:10, padding:'11px 0', borderBottom:'1px solid var(--border)' }}>
-                <span style={{ width:7, height:7, borderRadius:'50%', flexShrink:0, marginTop:5, background:corAlerta(a.tipo) }}/>
-                <div style={{ fontSize:12.5, lineHeight:1.45 }}>
-                  <span>{a.titulo}</span>
-                  <div style={{ color:'var(--faint)', fontSize:11.5, marginTop:1 }}>{a.detalhe}{a.quando ? ` · ${timeAgo(a.quando)}` : ''}</div>
-                </div>
+        <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:16 }}>
+          <h3 style={{ fontSize:14, fontWeight:600, margin:'0 0 4px' }}>Atividade recente</h3>
+          {atividade.map((a,i) => (
+            <div key={i} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 0', borderBottom:'1px solid var(--border)' }}>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:12.5, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{a.fantasia}</div>
+                <div style={{ fontSize:11, color:'var(--faint)' }}>{a.cidade}/{a.uf} · {timeAgo(a.criado_em)}</div>
               </div>
-            ))}
-          </div>
-          <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:16, flex:1 }}>
-            <h3 style={{ fontSize:14, fontWeight:600, margin:'0 0 4px' }}>Atividade recente</h3>
-            {atividade.map((a,i) => (
-              <div key={i} style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 0', borderBottom:'1px solid var(--border)' }}>
-                <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ fontSize:12.5, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{a.fantasia}</div>
-                  <div style={{ fontSize:11, color:'var(--faint)' }}>{a.cidade}/{a.uf} · {timeAgo(a.criado_em)}</div>
-                </div>
-                <span style={{ fontSize:11, fontWeight:600, color:scoreColor(a.score) }}>{a.score}</span>
-              </div>
-            ))}
-          </div>
+              <span style={{ fontSize:11, fontWeight:600, color:scoreColor(a.score) }}>{a.score}</span>
+            </div>
+          ))}
         </div>
       </div>
     </div>

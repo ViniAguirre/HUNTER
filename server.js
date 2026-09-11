@@ -470,6 +470,27 @@ async function init() {
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS fora_perfil INTEGER NOT NULL DEFAULT 0;
   `);
 
+  // Quando e por qual radar o CNPJ entrou no funil deste cliente. `atualizado_em`
+  // não serve: ele anda a cada mudança de estado, então uma empresa descoberta em
+  // janeiro e enviada ao CRM hoje apareceria como "encontrada hoje". Sem uma data
+  // de ENTRADA fixa não dá pra filtrar o funil por período, e sem busca_id não dá
+  // pra dizer quanto cada radar colocou no topo dele.
+  const { rows: [temDescobertoEm] } = await pool.query(
+    `SELECT 1 FROM information_schema.columns
+      WHERE table_name='empresa_tenant_estado' AND column_name='descoberto_em'`
+  );
+  await pool.query(`
+    ALTER TABLE empresa_tenant_estado ADD COLUMN IF NOT EXISTS descoberto_em TIMESTAMPTZ NOT NULL DEFAULT now();
+    ALTER TABLE empresa_tenant_estado ADD COLUMN IF NOT EXISTS busca_id INTEGER REFERENCES buscas(id) ON DELETE SET NULL;
+    CREATE INDEX IF NOT EXISTS idx_ete_descoberto ON empresa_tenant_estado(descoberto_em);
+  `);
+  if (!temDescobertoEm) {
+    // Linhas antigas nasceram todas com o now() do ALTER. `atualizado_em` é a
+    // melhor aproximação que existe da entrada delas — melhor que fingir que o
+    // histórico inteiro entrou no dia da migração.
+    await pool.query(`UPDATE empresa_tenant_estado SET descoberto_em = atualizado_em`);
+  }
+
   // Confirmação paga na descoberta pela internet: cada empresa cujo site não
   // trouxe o CNPJ pode custar 1 crédito (bem mais caro que o modo Por CNPJ, que
   // é ~1 crédito por 100 empresas). Teto diário próprio + interruptor.
@@ -882,6 +903,96 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
       atividade: atividadeRes.rows,
     });
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// Funil da operação. É um funil de COORTE, não um somatório por etapa: a janela
+// filtra QUANDO a empresa entrou no funil (descoberto_em), e as etapas seguintes
+// contam até onde aquelas mesmas empresas chegaram — em qualquer data. Somar por
+// etapa com a data de cada etapa produz funil invertido (um lead descoberto
+// ontem e enviado hoje apareceria em "enviados" sem aparecer em "encontradas").
+//
+// "Segmentadas" = virou lead (passou no Score 1; as reprovadas contam em
+// fora_perfil e nunca viram lead). "Qualificados" = tem contato utilizável —
+// tem_email/tem_telefone ficaram parados em bases antigas porque o
+// enriquecimento grava em contato_validado, então olha os dois.
+const TEM_CONTATO = `(b.tem_email OR b.tem_telefone
+  OR COALESCE(b.contato_validado->>'telefone','') <> ''
+  OR COALESCE(b.contato_validado->>'email','') <> '')`;
+
+app.get('/api/funil', requireAuth, async (req, res) => {
+  const dataOuNull = (v) => {
+    if (!v) return null;
+    const d = new Date(String(v));
+    return isNaN(d.getTime()) ? null : d.toISOString();
+  };
+  const de = dataOuNull(req.query.de);
+  const ate = dataOuNull(req.query.ate);
+  if (req.query.de && !de) return res.status(400).json({ erro: 'data inicial inválida' });
+  if (req.query.ate && !ate) return res.status(400).json({ erro: 'data final inválida' });
+  if (de && ate && de >= ate) return res.status(400).json({ erro: 'a data inicial tem que ser antes da final' });
+  try {
+    const { rows } = await pool.query(`
+      WITH entradas AS (
+        SELECT e.cnpj, e.busca_id
+          FROM empresa_tenant_estado e
+         WHERE ($1::timestamptz IS NULL OR e.descoberto_em >= $1)
+           AND ($2::timestamptz IS NULL OR e.descoberto_em <  $2)
+      ),
+      base AS (
+        SELECT en.busca_id AS busca_desc, l.id AS lead_id, l.busca_id AS busca_lead,
+               l.status, l.tem_email, l.tem_telefone, l.contato_validado, l.enviado_crm_em
+          FROM entradas en
+          LEFT JOIN LATERAL (
+            SELECT l.* FROM leads l WHERE l.cnpj = en.cnpj ORDER BY l.criado_em LIMIT 1
+          ) l ON true
+        UNION ALL
+        -- Lead sem empresa no cadastro (o manual entra direto, sem passar pelo
+        -- motor). Sem isto ele apareceria em "segmentadas" sem nunca ter sido
+        -- "encontrado", e o funil abriria pro lado errado.
+        SELECT l.busca_id, l.id, l.busca_id,
+               l.status, l.tem_email, l.tem_telefone, l.contato_validado, l.enviado_crm_em
+          FROM leads l
+         WHERE ($1::timestamptz IS NULL OR l.criado_em >= $1)
+           AND ($2::timestamptz IS NULL OR l.criado_em <  $2)
+           AND (l.cnpj IS NULL OR NOT EXISTS (SELECT 1 FROM empresa_tenant_estado e WHERE e.cnpj = l.cnpj))
+      )
+      SELECT COALESCE(b.busca_lead, b.busca_desc) AS busca_id,
+             COUNT(*)::int                                                              AS encontradas,
+             COUNT(b.lead_id)::int                                                      AS segmentadas,
+             COUNT(b.lead_id) FILTER (WHERE ${TEM_CONTATO})::int                        AS qualificados,
+             COUNT(b.lead_id) FILTER (WHERE b.status='Enviado' OR b.enviado_crm_em IS NOT NULL)::int AS enviados
+        FROM base b
+       GROUP BY 1`, [de, ate]);
+
+    const { rows: nomes } = await pool.query(`SELECT id, nome, status FROM buscas`);
+    const porId = new Map(nomes.map(b => [b.id, b]));
+
+    const buscaId = req.query.busca_id ? parseInt(req.query.busca_id, 10) : null;
+    if (req.query.busca_id && isNaN(buscaId)) return res.status(400).json({ erro: 'radar inválido' });
+
+    const radares = rows
+      .filter(r => r.busca_id != null)
+      .map(r => ({
+        id: r.busca_id,
+        nome: porId.get(r.busca_id)?.nome || `Radar #${r.busca_id}`,
+        status: porId.get(r.busca_id)?.status || null,
+        encontradas: r.encontradas, segmentadas: r.segmentadas,
+        qualificados: r.qualificados, enviados: r.enviados,
+      }))
+      .sort((a, b) => b.encontradas - a.encontradas || b.segmentadas - a.segmentadas);
+
+    // Linhas sem radar (radar excluído, ou lead avulso) entram no total mas não
+    // viram linha da tabela — apareceriam como "Radar #null" sem servir pra nada.
+    const alvo = buscaId == null ? rows : rows.filter(r => r.busca_id === buscaId);
+    const soma = (campo) => alvo.reduce((t, r) => t + r[campo], 0);
+    const etapas = [
+      { chave:'encontradas',  rotulo:'Empresas encontradas', valor: soma('encontradas') },
+      { chave:'segmentadas',  rotulo:'Segmentadas (perfil)', valor: soma('segmentadas') },
+      { chave:'qualificados', rotulo:'Leads qualificados',   valor: soma('qualificados') },
+      { chave:'enviados',     rotulo:'Enviados ao CRM',      valor: soma('enviados') },
+    ];
+    res.json({ periodo: { de, ate }, buscaId, etapas, radares });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
 // ── API: buscas ───────────────────────────────────────────────────────────────

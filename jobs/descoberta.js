@@ -93,9 +93,9 @@ module.exports = async function descoberta(job, pool, queues) {
         await pool.query(`UPDATE empresas SET contatos_verificados='[]'::jsonb WHERE cnpj=$1`, [cnpj]);
       }
       await pool.query(
-        `INSERT INTO empresa_tenant_estado (cnpj, estado_global) VALUES ($1, 'coletado')
+        `INSERT INTO empresa_tenant_estado (cnpj, estado_global, busca_id) VALUES ($1, 'coletado', $2)
          ON CONFLICT (cnpj, tenant_id) DO UPDATE SET estado_global='coletado', atualizado_em=now()
-         WHERE empresa_tenant_estado.estado_global <> 'coletado'`, [cnpj]);
+         WHERE empresa_tenant_estado.estado_global <> 'coletado'`, [cnpj, busca_id]);
       let { rows: [emp] } = await pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [cnpj]);
       if (!emp) {
         // Consulta o cadastro no endpoint aberto (grátis). Se bater no limite de
@@ -492,9 +492,11 @@ async function processarOffice(pool, queues, busca_id, office, counters) {
   // Registra que ESTE tenant descobriu o CNPJ (estado 'coletado', sem rebaixar
   // estados superiores). É o que faz "empresas encontradas" contar por cliente
   // mesmo com o cadastro `empresas` sendo global.
+  // busca_id só na inserção (DO NOTHING no conflito): o crédito do topo do funil
+  // fica com o radar que descobriu primeiro, não com o último que reencontrou.
   await pool.query(
-    `INSERT INTO empresa_tenant_estado (cnpj, estado_global) VALUES ($1, 'coletado')
-     ON CONFLICT (cnpj, tenant_id) DO NOTHING`, [office.cnpj]
+    `INSERT INTO empresa_tenant_estado (cnpj, estado_global, busca_id) VALUES ($1, 'coletado', $2)
+     ON CONFLICT (cnpj, tenant_id) DO NOTHING`, [office.cnpj, busca_id]
   );
 
   await queues.enriquecimento.add('enriquecimento',
