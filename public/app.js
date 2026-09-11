@@ -7053,6 +7053,7 @@ function IntegracaoGK({
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState(null);
   const [msg, setMsg] = useState(null);
+  const [avisoContato, setAvisoContato] = useState(null); // rota de contato reprovada no teste
   const [desconectando, setDesconectando] = useState(false);
   const conectado = !!(row && row.ativo && row.tem_chave && cfg.backend && cfg.queueId);
   const desconectar = async () => {
@@ -7102,6 +7103,10 @@ function IntegracaoGK({
       setEmpresas(d.empresas || []);
       setFilas(d.filas || []);
       if ((d.empresas || []).length === 1) setCompanyId(d.empresas[0].id);
+      // Listar filas não prova que o ENVIO funciona: ele usa a rota de contato,
+      // que o teste antigo não tocava. Sem esse aviso a tela dava "conectado"
+      // com o envio quebrado, e o erro só aparecia na fila de falhas.
+      setAvisoContato(d.contato && d.contato.ok === false ? d.contato.motivo : null);
       setMsg('Conexão OK — selecione empresa e fila e salve.');
     } catch (e) {
       setErro(e.message);
@@ -7338,7 +7343,18 @@ function IntegracaoGK({
       color: C.green,
       marginBottom: 8
     }
-  }, msg), /*#__PURE__*/React.createElement("div", {
+  }, msg), avisoContato && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: C.amber,
+      background: 'rgba(251,191,36,.08)',
+      border: `1px solid ${C.amber}`,
+      borderRadius: 9,
+      padding: '9px 11px',
+      marginBottom: 8,
+      lineHeight: 1.5
+    }
+  }, /*#__PURE__*/React.createElement("b", null, "Aten\xE7\xE3o:"), " a conex\xE3o lista as filas, mas a rota que o envio de leads usa n\xE3o respondeu:", ' ', avisoContato, ". Os leads v\xE3o falhar no envio at\xE9 isso ser resolvido."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 10

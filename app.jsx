@@ -3270,6 +3270,7 @@ function IntegracaoGK({ row, meta, onSaved }) {
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState(null);
   const [msg, setMsg] = useState(null);
+  const [avisoContato, setAvisoContato] = useState(null);   // rota de contato reprovada no teste
   const [desconectando, setDesconectando] = useState(false);
 
   const conectado = !!(row && row.ativo && row.tem_chave && cfg.backend && cfg.queueId);
@@ -3301,6 +3302,10 @@ function IntegracaoGK({ row, meta, onSaved }) {
       setEmpresas(d.empresas || []);
       setFilas(d.filas || []);
       if ((d.empresas || []).length === 1) setCompanyId(d.empresas[0].id);
+      // Listar filas não prova que o ENVIO funciona: ele usa a rota de contato,
+      // que o teste antigo não tocava. Sem esse aviso a tela dava "conectado"
+      // com o envio quebrado, e o erro só aparecia na fila de falhas.
+      setAvisoContato(d.contato && d.contato.ok === false ? d.contato.motivo : null);
       setMsg('Conexão OK — selecione empresa e fila e salve.');
     } catch (e) { setErro(e.message); }
     finally { setConectando(false); }
@@ -3397,6 +3402,15 @@ function IntegracaoGK({ row, meta, onSaved }) {
 
       {erro && <div style={{ fontSize:12, color:C.red, marginBottom:8 }}>{erro}</div>}
       {msg && <div style={{ fontSize:12, color:C.green, marginBottom:8 }}>{msg}</div>}
+      {/* Filas listando não garante que o envio funciona: ele usa a rota de
+          contato. Este aviso existe pra "conectado" não esconder envio quebrado. */}
+      {avisoContato && (
+        <div style={{ fontSize:12, color:C.amber, background:'rgba(251,191,36,.08)',
+          border:`1px solid ${C.amber}`, borderRadius:9, padding:'9px 11px', marginBottom:8, lineHeight:1.5 }}>
+          <b>Atenção:</b> a conexão lista as filas, mas a rota que o envio de leads usa não respondeu:
+          {' '}{avisoContato}. Os leads vão falhar no envio até isso ser resolvido.
+        </div>
+      )}
 
       <div style={{ display:'flex', gap:10 }}>
         <button onClick={salvar} disabled={salvando}

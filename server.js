@@ -1876,7 +1876,11 @@ app.post('/api/integracoes/gk/conectar', requireAuth, requireMaster, async (req,
     // tokens scoped a uma empresa não acessam /companies/all (401) — tudo bem.
     const filas = await gk.listarFilas(backend, token);
     const empresas = await gk.listarEmpresas(backend, token).catch(() => []);
-    res.json({ ok: true, empresas, filas });
+    // Filas e empresas não são as rotas que o ENVIO usa. Sem checar a de
+    // contato, a tela dava "conectado" com o envio quebrado — foi exatamente o
+    // que aconteceu. A checagem é só leitura, não cria contato nenhum.
+    const contato = await gk.checarRotaContato(backend, token).catch(e => ({ ok:false, motivo:e.message }));
+    res.json({ ok: true, empresas, filas, contato });
   } catch(e) {
     res.status(400).json({ erro: e.message });
   }
