@@ -475,21 +475,27 @@ async function init() {
   // janeiro e enviada ao CRM hoje apareceria como "encontrada hoje". Sem uma data
   // de ENTRADA fixa não dá pra filtrar o funil por período, e sem busca_id não dá
   // pra dizer quanto cada radar colocou no topo dele.
-  const { rows: [temDescobertoEm] } = await pool.query(
-    `SELECT 1 FROM information_schema.columns
-      WHERE table_name='empresa_tenant_estado' AND column_name='descoberto_em'`
-  );
   await pool.query(`
     ALTER TABLE empresa_tenant_estado ADD COLUMN IF NOT EXISTS descoberto_em TIMESTAMPTZ NOT NULL DEFAULT now();
     ALTER TABLE empresa_tenant_estado ADD COLUMN IF NOT EXISTS busca_id INTEGER REFERENCES buscas(id) ON DELETE SET NULL;
     CREATE INDEX IF NOT EXISTS idx_ete_descoberto ON empresa_tenant_estado(descoberto_em);
   `);
-  if (!temDescobertoEm) {
-    // Linhas antigas nasceram todas com o now() do ALTER. `atualizado_em` é a
-    // melhor aproximação que existe da entrada delas — melhor que fingir que o
-    // histórico inteiro entrou no dia da migração.
-    await pool.query(`UPDATE empresa_tenant_estado SET descoberto_em = atualizado_em`);
-  }
+  // Linhas antigas nascem com o now() do ALTER; `atualizado_em` é a melhor
+  // aproximação que existe da entrada delas. O conserto roda SEMPRE e não
+  // pergunta se a coluna acabou de ser criada: os dois stacks (Antídoto e GK)
+  // dividem o mesmo Postgres, então o primeiro a subir cria a coluna e o UPDATE
+  // dele, sob RLS, só alcança as linhas do PRÓPRIO tenant. O segundo encontrava a
+  // coluna pronta, pulava o backfill, e ficava com todas as linhas dele
+  // carimbadas com a hora do deploy — o filtro de período devolvia o mesmo
+  // número em qualquer janela. É a mesma armadilha da migração do estado_global.
+  //
+  // O alvo é exato: descobrir nunca acontece DEPOIS da última atualização, então
+  // descoberto_em > atualizado_em só pode ser carimbo do ALTER. Idempotente: na
+  // segunda passada não sobra linha nenhuma pra corrigir.
+  await pool.query(
+    `UPDATE empresa_tenant_estado SET descoberto_em = atualizado_em
+      WHERE descoberto_em > atualizado_em`
+  );
 
   // Confirmação paga na descoberta pela internet: cada empresa cujo site não
   // trouxe o CNPJ pode custar 1 crédito (bem mais caro que o modo Por CNPJ, que
