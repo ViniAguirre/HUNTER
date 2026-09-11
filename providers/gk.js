@@ -13,7 +13,12 @@
  */
 const axios = require('axios');
 
-const EP_CONTATO = '/api/contacts'; // TODO: confirmar com a doc/CRM (palpite pelo padrão Whaticket)
+// A rota de contato nunca veio na doc do GK. No Whaticket de origem ela é
+// montada como "/contacts"; nesta instalação as outras rotas vivem sob "/api",
+// então tentamos a de "/api" primeiro e caímos na outra se der 404 — o mesmo
+// que já era preciso fazer em listarEmpresas.
+const EP_CONTATO = '/api/contacts';
+const EP_CONTATO_ALT = '/contacts';
 
 function client(backend, token) {
   return axios.create({
@@ -63,16 +68,68 @@ async function listarFilas(backend, token) {
   } catch (err) { throw traduzErro(err, 'Buscar filas'); }
 }
 
+// Onde o id do contato pode aparecer. Cada fork do Whaticket embrulha a
+// resposta de um jeito; alguns devolvem lista.
+function extrairContactId(data) {
+  const alvo = Array.isArray(data) ? data[0] : data;
+  if (!alvo || typeof alvo !== 'object') return null;
+  return alvo.contactId ?? alvo.id ?? alvo.contact?.id ?? alvo.data?.id ?? null;
+}
+
+function amostraCorpo(data) {
+  const txt = typeof data === 'string' ? data : JSON.stringify(data ?? null);
+  return (txt || '').slice(0, 200);
+}
+
 // Cria/atualiza o contato e devolve o contactId.
 async function upsertContato(backend, token, contato) {
-  try {
-    const { data } = await client(backend, token).post(EP_CONTATO, contato);
-    const id = data?.contactId ?? data?.id ?? data?.contact?.id;
-    if (!id) throw new Error('resposta sem contactId');
-    return id;
-  } catch (err) {
-    if (err.message === 'resposta sem contactId') throw new Error('Contato: resposta do CRM sem contactId');
-    throw traduzErro(err, 'Criar/atualizar contato');
+  const c = client(backend, token);
+  const rotas = [EP_CONTATO, EP_CONTATO_ALT];
+  for (let i = 0; i < rotas.length; i++) {
+    const rota = rotas[i];
+    let resp;
+    try {
+      resp = await c.post(rota, contato);
+    } catch (err) {
+      // 404 = rota inexistente nesta instalação: tenta a alternativa. Qualquer
+      // outro erro é real e precisa chegar ao usuário como veio.
+      if (err.response?.status === 404 && i < rotas.length - 1) continue;
+      throw traduzErro(err, `Criar/atualizar contato (${rota})`);
+    }
+    const id = extrairContactId(resp.data);
+    if (id) return id;
+    // Respondeu 2xx mas sem id. NÃO tenta a outra rota: se esta criou o contato,
+    // repetir o POST duplicaria. A mensagem carrega status e corpo porque, sem
+    // eles, "resposta do CRM sem contactId" não dizia nada sobre a causa.
+    throw new Error(
+      `Contato: o CRM respondeu sem contactId em ${rota} [HTTP ${resp.status}] ${amostraCorpo(resp.data)}`
+    );
+  }
+}
+
+// Confere se a rota de contato existe e aceita o token, SEM criar nada: no
+// Whaticket o GET da mesma rota é a listagem. Serve pra separar "rota errada"
+// de "o token não vale pra essa rota" — o teste de conexão só olhava filas e
+// empresas, então dava verde mesmo com o envio quebrado.
+async function checarRotaContato(backend, token) {
+  const c = client(backend, token);
+  const rotas = [EP_CONTATO, EP_CONTATO_ALT];
+  for (let i = 0; i < rotas.length; i++) {
+    const rota = rotas[i];
+    try {
+      await c.get(rota);
+      return { ok: true, rota };
+    } catch (err) {
+      const s = err.response?.status;
+      if (s === 404 && i < rotas.length - 1) continue;
+      if (s === 405) return { ok: true, rota };   // existe, só não aceita GET
+      if (s === 401 || s === 403) return { ok: false, rota,
+        motivo: `o token não é aceito em ${rota} (HTTP ${s}) — no Whaticket essa rota exige sessão de usuário, não token de API` };
+      if (s === 404) return { ok: false,
+        motivo: `nenhuma rota de contato encontrada (${rotas.join(' e ')} responderam 404)` };
+      if (s) return { ok: false, rota, motivo: `${rota} respondeu HTTP ${s}: ${amostraCorpo(err.response?.data)}` };
+      return { ok: false, rota, motivo: `backend indisponível (${err.message})` };
+    }
   }
 }
 
@@ -124,4 +181,5 @@ function montarContato(empresa, lead, extras = {}) {
   return contato;
 }
 
-module.exports = { listarEmpresas, listarFilas, upsertContato, abrirTicket, montarContato, EP_CONTATO };
+module.exports = { listarEmpresas, listarFilas, upsertContato, abrirTicket, montarContato,
+  checarRotaContato, EP_CONTATO, EP_CONTATO_ALT };
