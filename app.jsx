@@ -1843,6 +1843,17 @@ function BuscaDetail({ buscaId, onBack, onOpenLead, onDuplicar }) {
         .filter(Boolean);
   const proposta = criterios.params?.proposta_valor || criterios.proposta_valor || '';
 
+  // Trocar o modo de envio sem recriar o radar. Antes só existia na criação.
+  const trocarCrmAuto = async (novo) => {
+    setToggling(true);
+    await fetch('/api/buscas/' + buscaId, {
+      method:'PATCH', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ crm_auto: novo })
+    }).catch(() => {});
+    setToggling(false);
+    carregar();
+  };
+
   const rodarDeNovo = async () => {
     setToggling(true);
     await fetch('/api/buscas/' + buscaId, {
@@ -1929,6 +1940,30 @@ function BuscaDetail({ buscaId, onBack, onOpenLead, onDuplicar }) {
             <div style={{ fontSize:22, fontWeight:600, color:col }}>{val}</div>
           </div>
         ))}
+      </div>
+
+      {/* Em que modo este radar manda pro CRM — e como trocar. A escolha só
+          existia na tela de criação, então ninguém conseguia nem CONFERIR o modo
+          de um radar já rodando, quanto mais mudar. */}
+      <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:12,
+        padding:'13px 16px', marginBottom:18, display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
+        <div style={{ flex:1, minWidth:220 }}>
+          <div style={{ fontSize:12.5, fontWeight:500 }}>
+            Envio ao CRM: <span style={{ color: b.crm_auto ? C.green : 'var(--dim)' }}>
+              {b.crm_auto ? 'automático' : 'manual'}</span>
+          </div>
+          <div style={{ fontSize:11, color:'var(--faint)', marginTop:2, lineHeight:1.4 }}>
+            {b.crm_auto
+              ? 'Cada lead com telefone e e-mail vai ao CRM assim que a análise termina.'
+              : 'Os leads esperam você enviar pela triagem, em Leads.'}
+          </div>
+        </div>
+        <button onClick={() => trocarCrmAuto(!b.crm_auto)} disabled={toggling}
+          style={{ height:34, padding:'0 14px', borderRadius:9, border:'1px solid var(--border)',
+            background:'transparent', color:'var(--text)', fontSize:12.5, fontFamily:'inherit',
+            cursor: toggling?'default':'pointer', opacity: toggling?.6:1 }}>
+          {toggling ? '…' : (b.crm_auto ? 'Passar para manual' : 'Passar para automático')}
+        </button>
       </div>
 
       <div className="h-split" style={{ '--split':'1.6fr 1fr', gap:16, marginBottom:18 }}>
@@ -4384,8 +4419,8 @@ function Config() {
             </div>
             <div style={{ fontSize:12, color:'var(--faint)', marginTop:2 }}>
               {cfg.crm_auto_global
-                ? 'Cada lead pronto é enviado ao CRM sem intervenção.'
-                : 'Os leads ficam para envio manual (botão "Enviar ao CRM" na triagem).'}
+                ? 'Cada lead pronto é enviado ao CRM sem intervenção — em TODOS os radares, inclusive os marcados como "Manual".'
+                : 'Cada radar decide: vale o que estiver marcado em Envio ao CRM na tela do radar.'}
             </div>
           </div>
         </div>

@@ -1156,6 +1156,10 @@ app.get('/api/buscas', requireAuth, async (req, res) => {
     const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
     const { rows } = await pool.query(`
       SELECT b.id, b.nome, b.tipo, b.status, b.ritmo, b.criterios, b.ultima_ativ, b.criado_em,
+        -- crm_auto vai junto: sem ele o "Duplicar" nascia sempre no Manual, por
+        -- mais que o radar original fosse automático, e a lista não tinha como
+        -- mostrar em que modo cada radar está.
+        b.crm_auto, b.crm_queue_id,
         u.nome AS criador_nome,
         b.universo_varrido AS encontrados,
         COUNT(l.id)::int AS segmentadas,
@@ -1249,6 +1253,12 @@ app.patch('/api/buscas/:id', requireAuth, requireEditor, async (req, res) => {
   if (typeof req.body.ritmo === 'number') { sets.push(`ritmo=$${sets.length+1}`); vals.push(req.body.ritmo); }
   if (['Ativa','Pausada','Esgotada','Encerrada'].includes(req.body.status)) {
     sets.push(`status=$${sets.length+1}`); vals.push(req.body.status);
+  }
+  // Modo de envio ao CRM. Só dava pra escolher na CRIAÇÃO do radar: depois de
+  // criado, um radar marcado como manual ficava manual pra sempre — a única
+  // saída era duplicar e apagar o original.
+  if (typeof req.body.crm_auto === 'boolean') {
+    sets.push(`crm_auto=$${sets.length+1}`); vals.push(req.body.crm_auto);
   }
   if (!sets.length) return res.status(400).json({ erro: 'nada para atualizar' });
   vals.push(id);
