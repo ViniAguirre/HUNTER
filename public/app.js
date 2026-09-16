@@ -7362,6 +7362,12 @@ const INTEGRACOES_META = {
     placeholder: 'Colar URL do webhook…',
     temSegredo: true
   },
+  'tracking|hub': {
+    nome: 'Tracking Hub (Antídoto)',
+    provedor: 'Eventos do funil de prospecção',
+    icon: 'M3 3v18h18M7 14l4-4 3 3 5-6',
+    especial: 'tracking'
+  },
   'validacao_email|neverbounce': {
     nome: 'Validação de e-mail',
     provedor: 'NeverBounce',
@@ -7392,7 +7398,263 @@ const INTEGRACOES_META = {
     modeloPlaceholder: 'modelo (ex.: meta-llama/llama-3.3-70b-instruct:free)'
   }
 };
-const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'contato|google', 'contato|econodata', 'busca_web|searxng', 'busca_web|tavily', 'ia|openrouter', 'ia|openai', 'crm|gk', 'crm|webhook'];
+const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'contato|google', 'contato|econodata', 'busca_web|searxng', 'busca_web|tavily', 'ia|openrouter', 'ia|openai', 'crm|gk', 'crm|webhook', 'tracking|hub'];
+
+// Card do Tracking Hub: a URL de webhook carrega o token dentro, então é
+// tratada como segredo (vai pro mesmo campo das outras chaves, que a API nunca
+// devolve inteiro). Ter a conexão aqui, e não só numa variável de ambiente, é o
+// que permite trocar a URL sem deploy.
+function IntegracaoTracking({
+  row,
+  meta,
+  onSaved
+}) {
+  const [url, setUrl] = useState('');
+  const [salvando, setSalvando] = useState(false);
+  const [testando, setTestando] = useState(false);
+  const [erro, setErro] = useState(null);
+  const [msg, setMsg] = useState(null);
+  const conectado = !!(row && row.ativo && row.tem_chave);
+  const inputStyle = {
+    width: '100%',
+    height: 38,
+    borderRadius: 9,
+    border: '1px solid var(--border)',
+    background: 'var(--panel2)',
+    color: 'var(--text)',
+    padding: '0 12px',
+    fontSize: 12.5,
+    fontFamily: 'inherit'
+  };
+  const salvar = async () => {
+    setErro(null);
+    setMsg(null);
+    // Sem URL nova só faz sentido se já houver uma salva — é o caso de reativar
+    // a integração sem precisar colar tudo de novo.
+    if (!url.trim() && !row?.tem_chave) {
+      setErro('Cole a URL de webhook gerada no Tracking Hub.');
+      return;
+    }
+    setSalvando(true);
+    try {
+      const r = await fetch('/api/integracoes', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          categoria: 'tracking',
+          provedor: 'hub',
+          ativo: true,
+          key: url.trim()
+        })
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.erro || 'Falha ao salvar.');
+      setUrl('');
+      setMsg('Conexão salva e ativada.');
+      onSaved();
+    } catch (e) {
+      setErro(e.message);
+    } finally {
+      setSalvando(false);
+    }
+  };
+  const testar = async () => {
+    setErro(null);
+    setMsg(null);
+    setTestando(true);
+    try {
+      const r = await fetch('/api/integracoes/tracking/testar', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          url: url.trim()
+        })
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.erro || 'Falha no teste.');
+      setMsg(d.detalhe || 'Conexão válida.');
+    } catch (e) {
+      setErro(e.message);
+    } finally {
+      setTestando(false);
+    }
+  };
+  const alternar = async () => {
+    if (!row) return;
+    await fetch('/api/integracoes/' + row.id, {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        ativo: !row.ativo
+      })
+    });
+    onSaved();
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'var(--panel)',
+      border: '1px solid var(--border)',
+      borderRadius: 14,
+      padding: '18px 20px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 16,
+      marginBottom: 16
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: 42,
+      height: 42,
+      borderRadius: 11,
+      background: 'var(--panel2)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      color: 'var(--dim)',
+      flexShrink: 0
+    }
+  }, /*#__PURE__*/React.createElement(Svg, {
+    d: meta.icon,
+    w: 20,
+    h: 20,
+    sw: 1.6
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 9,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 14.5,
+      fontWeight: 600
+    }
+  }, meta.nome), /*#__PURE__*/React.createElement("span", {
+    style: badgeStyle(conectado ? C.green : C.gray)
+  }, /*#__PURE__*/React.createElement(StatusDot, {
+    color: conectado ? C.green : C.gray,
+    pulse: false
+  }), conectado ? 'conectado' : row?.tem_chave ? 'pausado' : 'desconectado')), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: 'var(--faint)',
+      marginTop: 3
+    }
+  }, meta.provedor, row?.chave_mascarada ? ' · ' + row.chave_mascarada : ''))), /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 11,
+      color: 'var(--dim)',
+      marginBottom: 5
+    }
+  }, "URL de webhook ", row?.tem_chave && /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, "\xB7 j\xE1 salva (cole de novo s\xF3 para trocar)")), /*#__PURE__*/React.createElement("input", {
+    value: url,
+    onChange: e => setUrl(e.target.value),
+    type: "password",
+    autoComplete: "off",
+    placeholder: "https://tracking.antidotodigital.com/api/webhooks/\u2026",
+    style: inputStyle
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10.5,
+      color: 'var(--faint)',
+      marginTop: 5,
+      lineHeight: 1.45
+    }
+  }, "Gere em ", /*#__PURE__*/React.createElement("b", null, "Cat\xE1logo de Sistemas \u2192 Hunter"), " no Tracking Hub. A URL tem o token dentro: \xE9 segredo, e por isso n\xE3o aparece de volta aqui depois de salva."), erro && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: C.red,
+      marginTop: 10
+    }
+  }, erro), msg && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: C.green,
+      marginTop: 10
+    }
+  }, msg), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 10,
+      marginTop: 12,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: salvar,
+    disabled: salvando,
+    style: {
+      height: 38,
+      padding: '0 16px',
+      borderRadius: 9,
+      border: 'none',
+      background: 'var(--gold)',
+      color: '#0E1936',
+      fontWeight: 600,
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      cursor: salvando ? 'default' : 'pointer',
+      opacity: salvando ? .6 : 1
+    }
+  }, salvando ? 'Salvando…' : row?.tem_chave ? 'Salvar e ativar' : 'Conectar'), /*#__PURE__*/React.createElement("button", {
+    onClick: testar,
+    disabled: testando || !url.trim() && !row?.tem_chave,
+    style: {
+      height: 38,
+      padding: '0 16px',
+      borderRadius: 9,
+      border: '1px solid var(--border)',
+      background: 'transparent',
+      color: 'var(--text)',
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      cursor: testando || !url.trim() && !row?.tem_chave ? 'default' : 'pointer',
+      opacity: testando || !url.trim() && !row?.tem_chave ? .6 : 1
+    }
+  }, testando ? 'Testando…' : 'Testar conexão'), row?.tem_chave && /*#__PURE__*/React.createElement("button", {
+    onClick: alternar,
+    style: {
+      height: 38,
+      padding: '0 16px',
+      borderRadius: 9,
+      border: '1px solid var(--border)',
+      background: 'transparent',
+      color: 'var(--dim)',
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, row.ativo ? 'Pausar envio' : 'Retomar envio')), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)',
+      marginTop: 12,
+      lineHeight: 1.5
+    }
+  }, "Envia 4 eventos por empresa, acompanhando o funil: ", /*#__PURE__*/React.createElement("b", null, "encontrada"), " \u2192 ", /*#__PURE__*/React.createElement("b", null, "segmentada"), " \u2192", /*#__PURE__*/React.createElement("b", null, " qualificada"), " \u2192 ", /*#__PURE__*/React.createElement("b", null, "enviada ao CRM"), ". Nenhum deles conta como convers\xE3o no Hub \u2014 quem conta \xE9 o CRM. Falha de envio nunca trava a prospec\xE7\xE3o."));
+}
 
 // Card especial do CRM GK: fluxo em etapas (conexão → empresas → filas → salvar).
 function IntegracaoGK({
@@ -7894,6 +8156,14 @@ function Integracoes() {
     const row = porChave[chave];
     if (meta.especial === 'gk') {
       return /*#__PURE__*/React.createElement(IntegracaoGK, {
+        key: chave,
+        row: row,
+        meta: meta,
+        onSaved: carregar
+      });
+    }
+    if (meta.especial === 'tracking') {
+      return /*#__PURE__*/React.createElement(IntegracaoTracking, {
         key: chave,
         row: row,
         meta: meta,

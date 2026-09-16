@@ -36,6 +36,7 @@ const queues = {
   validacao: new Queue('hunter-validacao', { connection: REDIS_OPTS }),
   swot: new Queue('hunter-swot', { connection: REDIS_OPTS }),
   crm: new Queue('hunter-crm', { connection: REDIS_OPTS }),
+  tracking: new Queue('hunter-tracking', { connection: REDIS_OPTS }),
 };
 
 const descobertaFn = require('./jobs/descoberta');
@@ -45,6 +46,7 @@ const score1Fn = require('./jobs/score1');
 const validacaoFn = require('./jobs/validacao');
 const swotFn = require('./jobs/swot');
 const crmFn = require('./jobs/crm');
+const trackingFn = require('./jobs/tracking');
 
 // Preenchido só DEPOIS da trava anti-superuser passar (ver boot() no fim) —
 // nenhum job é consumido antes de confirmar que o RLS vale pro usuário do banco.
@@ -58,7 +60,8 @@ function iniciarWorkers() {
     score1: new Worker('hunter-score1', job => score1Fn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 10 }),
     validacao: new Worker('hunter-validacao', job => validacaoFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 4 }),
     swot: new Worker('hunter-swot', job => swotFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 3 }),
-    crm: new Worker('hunter-crm', job => crmFn(job, pool), { connection: REDIS_OPTS, concurrency: 5 }),
+    crm: new Worker('hunter-crm', job => crmFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 5 }),
+    tracking: new Worker('hunter-tracking', job => trackingFn(job, pool), { connection: REDIS_OPTS, concurrency: 4 }),
   });
   for (const [nome, w] of Object.entries(workers)) {
     w.on('completed', job => console.log(`[${nome}] job ${job.id} ok`));

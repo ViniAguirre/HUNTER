@@ -3450,6 +3450,8 @@ const INTEGRACOES_META = {
     icon:'M3 3h18v4H3zM3 10h18v4H3zM3 17h18v4H3z', especial:'gk' },
   'crm|webhook': { nome:'CRM via Webhook', provedor:'Qualquer CRM (URL de webhook / n8n)',
     icon:'M3 3h18v4H3zM3 10h18v4H3zM3 17h18v4H3z', editavel:true, placeholder:'Colar URL do webhook…', temSegredo:true },
+  'tracking|hub': { nome:'Tracking Hub (Antídoto)', provedor:'Eventos do funil de prospecção',
+    icon:'M3 3v18h18M7 14l4-4 3 3 5-6', especial:'tracking' },
   'validacao_email|neverbounce': { nome:'Validação de e-mail', provedor:'NeverBounce',
     icon:'M3 5h18v14H3zM3 7l9 6 9-6', editavel:false },
   'validacao_tel|twilio': { nome:'Validação de telefone', provedor:'Twilio Lookup',
@@ -3462,7 +3464,131 @@ const INTEGRACOES_META = {
     placeholder:'Colar chave da OpenRouter (sk-or-…)…',
     temModelo:true, modeloPlaceholder:'modelo (ex.: meta-llama/llama-3.3-70b-instruct:free)' },
 };
-const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'contato|google', 'contato|econodata', 'busca_web|searxng', 'busca_web|tavily', 'ia|openrouter', 'ia|openai', 'crm|gk', 'crm|webhook'];
+const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'contato|google', 'contato|econodata', 'busca_web|searxng', 'busca_web|tavily', 'ia|openrouter', 'ia|openai', 'crm|gk', 'crm|webhook', 'tracking|hub'];
+
+// Card do Tracking Hub: a URL de webhook carrega o token dentro, então é
+// tratada como segredo (vai pro mesmo campo das outras chaves, que a API nunca
+// devolve inteiro). Ter a conexão aqui, e não só numa variável de ambiente, é o
+// que permite trocar a URL sem deploy.
+function IntegracaoTracking({ row, meta, onSaved }) {
+  const [url, setUrl] = useState('');
+  const [salvando, setSalvando] = useState(false);
+  const [testando, setTestando] = useState(false);
+  const [erro, setErro] = useState(null);
+  const [msg, setMsg] = useState(null);
+
+  const conectado = !!(row && row.ativo && row.tem_chave);
+  const inputStyle = { width:'100%', height:38, borderRadius:9, border:'1px solid var(--border)',
+    background:'var(--panel2)', color:'var(--text)', padding:'0 12px', fontSize:12.5, fontFamily:'inherit' };
+
+  const salvar = async () => {
+    setErro(null); setMsg(null);
+    // Sem URL nova só faz sentido se já houver uma salva — é o caso de reativar
+    // a integração sem precisar colar tudo de novo.
+    if (!url.trim() && !row?.tem_chave) { setErro('Cole a URL de webhook gerada no Tracking Hub.'); return; }
+    setSalvando(true);
+    try {
+      const r = await fetch('/api/integracoes', {
+        method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ categoria:'tracking', provedor:'hub', ativo:true, key: url.trim() })
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.erro || 'Falha ao salvar.');
+      setUrl('');
+      setMsg('Conexão salva e ativada.');
+      onSaved();
+    } catch (e) { setErro(e.message); }
+    finally { setSalvando(false); }
+  };
+
+  const testar = async () => {
+    setErro(null); setMsg(null); setTestando(true);
+    try {
+      const r = await fetch('/api/integracoes/tracking/testar', {
+        method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ url: url.trim() })
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.erro || 'Falha no teste.');
+      setMsg(d.detalhe || 'Conexão válida.');
+    } catch (e) { setErro(e.message); }
+    finally { setTestando(false); }
+  };
+
+  const alternar = async () => {
+    if (!row) return;
+    await fetch('/api/integracoes/' + row.id, {
+      method:'PATCH', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ ativo: !row.ativo })
+    });
+    onSaved();
+  };
+
+  return (
+    <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:'18px 20px' }}>
+      <div style={{ display:'flex', alignItems:'center', gap:16, marginBottom:16 }}>
+        <div style={{ width:42, height:42, borderRadius:11, background:'var(--panel2)',
+          display:'flex', alignItems:'center', justifyContent:'center', color:'var(--dim)', flexShrink:0 }}>
+          <Svg d={meta.icon} w={20} h={20} sw={1.6}/>
+        </div>
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:9, flexWrap:'wrap' }}>
+            <span style={{ fontSize:14.5, fontWeight:600 }}>{meta.nome}</span>
+            <span style={badgeStyle(conectado ? C.green : C.gray)}>
+              <StatusDot color={conectado ? C.green : C.gray} pulse={false}/>
+              {conectado ? 'conectado' : (row?.tem_chave ? 'pausado' : 'desconectado')}
+            </span>
+          </div>
+          <div style={{ fontSize:12.5, color:'var(--faint)', marginTop:3 }}>
+            {meta.provedor}{row?.chave_mascarada ? ' · ' + row.chave_mascarada : ''}
+          </div>
+        </div>
+      </div>
+
+      <label style={{ display:'block', fontSize:11, color:'var(--dim)', marginBottom:5 }}>
+        URL de webhook {row?.tem_chave && <span style={{ color:'var(--faint)' }}>· já salva (cole de novo só para trocar)</span>}
+      </label>
+      <input value={url} onChange={e=>setUrl(e.target.value)} type="password" autoComplete="off"
+        placeholder="https://tracking.antidotodigital.com/api/webhooks/…" style={inputStyle}/>
+      <div style={{ fontSize:10.5, color:'var(--faint)', marginTop:5, lineHeight:1.45 }}>
+        Gere em <b>Catálogo de Sistemas → Hunter</b> no Tracking Hub. A URL tem o token dentro: é segredo,
+        e por isso não aparece de volta aqui depois de salva.
+      </div>
+
+      {erro && <div style={{ fontSize:12, color:C.red, marginTop:10 }}>{erro}</div>}
+      {msg && <div style={{ fontSize:12, color:C.green, marginTop:10 }}>{msg}</div>}
+
+      <div style={{ display:'flex', gap:10, marginTop:12, flexWrap:'wrap' }}>
+        <button onClick={salvar} disabled={salvando}
+          style={{ height:38, padding:'0 16px', borderRadius:9, border:'none', background:'var(--gold)',
+            color:'#0E1936', fontWeight:600, fontSize:12.5, fontFamily:'inherit',
+            cursor: salvando?'default':'pointer', opacity: salvando?.6:1 }}>
+          {salvando ? 'Salvando…' : (row?.tem_chave ? 'Salvar e ativar' : 'Conectar')}
+        </button>
+        <button onClick={testar} disabled={testando || (!url.trim() && !row?.tem_chave)}
+          style={{ height:38, padding:'0 16px', borderRadius:9, border:'1px solid var(--border)',
+            background:'transparent', color:'var(--text)', fontSize:12.5, fontFamily:'inherit',
+            cursor: (testando || (!url.trim() && !row?.tem_chave))?'default':'pointer',
+            opacity: (testando || (!url.trim() && !row?.tem_chave))?.6:1 }}>
+          {testando ? 'Testando…' : 'Testar conexão'}
+        </button>
+        {row?.tem_chave && (
+          <button onClick={alternar}
+            style={{ height:38, padding:'0 16px', borderRadius:9, border:'1px solid var(--border)',
+              background:'transparent', color:'var(--dim)', fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>
+            {row.ativo ? 'Pausar envio' : 'Retomar envio'}
+          </button>
+        )}
+      </div>
+
+      <div style={{ fontSize:11, color:'var(--faint)', marginTop:12, lineHeight:1.5 }}>
+        Envia 4 eventos por empresa, acompanhando o funil: <b>encontrada</b> → <b>segmentada</b> →
+        <b> qualificada</b> → <b>enviada ao CRM</b>. Nenhum deles conta como conversão no Hub — quem conta
+        é o CRM. Falha de envio nunca trava a prospecção.
+      </div>
+    </div>
+  );
+}
 
 // Card especial do CRM GK: fluxo em etapas (conexão → empresas → filas → salvar).
 function IntegracaoGK({ row, meta, onSaved }) {
@@ -3732,6 +3858,9 @@ function Integracoes() {
         const row = porChave[chave];
         if (meta.especial === 'gk') {
           return <IntegracaoGK key={chave} row={row} meta={meta} onSaved={carregar}/>;
+        }
+        if (meta.especial === 'tracking') {
+          return <IntegracaoTracking key={chave} row={row} meta={meta} onSaved={carregar}/>;
         }
         const conectado = !!(row && row.ativo && row.tem_chave);
         return (

@@ -9,8 +9,9 @@
 const crypto = require('crypto');
 const webhook = require('../providers/webhook');
 const gk = require('../providers/gk');
+const { registrar } = require('./tracking');
 
-module.exports = async function crm(job, pool) {
+module.exports = async function crm(job, pool, queues) {
   const { lead_id } = job.data;
 
   // ORDER BY ordem, id: só "ordem" empatava (todas as integrações nascem com
@@ -46,6 +47,10 @@ module.exports = async function crm(job, pool) {
 
   const { rows: [empresa] } = await pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [lead.cnpj]);
 
+  // Id do card criado no CRM, quando a API devolve — vai junto no evento do
+  // Tracking Hub e fecha a ponte antes mesmo do CRM ecoar o ref de volta.
+  let crmLeadId = null;
+
   if (ig.provedor === 'gk') {
     const backend = ig.config?.backend;
     const token = ig.key_cifrada;
@@ -72,6 +77,7 @@ module.exports = async function crm(job, pool) {
     if (lead.swot?.resumo) contato.extraInfo.push({ name: 'Resumo IA', value: String(lead.swot.resumo).slice(0, 240) });
 
     const contactId = await gk.upsertContato(backend, token, contato);
+    crmLeadId = contactId != null ? String(contactId) : null;
     await gk.abrirTicket(backend, token, { contactId, queueId, status: ig.config?.status || 'pending' });
   } else {
     // webhook genérico
@@ -116,6 +122,13 @@ module.exports = async function crm(job, pool) {
       );
     }
   }
+
+  // Última etapa do funil no Tracking Hub — o evento mais valioso do handoff:
+  // é ele que liga a jornada de descoberta daqui ao card no CRM.
+  await registrar(queues, 'lead_sent_to_crm', {
+    hunter_id: ref,
+    properties: { radar_id: lead.busca_id != null ? String(lead.busca_id) : '', crm_lead_id: crmLeadId },
+  });
 
   return { ok: true, lead_id, provedor: ig.provedor };
 };

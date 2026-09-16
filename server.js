@@ -65,6 +65,7 @@ if (process.env.REDIS_HOST) {
     validacao: new Queue('hunter-validacao', { connection: { ...redisOpts } }),
     swot: new Queue('hunter-swot', { connection: { ...redisOpts } }),
     crm: new Queue('hunter-crm', { connection: { ...redisOpts } }),
+    tracking: new Queue('hunter-tracking', { connection: { ...redisOpts } }),
   };
 }
 
@@ -530,12 +531,14 @@ async function init() {
     );
   `);
 
-  // Categoria de busca web (Tavily) — bancos criados antes desta versão têm a
-  // CHECK antiga; recria a constraint incluindo 'busca_web'.
+  // Categorias de integração — bancos criados antes de cada novidade têm a CHECK
+  // antiga, que o CREATE TABLE IF NOT EXISTS não atualiza. Este é o ÚNICO lugar
+  // que recria a constraint: categoria nova entra AQUI. Um segundo bloco mexendo
+  // nela desfaria este em silêncio, dependendo de qual roda por último.
   await pool.query(`
     ALTER TABLE integracoes DROP CONSTRAINT IF EXISTS integracoes_categoria_check;
     ALTER TABLE integracoes ADD CONSTRAINT integracoes_categoria_check
-      CHECK (categoria IN ('descoberta','contato','validacao_email','validacao_tel','crm','ia','busca_web'));
+      CHECK (categoria IN ('descoberta','contato','validacao_email','validacao_tel','crm','ia','busca_web','tracking'));
   `);
 
   // ── Multi-tenant: registro de clientes + isolamento por tenant_id (RLS) ──────
@@ -1986,7 +1989,7 @@ app.post('/api/integracoes', requireAuth, requireMaster, async (req, res) => {
   const ativo = !!req.body.ativo;
   const ordem = Number.isInteger(req.body.ordem) ? req.body.ordem : 100;
   const config = req.body.config && typeof req.body.config === 'object' ? JSON.stringify(req.body.config) : null;
-  const categoriasValidas = ['descoberta','contato','validacao_email','validacao_tel','crm','ia','busca_web'];
+  const categoriasValidas = ['descoberta','contato','validacao_email','validacao_tel','crm','ia','busca_web','tracking'];
   if (!categoriasValidas.includes(categoria) || !provedor) {
     return res.status(400).json({ erro: 'categoria/provedor inválidos' });
   }
@@ -2026,8 +2029,32 @@ app.patch('/api/integracoes/:id', requireAuth, requireMaster, async (req, res) =
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
+// Tracking Hub: confere se a URL de webhook vale, SEM criar evento lá dentro.
+// O truque é o contrato deles: 202 = "payload recusado" e 404 = "token
+// inválido". Mandando de propósito um envelope incompleto, um 202 prova que a
+// URL e o token estão certos (quem respondeu foi o Hub, e nada foi gravado) e o
+// 404 separa "URL errada" de "Hub fora do ar". Um evento de teste de verdade
+// sujaria a jornada de alguém do outro lado.
+app.post('/api/integracoes/tracking/testar', requireAuth, requireMaster, async (req, res) => {
+  const informada = String(req.body.url || '').trim();
+  try {
+    const url = informada || await tracking.urlAtiva(pool);
+    if (!url) return res.status(400).json({ erro: 'cole a URL de webhook do Tracking Hub' });
+    if (!tracking.urlValida(url)) return res.status(400).json({ erro: 'URL inválida — precisa começar com https://' });
+    const r = await tracking.enviar(url, { schema_version: '1.0', source: { system: 'hunter' } });
+    // 202 é o resultado ESPERADO aqui: o Hub recebeu, entendeu e recusou o
+    // envelope incompleto. Quer dizer que a URL está viva e o token confere.
+    if (r.permanente && /HTTP 202/.test(r.motivo || '')) {
+      return res.json({ ok: true, detalhe: 'URL e token válidos (nenhum evento foi criado no Hub).' });
+    }
+    if (r.ok) return res.json({ ok: true, detalhe: 'Hub respondeu 200 — conexão válida.' });
+    res.status(400).json({ erro: r.motivo });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
 // GK CRM: testa a conexão (backend + token) e lista empresas + filas pra a UI.
 const gk = require('./providers/gk');
+const tracking = require('./providers/tracking');
 // Filas do CRM usando a integração JÁ salva — sem pedir token e sem exigir
 // master. Serve pra escolher a fila na criação de cada radar. Devolve lista
 // vazia (200) quando não há CRM configurado, pra UI só esconder o campo.
