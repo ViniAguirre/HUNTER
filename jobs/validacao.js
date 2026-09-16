@@ -160,10 +160,11 @@ module.exports = async function validacao(job, pool, queues) {
       return { lead_id, retry: tentativa + 1, motivo: 'contato_incompleto' };
     }
 
-    // Achou contato utilizável: 3ª etapa do funil no Tracking Hub. Vale tanto
-    // pro completo quanto pro só-telefone — os dois entram em "qualificados" no
-    // Dashboard, porque o que define a etapa é ter como falar com a empresa.
-    if (completo || hasPhone) {
+    // 3ª etapa do funil no Tracking Hub. Só o COMPLETO conta: qualificado é o
+    // lead que o vendedor consegue abordar de fato, com telefone e e-mail. O
+    // só-telefone tem faixa própria na tela e não entra aqui, senão o funil do
+    // Hub contaria uma etapa que o Dashboard não conta.
+    if (completo) {
       await registrar(queues, 'lead_qualified', {
         hunter_id: tracking.hunterId(busca_id, cnpj),
         properties: { radar_id: busca_id != null ? String(busca_id) : '' },

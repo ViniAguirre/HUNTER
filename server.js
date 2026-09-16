@@ -82,6 +82,19 @@ function computeHealth(b) {
   return 'red';
 }
 
+// Estágio de contato de um lead, em uma expressão só — usada por TODA contagem
+// pra as telas nunca discordarem entre si:
+//   'completo'    telefone E e-mail  → é o que conta como QUALIFICADO
+//   'decisao'     só telefone        → dá pra ligar, falta o e-mail
+//   'sem_contato' nada utilizável    → perfil certo, contato faltando
+// Prefere o que o enriquecimento gravou; lead antigo (sem a coluna preenchida)
+// cai na derivação pelos dados que ele tem, senão sumiria das três faixas.
+const estagioContato = (a) => `COALESCE(NULLIF(${a}.contato_status,''), CASE
+  WHEN (${a}.tem_email OR COALESCE(${a}.contato_validado->>'email','') <> '')
+   AND (${a}.tem_telefone OR COALESCE(${a}.contato_validado->>'telefone','') <> '') THEN 'completo'
+  WHEN (${a}.tem_telefone OR COALESCE(${a}.contato_validado->>'telefone','') <> '') THEN 'decisao'
+  ELSE 'sem_contato' END)`;
+
 function buildLeadsFilter(query) {
   const { q, status, uf, busca_id, email_only, local, score_min, contato } = query;
   const conditions = [];
@@ -115,7 +128,12 @@ function buildLeadsFilter(query) {
   if (email_only === 'true' || email_only === '1') conditions.push('l.tem_email = true');
   // Fila de enriquecimento manual: leads aprovados no score a que só falta o
   // contato. É a mesma lista que a extensão do Google Meu Negócio vai consumir.
-  if (contato === 'sem_contato') conditions.push(`l.contato_status = 'sem_contato'`);
+  // Vai pelo estágio derivado, e não pela coluna crua, pra casar exatamente com
+  // o número que a tela do radar mostra — lead antigo tem contato_status vazio.
+  if (contato === 'sem_contato') conditions.push(`${estagioContato('l')} = 'sem_contato'`);
+  // Só telefone: dá pra ligar, falta o e-mail. Não é qualificado nem sem
+  // contato; sem filtro próprio, essa faixa não tinha como ser trabalhada.
+  if (contato === 'so_telefone') conditions.push(`${estagioContato('l')} = 'decisao'`);
   return { conditions, vals };
 }
 
@@ -929,6 +947,7 @@ app.delete('/api/usuarios/:id', requireAuth, requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
+
 // ── API: dashboard ────────────────────────────────────────────────────────────
 
 app.get('/api/dashboard', requireAuth, async (req, res) => {
@@ -940,8 +959,14 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
         -- por CNPJ). Conta na empresa_tenant_estado (escopada por RLS) e não na
         -- tabela empresas, que é o cadastro global compartilhado entre clientes.
         (SELECT COUNT(*)::int FROM empresa_tenant_estado) AS empresas_total,
-        -- Leads só existem se qualificaram no Score 1 — leads = qualificados.
-        (SELECT COUNT(*)::int FROM leads) AS qualificados,
+        -- Leads = empresas aprovadas no perfil (Score 1). QUALIFICADO é mais
+        -- estreito: só o que saiu do enriquecimento com telefone E e-mail, ou
+        -- seja, com o vendedor conseguindo abordar. Contar todo lead aqui
+        -- inflava a etapa com empresa a que faltava justamente o contato.
+        (SELECT COUNT(*)::int FROM leads l WHERE ${estagioContato('l')} = 'completo') AS qualificados,
+        (SELECT COUNT(*)::int FROM leads l WHERE ${estagioContato('l')} = 'decisao') AS so_telefone,
+        (SELECT COUNT(*)::int FROM leads l WHERE ${estagioContato('l')} = 'sem_contato') AS sem_contato,
+        (SELECT COUNT(*)::int FROM leads) AS segmentadas,
         -- Verificadas mas fora do perfil = reprovadas na segmentação (nunca viraram lead).
         (SELECT COALESCE(SUM(fora_perfil),0)::int FROM buscas) AS fora_perfil,
         (SELECT COUNT(*)::int FROM leads WHERE status='Enviado' OR enviado_crm_em IS NOT NULL) AS enviados`),
@@ -959,6 +984,9 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
         buscasAtivas: m.buscas_ativas ?? 0,
         empresasEncontradas: m.empresas_total ?? 0,
         leadsQualificados: m.qualificados ?? 0,
+        leadsSoTelefone: m.so_telefone ?? 0,
+        leadsSemContato: m.sem_contato ?? 0,
+        leadsSegmentados: m.segmentadas ?? 0,
         leadsForaPerfil: m.fora_perfil ?? 0,
         leadsCRM: m.enviados ?? 0,
       },
@@ -978,9 +1006,6 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
 // fora_perfil e nunca viram lead). "Qualificados" = tem contato utilizável —
 // tem_email/tem_telefone ficaram parados em bases antigas porque o
 // enriquecimento grava em contato_validado, então olha os dois.
-const TEM_CONTATO = `(b.tem_email OR b.tem_telefone
-  OR COALESCE(b.contato_validado->>'telefone','') <> ''
-  OR COALESCE(b.contato_validado->>'email','') <> '')`;
 
 app.get('/api/funil', requireAuth, async (req, res) => {
   const dataOuNull = (v) => {
@@ -1003,7 +1028,7 @@ app.get('/api/funil', requireAuth, async (req, res) => {
       ),
       base AS (
         SELECT en.busca_id AS busca_desc, l.id AS lead_id, l.busca_id AS busca_lead,
-               l.status, l.tem_email, l.tem_telefone, l.contato_validado, l.enviado_crm_em
+               l.status, l.tem_email, l.tem_telefone, l.contato_validado, l.contato_status, l.enviado_crm_em
           FROM entradas en
           LEFT JOIN LATERAL (
             SELECT l.* FROM leads l WHERE l.cnpj = en.cnpj ORDER BY l.criado_em LIMIT 1
@@ -1013,7 +1038,7 @@ app.get('/api/funil', requireAuth, async (req, res) => {
         -- motor). Sem isto ele apareceria em "segmentadas" sem nunca ter sido
         -- "encontrado", e o funil abriria pro lado errado.
         SELECT l.busca_id, l.id, l.busca_id,
-               l.status, l.tem_email, l.tem_telefone, l.contato_validado, l.enviado_crm_em
+               l.status, l.tem_email, l.tem_telefone, l.contato_validado, l.contato_status, l.enviado_crm_em
           FROM leads l
          WHERE ($1::timestamptz IS NULL OR l.criado_em >= $1)
            AND ($2::timestamptz IS NULL OR l.criado_em <  $2)
@@ -1022,7 +1047,14 @@ app.get('/api/funil', requireAuth, async (req, res) => {
       SELECT COALESCE(b.busca_lead, b.busca_desc) AS busca_id,
              COUNT(*)::int                                                              AS encontradas,
              COUNT(b.lead_id)::int                                                      AS segmentadas,
-             COUNT(b.lead_id) FILTER (WHERE ${TEM_CONTATO})::int                        AS qualificados,
+             -- Qualificado no FUNIL é "chegou pelo menos até aqui". Só o contato
+             -- completo qualifica, mas quem já está no CRM passou por esta
+             -- etapa por definição: o só-telefone só vai pra lá quando alguém
+             -- decide "enviar assim mesmo", e aí a operação o tratou como apto.
+             -- Sem isso o funil ABRIA no fim (enviados > qualificados), que é
+             -- exatamente o desenho que ele existe pra tornar impossível.
+             COUNT(b.lead_id) FILTER (WHERE ${estagioContato('b')} = 'completo'
+               OR b.status='Enviado' OR b.enviado_crm_em IS NOT NULL)::int             AS qualificados,
              COUNT(b.lead_id) FILTER (WHERE b.status='Enviado' OR b.enviado_crm_em IS NOT NULL)::int AS enviados
         FROM base b
        GROUP BY 1`, [de, ate]);
@@ -1126,7 +1158,10 @@ app.get('/api/buscas', requireAuth, async (req, res) => {
       SELECT b.id, b.nome, b.tipo, b.status, b.ritmo, b.criterios, b.ultima_ativ, b.criado_em,
         u.nome AS criador_nome,
         b.universo_varrido AS encontrados,
-        COUNT(l.id)::int AS qualificados,
+        COUNT(l.id)::int AS segmentadas,
+        COUNT(l.id) FILTER (WHERE ${estagioContato('l')} = 'completo')::int AS qualificados,
+        COUNT(l.id) FILTER (WHERE ${estagioContato('l')} = 'decisao')::int AS so_telefone,
+        COUNT(l.id) FILTER (WHERE ${estagioContato('l')} = 'sem_contato')::int AS sem_contato,
         b.fora_perfil,
         COUNT(l.id) FILTER (WHERE l.status='Enviado')::int AS enviados
       FROM buscas b
@@ -1170,7 +1205,13 @@ app.get('/api/buscas/:id', requireAuth, async (req, res) => {
       pool.query(`
         SELECT b.*, u.nome AS criador_nome,
           b.universo_varrido AS encontrados,
-          COUNT(l.id)::int AS qualificados,
+          COUNT(l.id)::int AS segmentadas,
+          COUNT(l.id) FILTER (WHERE ${estagioContato('l')} = 'completo')::int AS qualificados,
+          COUNT(l.id) FILTER (WHERE ${estagioContato('l')} = 'decisao')::int AS so_telefone,
+          -- Contado dos leads, não do contador buscas.sem_contato: aquele só
+          -- soma e nunca desconta, então enriquecer um lead à mão depois deixava
+          -- os dois números brigando na mesma tela.
+          COUNT(l.id) FILTER (WHERE ${estagioContato('l')} = 'sem_contato')::int AS sem_contato_n,
           COUNT(l.id) FILTER (WHERE l.status='Incompleto')::int AS incompletos,
           COUNT(l.id) FILTER (WHERE l.status='Descartado')::int AS descartados,
           COUNT(l.id) FILTER (WHERE l.status='Enviado')::int AS enviados
@@ -1192,7 +1233,8 @@ app.get('/api/buscas/:id', requireAuth, async (req, res) => {
       health: computeHealth(b),
       // aliases que o front do detalhe consome
       enc: b.encontrados, qual: b.qualificados, crm: b.enviados, fora: b.fora_perfil,
-      sem_contato: b.sem_contato || 0,
+      seg: b.segmentadas || 0, so_telefone: b.so_telefone || 0,
+      sem_contato: b.sem_contato_n || 0,
       universo_est: b.universo_varrido || 0,
       producao: prodRow.rows.map(r => r.n),
       leads: leadsRow.rows,
