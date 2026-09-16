@@ -676,6 +676,46 @@ async function init() {
     }
   }
 
+  // Destravamento de emergência do acesso. Sem isto não existe volta: a tela de
+  // Usuários só deixa um master mexer noutro master, "Esqueci minha senha" não
+  // tem fluxo por e-mail, e ADMIN_PASSWORD só age quando a tabela está vazia —
+  // então, perdida a senha do único master, ninguém mais entra.
+  //
+  // Quem consegue usar isto já tem a stack no Portainer, ou seja, já manda no
+  // servidor inteiro: não abre porta nenhuma que não estivesse aberta. Age uma
+  // vez, no boot, e o log manda tirar a variável — deixá-la lá reescreveria a
+  // senha a cada deploy, apagando qualquer troca feita pela tela.
+  const senhaResgate = String(process.env.ADMIN_RESET_PASSWORD || '').trim();
+  if (senhaResgate) {
+    if (senhaResgate.length < 8) {
+      console.warn('[init] ADMIN_RESET_PASSWORD ignorada: use ao menos 8 caracteres.');
+    } else {
+      const hash = await bcrypt.hash(senhaResgate, 12);
+      // A consulta roda sob RLS, então só alcança o usuário DESTE tenant — o
+      // reset no stack da GK não encosta no login do Antídoto e vice-versa.
+      const { rowCount } = await pool.query(
+        `UPDATE usuarios SET senha_hash=$1, ativo=true WHERE lower(email)=$2`,
+        [hash, ADMIN_EMAIL]
+      );
+      if (rowCount) {
+        console.log(`[init] SENHA REDEFINIDA para ${ADMIN_EMAIL} (tenant ${TENANT_ID}) e conta reativada.`);
+      } else {
+        // Não achou: ou o e-mail está diferente do ADMIN_EMAIL da stack, ou a
+        // conta pertence a outro tenant. Recria pra não deixar o cliente fora.
+        await pool.query(
+          `INSERT INTO usuarios (nome, email, senha_hash, papel) VALUES ($1,$2,$3,'Admin')`,
+          [ADMIN_NAME, ADMIN_EMAIL, hash]
+        );
+        console.log(`[init] ${ADMIN_EMAIL} não existia no tenant ${TENANT_ID} — conta de Admin criada.`);
+      }
+      const { rows: existentes } = await pool.query(
+        `SELECT email, papel, master, ativo FROM usuarios ORDER BY id`);
+      console.log('[init] usuários deste tenant:', existentes
+        .map(u => `${u.email} (${u.papel}${u.master ? ', master' : ''}${u.ativo ? '' : ', INATIVO'})`).join(' | '));
+      console.log('[init] APAGUE ADMIN_RESET_PASSWORD da stack e faça deploy de novo.');
+    }
+  }
+
   // Login MASTER (da Hunter): vê Integrações/Configurações/Monitoramento e os
   // provedores de API. MASTER_EMAIL é a FONTE DA VERDADE — pode ser uma lista
   // separada por vírgula. Esses e-mails viram master; todos os outros são
@@ -773,8 +813,22 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM usuarios WHERE email=$1', [email]);
     const user = rows[0];
-    if (!user || !user.ativo) return res.status(401).json({ erro: 'credenciais inválidas' });
-    if (!await bcrypt.compare(senha, user.senha_hash)) return res.status(401).json({ erro: 'credenciais inválidas' });
+    // A RESPOSTA é sempre a mesma (não conta a quem tenta se o e-mail existe),
+    // mas o LOG do servidor separa os três casos. Sem isso, "credenciais
+    // inválidas" tanto pode ser senha errada quanto conta em outro tenant, e
+    // quem administra não tem como saber qual dos dois.
+    if (!user) {
+      console.warn(`[login] recusado: ${email} não existe no tenant ${TENANT_ID}`);
+      return res.status(401).json({ erro: 'credenciais inválidas' });
+    }
+    if (!user.ativo) {
+      console.warn(`[login] recusado: ${email} está inativo`);
+      return res.status(401).json({ erro: 'credenciais inválidas' });
+    }
+    if (!await bcrypt.compare(senha, user.senha_hash)) {
+      console.warn(`[login] recusado: senha incorreta para ${email}`);
+      return res.status(401).json({ erro: 'credenciais inválidas' });
+    }
     await pool.query('UPDATE usuarios SET ultimo_acesso=now() WHERE id=$1', [user.id]);
     setSession(res, user);
     res.json({ nome: user.nome, email: user.email, papel: user.papel, master: !!user.master });
