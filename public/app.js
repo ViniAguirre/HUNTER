@@ -4011,6 +4011,23 @@ function BuscaDetail({
   const criterios = b.criterios || {};
   const tags = Array.isArray(criterios.chips) && criterios.chips.length ? criterios.chips : Object.entries(criterios).filter(([k]) => !['params', 'cnaes_rotulos', 'texto', 'query', 'proposta_valor'].includes(k)).flatMap(([k, v]) => Array.isArray(v) ? v.map(x => k + ': ' + x) : typeof v === 'object' ? [] : [k + ': ' + v]).filter(Boolean);
   const proposta = criterios.params?.proposta_valor || criterios.proposta_valor || '';
+
+  // Trocar o modo de envio sem recriar o radar. Antes só existia na criação.
+  const trocarCrmAuto = async novo => {
+    setToggling(true);
+    await fetch('/api/buscas/' + buscaId, {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        crm_auto: novo
+      })
+    }).catch(() => {});
+    setToggling(false);
+    carregar();
+  };
   const rodarDeNovo = async () => {
     setToggling(true);
     await fetch('/api/buscas/' + buscaId, {
@@ -4209,6 +4226,54 @@ function BuscaDetail({
       color: col
     }
   }, val)))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'var(--panel)',
+      border: '1px solid var(--border)',
+      borderRadius: 12,
+      padding: '13px 16px',
+      marginBottom: 18,
+      display: 'flex',
+      alignItems: 'center',
+      gap: 12,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 220
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      fontWeight: 500
+    }
+  }, "Envio ao CRM: ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: b.crm_auto ? C.green : 'var(--dim)'
+    }
+  }, b.crm_auto ? 'automático' : 'manual')), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)',
+      marginTop: 2,
+      lineHeight: 1.4
+    }
+  }, b.crm_auto ? 'Cada lead com telefone e e-mail vai ao CRM assim que a análise termina.' : 'Os leads esperam você enviar pela triagem, em Leads.')), /*#__PURE__*/React.createElement("button", {
+    onClick: () => trocarCrmAuto(!b.crm_auto),
+    disabled: toggling,
+    style: {
+      height: 34,
+      padding: '0 14px',
+      borderRadius: 9,
+      border: '1px solid var(--border)',
+      background: 'transparent',
+      color: 'var(--text)',
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      cursor: toggling ? 'default' : 'pointer',
+      opacity: toggling ? .6 : 1
+    }
+  }, toggling ? '…' : b.crm_auto ? 'Passar para manual' : 'Passar para automático')), /*#__PURE__*/React.createElement("div", {
     className: "h-split",
     style: {
       '--split': '1.6fr 1fr',
@@ -9310,7 +9375,7 @@ function Config() {
       color: 'var(--faint)',
       marginTop: 2
     }
-  }, cfg.crm_auto_global ? 'Cada lead pronto é enviado ao CRM sem intervenção.' : 'Os leads ficam para envio manual (botão "Enviar ao CRM" na triagem).'))), /*#__PURE__*/React.createElement("div", {
+  }, cfg.crm_auto_global ? 'Cada lead pronto é enviado ao CRM sem intervenção — em TODOS os radares, inclusive os marcados como "Manual".' : 'Cada radar decide: vale o que estiver marcado em Envio ao CRM na tela do radar.'))), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11.5,
       color: 'var(--faint)',
