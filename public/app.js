@@ -9719,6 +9719,13 @@ function Monitor() {
   }, {
     key: 'crm',
     label: '7. Envio ao CRM'
+  },
+  // A lista é fixa: fila nova não aparece sozinha aqui. Sem esta linha, a fila
+  // do Tracking Hub entrava nos totais lá de cima mas não tinha linha própria
+  // — justamente a que responde "o evento saiu ou empacou?".
+  {
+    key: 'tracking',
+    label: '8. Tracking Hub (eventos)'
   }];
   return /*#__PURE__*/React.createElement("div", {
     style: {
