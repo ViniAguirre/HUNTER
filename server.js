@@ -65,6 +65,7 @@ if (process.env.REDIS_HOST) {
     validacao: new Queue('hunter-validacao', { connection: { ...redisOpts } }),
     swot: new Queue('hunter-swot', { connection: { ...redisOpts } }),
     crm: new Queue('hunter-crm', { connection: { ...redisOpts } }),
+    tracking: new Queue('hunter-tracking', { connection: { ...redisOpts } }),
   };
 }
 
@@ -530,12 +531,14 @@ async function init() {
     );
   `);
 
-  // Categoria de busca web (Tavily) — bancos criados antes desta versão têm a
-  // CHECK antiga; recria a constraint incluindo 'busca_web'.
+  // Categorias de integração — bancos criados antes de cada novidade têm a CHECK
+  // antiga, que o CREATE TABLE IF NOT EXISTS não atualiza. Este é o ÚNICO lugar
+  // que recria a constraint: categoria nova entra AQUI. Um segundo bloco mexendo
+  // nela desfaria este em silêncio, dependendo de qual roda por último.
   await pool.query(`
     ALTER TABLE integracoes DROP CONSTRAINT IF EXISTS integracoes_categoria_check;
     ALTER TABLE integracoes ADD CONSTRAINT integracoes_categoria_check
-      CHECK (categoria IN ('descoberta','contato','validacao_email','validacao_tel','crm','ia','busca_web'));
+      CHECK (categoria IN ('descoberta','contato','validacao_email','validacao_tel','crm','ia','busca_web','tracking'));
   `);
 
   // ── Multi-tenant: registro de clientes + isolamento por tenant_id (RLS) ──────
@@ -676,6 +679,46 @@ async function init() {
     }
   }
 
+  // Destravamento de emergência do acesso. Sem isto não existe volta: a tela de
+  // Usuários só deixa um master mexer noutro master, "Esqueci minha senha" não
+  // tem fluxo por e-mail, e ADMIN_PASSWORD só age quando a tabela está vazia —
+  // então, perdida a senha do único master, ninguém mais entra.
+  //
+  // Quem consegue usar isto já tem a stack no Portainer, ou seja, já manda no
+  // servidor inteiro: não abre porta nenhuma que não estivesse aberta. Age uma
+  // vez, no boot, e o log manda tirar a variável — deixá-la lá reescreveria a
+  // senha a cada deploy, apagando qualquer troca feita pela tela.
+  const senhaResgate = String(process.env.ADMIN_RESET_PASSWORD || '').trim();
+  if (senhaResgate) {
+    if (senhaResgate.length < 8) {
+      console.warn('[init] ADMIN_RESET_PASSWORD ignorada: use ao menos 8 caracteres.');
+    } else {
+      const hash = await bcrypt.hash(senhaResgate, 12);
+      // A consulta roda sob RLS, então só alcança o usuário DESTE tenant — o
+      // reset no stack da GK não encosta no login do Antídoto e vice-versa.
+      const { rowCount } = await pool.query(
+        `UPDATE usuarios SET senha_hash=$1, ativo=true WHERE lower(email)=$2`,
+        [hash, ADMIN_EMAIL]
+      );
+      if (rowCount) {
+        console.log(`[init] SENHA REDEFINIDA para ${ADMIN_EMAIL} (tenant ${TENANT_ID}) e conta reativada.`);
+      } else {
+        // Não achou: ou o e-mail está diferente do ADMIN_EMAIL da stack, ou a
+        // conta pertence a outro tenant. Recria pra não deixar o cliente fora.
+        await pool.query(
+          `INSERT INTO usuarios (nome, email, senha_hash, papel) VALUES ($1,$2,$3,'Admin')`,
+          [ADMIN_NAME, ADMIN_EMAIL, hash]
+        );
+        console.log(`[init] ${ADMIN_EMAIL} não existia no tenant ${TENANT_ID} — conta de Admin criada.`);
+      }
+      const { rows: existentes } = await pool.query(
+        `SELECT email, papel, master, ativo FROM usuarios ORDER BY id`);
+      console.log('[init] usuários deste tenant:', existentes
+        .map(u => `${u.email} (${u.papel}${u.master ? ', master' : ''}${u.ativo ? '' : ', INATIVO'})`).join(' | '));
+      console.log('[init] APAGUE ADMIN_RESET_PASSWORD da stack e faça deploy de novo.');
+    }
+  }
+
   // Login MASTER (da Hunter): vê Integrações/Configurações/Monitoramento e os
   // provedores de API. MASTER_EMAIL é a FONTE DA VERDADE — pode ser uma lista
   // separada por vírgula. Esses e-mails viram master; todos os outros são
@@ -773,8 +816,22 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
   try {
     const { rows } = await pool.query('SELECT * FROM usuarios WHERE email=$1', [email]);
     const user = rows[0];
-    if (!user || !user.ativo) return res.status(401).json({ erro: 'credenciais inválidas' });
-    if (!await bcrypt.compare(senha, user.senha_hash)) return res.status(401).json({ erro: 'credenciais inválidas' });
+    // A RESPOSTA é sempre a mesma (não conta a quem tenta se o e-mail existe),
+    // mas o LOG do servidor separa os três casos. Sem isso, "credenciais
+    // inválidas" tanto pode ser senha errada quanto conta em outro tenant, e
+    // quem administra não tem como saber qual dos dois.
+    if (!user) {
+      console.warn(`[login] recusado: ${email} não existe no tenant ${TENANT_ID}`);
+      return res.status(401).json({ erro: 'credenciais inválidas' });
+    }
+    if (!user.ativo) {
+      console.warn(`[login] recusado: ${email} está inativo`);
+      return res.status(401).json({ erro: 'credenciais inválidas' });
+    }
+    if (!await bcrypt.compare(senha, user.senha_hash)) {
+      console.warn(`[login] recusado: senha incorreta para ${email}`);
+      return res.status(401).json({ erro: 'credenciais inválidas' });
+    }
     await pool.query('UPDATE usuarios SET ultimo_acesso=now() WHERE id=$1', [user.id]);
     setSession(res, user);
     res.json({ nome: user.nome, email: user.email, papel: user.papel, master: !!user.master });
@@ -1932,7 +1989,7 @@ app.post('/api/integracoes', requireAuth, requireMaster, async (req, res) => {
   const ativo = !!req.body.ativo;
   const ordem = Number.isInteger(req.body.ordem) ? req.body.ordem : 100;
   const config = req.body.config && typeof req.body.config === 'object' ? JSON.stringify(req.body.config) : null;
-  const categoriasValidas = ['descoberta','contato','validacao_email','validacao_tel','crm','ia','busca_web'];
+  const categoriasValidas = ['descoberta','contato','validacao_email','validacao_tel','crm','ia','busca_web','tracking'];
   if (!categoriasValidas.includes(categoria) || !provedor) {
     return res.status(400).json({ erro: 'categoria/provedor inválidos' });
   }
@@ -1972,8 +2029,32 @@ app.patch('/api/integracoes/:id', requireAuth, requireMaster, async (req, res) =
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
+// Tracking Hub: confere se a URL de webhook vale, SEM criar evento lá dentro.
+// O truque é o contrato deles: 202 = "payload recusado" e 404 = "token
+// inválido". Mandando de propósito um envelope incompleto, um 202 prova que a
+// URL e o token estão certos (quem respondeu foi o Hub, e nada foi gravado) e o
+// 404 separa "URL errada" de "Hub fora do ar". Um evento de teste de verdade
+// sujaria a jornada de alguém do outro lado.
+app.post('/api/integracoes/tracking/testar', requireAuth, requireMaster, async (req, res) => {
+  const informada = String(req.body.url || '').trim();
+  try {
+    const url = informada || await tracking.urlAtiva(pool);
+    if (!url) return res.status(400).json({ erro: 'cole a URL de webhook do Tracking Hub' });
+    if (!tracking.urlValida(url)) return res.status(400).json({ erro: 'URL inválida — precisa começar com https://' });
+    const r = await tracking.enviar(url, { schema_version: '1.0', source: { system: 'hunter' } });
+    // 202 é o resultado ESPERADO aqui: o Hub recebeu, entendeu e recusou o
+    // envelope incompleto. Quer dizer que a URL está viva e o token confere.
+    if (r.permanente && /HTTP 202/.test(r.motivo || '')) {
+      return res.json({ ok: true, detalhe: 'URL e token válidos (nenhum evento foi criado no Hub).' });
+    }
+    if (r.ok) return res.json({ ok: true, detalhe: 'Hub respondeu 200 — conexão válida.' });
+    res.status(400).json({ erro: r.motivo });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
 // GK CRM: testa a conexão (backend + token) e lista empresas + filas pra a UI.
 const gk = require('./providers/gk');
+const tracking = require('./providers/tracking');
 // Filas do CRM usando a integração JÁ salva — sem pedir token e sem exigir
 // master. Serve pra escolher a fila na criação de cada radar. Devolve lista
 // vazia (200) quando não há CRM configurado, pra UI só esconder o campo.

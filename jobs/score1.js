@@ -13,6 +13,8 @@
 
 const perfilamento = require('../providers/perfil');
 const orcamento = require('./orcamento');
+const tracking = require('../providers/tracking');
+const { registrar } = require('./tracking');
 
 // Pesos vivem em providers/perfil.js — fonte única, usada tanto pelo ICP
 // (direto) quanto pelo lookalike (como prior dos pesos dinâmicos).
@@ -87,15 +89,20 @@ module.exports = async function score1(job, pool, queues) {
   }
 
   const breakdownJson = JSON.stringify(breakdown);
+  // crm_ref nasce JUNTO com o lead, derivado de (radar, CNPJ). Antes ele só era
+  // sorteado na hora de enviar ao CRM — e o Tracking Hub precisa do mesmo id já
+  // na descoberta, senão cada etapa do funil vira uma pessoa diferente lá. Lead
+  // antigo mantém o ref que já tem (o CRM devolve esse valor de volta).
+  const ref = tracking.hunterId(busca_id, cnpj);
   const { rows: [lead] } = await pool.query(`
     INSERT INTO leads (busca_id, empresa_cnpj, cnpj, fantasia, razao, setor, cnae, porte, cidade, uf,
-      decisor, cargo, score, breakdown, situacao, abertura, capital, endereco, estagio, status, origem)
-    VALUES ($1,$2,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15,$16,$17,'scored','Novo','cnpja')
+      decisor, cargo, score, breakdown, situacao, abertura, capital, endereco, estagio, status, origem, crm_ref)
+    VALUES ($1,$2,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15,$16,$17,'scored','Novo','cnpja',$18)
     ON CONFLICT (busca_id, cnpj) DO NOTHING
     RETURNING id`,
     [busca_id, cnpj, empresa.fantasia || empresa.razao, empresa.razao, empresa.setor, empresa.cnae,
      empresa.porte, empresa.cidade, empresa.uf, empresa.decisor, empresa.cargo, score, breakdownJson,
-     empresa.situacao, empresa.abertura, empresa.capital, empresa.endereco]
+     empresa.situacao, empresa.abertura, empresa.capital, empresa.endereco, ref]
   );
 
   if (!lead) {
@@ -116,6 +123,12 @@ module.exports = async function score1(job, pool, queues) {
      ON CONFLICT (cnpj, tenant_id) DO UPDATE SET estado_global='qualificado', atualizado_em=now()
      WHERE empresa_tenant_estado.estado_global='coletado'`, [cnpj]
   );
+
+  // Passou no filtro de perfil: 2ª etapa do funil no Tracking Hub.
+  await registrar(queues, 'lead_segmented', {
+    hunter_id: ref,
+    properties: { radar_id: String(busca_id), score },
+  });
 
   // Passou no corte → validação de contato do decisor (que depois chama o
   // SWOT). Sem provedor de validação ativo, a etapa só repassa pro SWOT.

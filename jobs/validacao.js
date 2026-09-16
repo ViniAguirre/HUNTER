@@ -6,6 +6,8 @@
  * segue pro SWOT (sem gasto). SEMPRE enfileira o SWOT ao final.
  */
 const contato = require('../providers/contato');
+const tracking = require('../providers/tracking');
+const { registrar } = require('./tracking');
 const google = require('../providers/google');
 const fontes = require('./fontes');
 
@@ -156,6 +158,16 @@ module.exports = async function validacao(job, pool, queues) {
         { cnpj, busca_id, lead_id, tentativa_contato: tentativa + 1, preservar: preservarLead },
         { delay: 2 * 60 * 1000, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 2, backoff: { type: 'exponential', delay: 10000 } });
       return { lead_id, retry: tentativa + 1, motivo: 'contato_incompleto' };
+    }
+
+    // Achou contato utilizável: 3ª etapa do funil no Tracking Hub. Vale tanto
+    // pro completo quanto pro só-telefone — os dois entram em "qualificados" no
+    // Dashboard, porque o que define a etapa é ter como falar com a empresa.
+    if (completo || hasPhone) {
+      await registrar(queues, 'lead_qualified', {
+        hunter_id: tracking.hunterId(busca_id, cnpj),
+        properties: { radar_id: busca_id != null ? String(busca_id) : '' },
+      });
     }
 
     // 1) Completo (telefone + e-mail) → segue e pode ir ao CRM automático.

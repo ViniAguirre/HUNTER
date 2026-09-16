@@ -42,6 +42,10 @@
     border:1px solid rgba(248,113,113,.25);border-radius:9px;padding:10px 12px;margin-bottom:16px;}
   .forgot{text-align:center;margin-top:18px;}
   .forgot a{font-size:12px;color:#3A8EFF;text-decoration:none;}
+  .link-btn{background:none;border:none;padding:0;font-family:inherit;font-size:12px;
+    color:#3A8EFF;cursor:pointer;}
+  .forgot p{font-size:12px;line-height:1.5;color:#8A95B4;margin:9px auto 0;max-width:300px;}
+  .forgot p b{color:#ECEFF7;font-weight:600;}
 </style>
 </head>
 <body>
@@ -80,10 +84,29 @@
       </button>
     </div>
     <button type="submit" id="btn">Entrar</button>
-    <div class="forgot"><a href="#">Esqueci minha senha</a></div>
+    <!-- O link era href="#": não havia fluxo nenhum por trás dele, então clicar
+         não fazia nada e a pessoa ficava esperando um e-mail que nunca vinha.
+         Enquanto não existe recuperação por e-mail, o texto diz o caminho real. -->
+    <div class="forgot">
+      <button type="button" id="ajudaSenha" class="link-btn" aria-expanded="false" aria-controls="ajudaSenhaTexto">
+        Esqueci minha senha
+      </button>
+      <p id="ajudaSenhaTexto" hidden>
+        Peça a um administrador para definir uma nova senha em <b>Usuários</b>.
+        Se você é o administrador e perdeu o acesso, fale com o suporte do Hunter.
+      </p>
+    </div>
   </form>
 </div>
 <script>
+  var ajudaBtn = document.getElementById('ajudaSenha');
+  var ajudaTxt = document.getElementById('ajudaSenhaTexto');
+  ajudaBtn.addEventListener('click', function () {
+    var abrir = ajudaTxt.hidden;
+    ajudaTxt.hidden = !abrir;
+    ajudaBtn.setAttribute('aria-expanded', abrir ? 'true' : 'false');
+  });
+
   var form = document.getElementById('form');
   var err = document.getElementById('err');
   var btn = document.getElementById('btn');

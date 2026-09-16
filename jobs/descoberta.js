@@ -14,6 +14,22 @@ const baseRates = require('../providers/base');
 const google = require('../providers/google');
 const fontes = require('./fontes');
 const orcamento = require('./orcamento');
+const tracking = require('../providers/tracking');
+const { registrar } = require('./tracking');
+
+// Nome do radar pro evento do Tracking Hub. Em cache porque a descoberta passa
+// por aqui uma vez POR EMPRESA — seria um SELECT idêntico a cada CNPJ da lista.
+const nomesRadar = new Map();
+async function nomeDoRadar(pool, busca_id) {
+  if (nomesRadar.has(busca_id)) return nomesRadar.get(busca_id);
+  let nome = '';
+  try {
+    const { rows: [b] } = await pool.query(`SELECT nome FROM buscas WHERE id=$1`, [busca_id]);
+    nome = b?.nome || '';
+  } catch (_) { /* nome é opcional no evento */ }
+  nomesRadar.set(busca_id, nome);
+  return nome;
+}
 
 const TRAVADOS = ['qualificado', 'em_crm', 'descarte_duro'];
 const TETO_PAGINAS = 20;   // com limit=100, até ~2000 empresas por varredura
@@ -494,10 +510,25 @@ async function processarOffice(pool, queues, busca_id, office, counters) {
   // mesmo com o cadastro `empresas` sendo global.
   // busca_id só na inserção (DO NOTHING no conflito): o crédito do topo do funil
   // fica com o radar que descobriu primeiro, não com o último que reencontrou.
-  await pool.query(
+  const { rowCount: entrouAgora } = await pool.query(
     `INSERT INTO empresa_tenant_estado (cnpj, estado_global, busca_id) VALUES ($1, 'coletado', $2)
      ON CONFLICT (cnpj, tenant_id) DO NOTHING`, [office.cnpj, busca_id]
   );
+
+  // 1ª etapa do funil no Tracking Hub. Só quando o CNPJ entra DE FATO agora
+  // (rowCount 0 = este cliente já tinha essa empresa): reencontrar não é
+  // descobrir, e repetir o evento inflaria o topo do funil lá.
+  if (entrouAgora) {
+    await registrar(queues, 'company_found', {
+      hunter_id: tracking.hunterId(busca_id, office.cnpj),
+      properties: {
+        radar_id: busca_id != null ? String(busca_id) : '',
+        radar_name: await nomeDoRadar(pool, busca_id),
+        company_name: office.fantasia || office.razao || '',
+        segment: office.setor || '',
+      },
+    });
+  }
 
   await queues.enriquecimento.add('enriquecimento',
     { cnpj: office.cnpj, busca_id },
