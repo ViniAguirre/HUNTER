@@ -7961,6 +7961,11 @@ function IntegracaoGK({
     value: token,
     onChange: e => setToken(e.target.value),
     placeholder: "API.GKPADRAO.xxxxxxxx",
+    type: "password",
+    autoComplete: "off",
+    name: "token-gk",
+    "data-1p-ignore": true,
+    "data-lpignore": "true",
     style: inputStyle
   }), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -8299,6 +8304,11 @@ function Integracoes() {
     }, meta.provedor, row?.chave_mascarada ? ' · ' + row.chave_mascarada : '', meta.temSegredo ? row?.config?.secret ? ' · segredo configurado' : ' · sem segredo (assinatura desativada)' : '', meta.temModelo && row?.config?.modelo ? ' · modelo: ' + row.config.modelo : '')), meta.editavel ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("input", {
       ref: el => chaveRefs.current[chave] = el,
       placeholder: meta.placeholder || 'Colar chave da API…',
+      type: "password",
+      autoComplete: "off",
+      name: 'chave-' + chave,
+      "data-1p-ignore": true,
+      "data-lpignore": "true",
       style: {
         width: 190,
         maxWidth: '100%',
@@ -8315,6 +8325,11 @@ function Integracoes() {
     }), meta.temSegredo && /*#__PURE__*/React.createElement("input", {
       ref: el => segredoRefs.current[chave] = el,
       placeholder: "Colar segredo (HMAC, opcional)\u2026",
+      type: "password",
+      autoComplete: "off",
+      name: 'segredo-' + chave,
+      "data-1p-ignore": true,
+      "data-lpignore": "true",
       style: {
         width: 190,
         maxWidth: '100%',

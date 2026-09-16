@@ -3744,7 +3744,8 @@ function IntegracaoGK({ row, meta, onSaved }) {
           <label style={{ display:'block', fontSize:11, color:'var(--dim)', marginBottom:5 }}>
             Token Bearer {row?.chave_mascarada && <span style={{ color:'var(--faint)' }}>· salvo {row.chave_mascarada}</span>}
           </label>
-          <input value={token} onChange={e=>setToken(e.target.value)} placeholder="API.GKPADRAO.xxxxxxxx" style={inputStyle}/>
+          <input value={token} onChange={e=>setToken(e.target.value)} placeholder="API.GKPADRAO.xxxxxxxx"
+            type="password" autoComplete="off" name="token-gk" data-1p-ignore data-lpignore="true" style={inputStyle}/>
           {/* A doc do GK diz, na rota de contato, "token cadastrado na conexão".
               É outro token que não o geral da empresa — e ele muda quando a
               conexão é recriada no CRM, que é como o envio para de funcionar
@@ -3928,12 +3929,19 @@ function Integracoes() {
             </div>
             {meta.editavel ? (
               <>
+                {/* type=password + autocomplete desligado: sem isso o Chrome
+                    tratava estes campos como um formulário de login e enfiava o
+                    e-mail salvo do usuário aqui. Bastava clicar em Salvar pra o
+                    segredo HMAC virar o e-mail, a assinatura mudar e quem
+                    recebe passar a rejeitar TODO payload — em silêncio. */}
                 <input ref={el => chaveRefs.current[chave] = el} placeholder={meta.placeholder || 'Colar chave da API…'}
+                  type="password" autoComplete="off" name={'chave-' + chave} data-1p-ignore data-lpignore="true"
                   style={{ width:190, maxWidth:'100%', height:38, borderRadius:9, border:'1px solid var(--border)',
                     background:'var(--panel2)', color:'var(--dim)', padding:'0 12px', fontSize:12.5,
                     fontFamily:'inherit', letterSpacing:'.05em' }}/>
                 {meta.temSegredo && (
                   <input ref={el => segredoRefs.current[chave] = el} placeholder="Colar segredo (HMAC, opcional)…"
+                    type="password" autoComplete="off" name={'segredo-' + chave} data-1p-ignore data-lpignore="true"
                     style={{ width:190, maxWidth:'100%', height:38, borderRadius:9, border:'1px solid var(--border)',
                       background:'var(--panel2)', color:'var(--dim)', padding:'0 12px', fontSize:12.5,
                       fontFamily:'inherit', letterSpacing:'.05em' }}/>

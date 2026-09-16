@@ -1464,6 +1464,10 @@ app.post('/api/leads', requireAuth, requireMaster, async (req, res) => {
 
     const completo = !!(telefone && email);
     const contatoStatus = (telefone || email) ? (completo ? 'completo' : 'decisao') : 'sem_contato';
+    // Guarda só os dígitos, como o motor faz. Gravar "01.020.313/0001-21" fazia
+    // este lead não casar com `empresas` nem com a volta do CRM, que trabalham
+    // com o CNPJ limpo — o lead existia mas ficava invisível pra elas.
+    const cnpjLimpo = String(b.cnpj || '').replace(/\D/g, '').slice(0, 14) || null;
 
     const { rows:[lead] } = await pool.query(
       `INSERT INTO leads (busca_id, origem, estagio, fantasia, razao, cnpj, setor, cnae, porte,
@@ -1473,7 +1477,7 @@ app.post('/api/leads', requireAuth, requireMaster, async (req, res) => {
        VALUES ($1,'manual','pronto',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
                $16,$17,$18,$19,$20::jsonb,$21::jsonb,$22,$23,now(),now())
        RETURNING *`,
-      [buscaId, fantasia, txt(b.razao,200), txt(b.cnpj,20), txt(b.setor,120), txt(b.cnae,20),
+      [buscaId, fantasia, txt(b.razao,200), cnpjLimpo, txt(b.setor,120), txt(b.cnae,20),
        txt(b.porte,40), txt(b.cidade,120), uf, txt(b.decisor,120), txt(b.cargo,120), score,
        !!email, !!telefone, status,
        txt(b.situacao,60), txt(b.abertura,40), txt(b.capital,40), txt(b.endereco,240),
@@ -2363,10 +2367,14 @@ const LISTA_CRM = 'conversoes_crm';
 async function retirarClientesDaEsteira(cnpjs) {
   const validos = (cnpjs || []).map(c => String(c).replace(/\D/g, '')).filter(c => c.length === 14);
   if (!validos.length) return 0;
+  // Compara só os dígitos dos DOIS lados: o motor grava o CNPJ limpo, mas o lead
+  // cadastrado à mão guarda o que foi digitado, com ponto e barra. Comparando
+  // cru, o cliente que acabou de comprar continuava sendo prospectado.
   const { rowCount } = await pool.query(
     `UPDATE leads SET status='Descartado', contato_status='ja_e_cliente',
             contato_pendente=false, atualizado_em=now()
-     WHERE cnpj = ANY($1) AND status <> 'Enviado' AND status <> 'Descartado'`, [validos]);
+     WHERE regexp_replace(COALESCE(cnpj,''), '\\D', '', 'g') = ANY($1)
+       AND status <> 'Enviado' AND status <> 'Descartado'`, [validos]);
   return rowCount;
 }
 
