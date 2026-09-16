@@ -2637,7 +2637,7 @@ function Leads({
     if (debouncedQ) params.set('q', debouncedQ);
     // A opção "Sem contato" não é um status — é a fila de enriquecimento
     // manual (contato_status). Vai num parâmetro próprio.
-    if (filterStatus === 'sem_contato') params.set('contato', 'sem_contato');else if (filterStatus) params.set('status', filterStatus);
+    if (filterStatus === 'sem_contato' || filterStatus === 'so_telefone') params.set('contato', filterStatus);else if (filterStatus) params.set('status', filterStatus);
     if (emailOnly) params.set('email_only', 'true');
     if (filterBusca) params.set('busca_id', filterBusca);
     if (debouncedLocal) params.set('local', debouncedLocal);
@@ -2884,8 +2884,10 @@ function Leads({
   }, "Qualificado"), /*#__PURE__*/React.createElement("option", {
     value: "Incompleto"
   }, "Incompleto"), /*#__PURE__*/React.createElement("option", {
+    value: "so_telefone"
+  }, "S\xF3 telefone \u2014 sem e-mail"), /*#__PURE__*/React.createElement("option", {
     value: "sem_contato"
-  }, "Sem contato \u2014 enriquecer"), /*#__PURE__*/React.createElement("option", {
+  }, "Sem contato / com perfil"), /*#__PURE__*/React.createElement("option", {
     value: "Enviado"
   }, "Enviado (todos)"), /*#__PURE__*/React.createElement("option", {
     value: "Enviado:crm"
@@ -4186,7 +4188,7 @@ function BuscaDetail({
       gap: 12,
       marginBottom: 18
     }
-  }, [['Encontrados', fmtNum(b.enc), 'var(--text)'], ['Segmentadas (perfil)', fmtNum((b.qual || 0) + (b.sem_contato || 0)), C.blue], ['Qualificados', fmtNum(b.qual), C.green], ['Sem contato', fmtNum(b.sem_contato), C.red], ['Fora do perfil', fmtNum(b.fora), C.amber], ['Enviados ao CRM', fmtNum(b.crm), C.cyan]].map(([label, val, col]) => /*#__PURE__*/React.createElement("div", {
+  }, [['Encontrados', fmtNum(b.enc), 'var(--text)'], ['Segmentadas (perfil)', fmtNum(b.seg ?? b.qual), C.blue], ['Qualificados', fmtNum(b.qual), C.green], ['Só telefone', fmtNum(b.so_telefone), C.amber], ['Sem contato / com perfil', fmtNum(b.sem_contato), C.red], ['Fora do perfil', fmtNum(b.fora), C.gray], ['Enviados ao CRM', fmtNum(b.crm), C.cyan]].map(([label, val, col]) => /*#__PURE__*/React.createElement("div", {
     key: label,
     style: {
       background: 'var(--panel)',

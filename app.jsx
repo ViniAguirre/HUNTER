@@ -1210,7 +1210,7 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
     if (debouncedQ) params.set('q', debouncedQ);
     // A opção "Sem contato" não é um status — é a fila de enriquecimento
     // manual (contato_status). Vai num parâmetro próprio.
-    if (filterStatus === 'sem_contato') params.set('contato', 'sem_contato');
+    if (filterStatus === 'sem_contato' || filterStatus === 'so_telefone') params.set('contato', filterStatus);
     else if (filterStatus) params.set('status', filterStatus);
     if (emailOnly) params.set('email_only', 'true');
     if (filterBusca) params.set('busca_id', filterBusca);
@@ -1348,7 +1348,8 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
           <option value="Novo">Novo</option>
           <option value="Qualificado">Qualificado</option>
           <option value="Incompleto">Incompleto</option>
-          <option value="sem_contato">Sem contato — enriquecer</option>
+          <option value="so_telefone">Só telefone — sem e-mail</option>
+          <option value="sem_contato">Sem contato / com perfil</option>
           <option value="Enviado">Enviado (todos)</option>
           <option value="Enviado:crm">Enviado · pelo CRM</option>
           <option value="Enviado:manual">Enviado · marcado à mão</option>
@@ -1912,11 +1913,16 @@ function BuscaDetail({ buscaId, onBack, onOpenLead, onDuplicar }) {
       )}
 
       <div className="h-cards" style={{ '--card':'150px', gap:12, marginBottom:18 }}>
+        {/* Qualificado é só o que saiu do enriquecimento com telefone E e-mail.
+            Segmentadas vem do próprio total de leads — somar qualificados +
+            sem contato dava número maior que a realidade, porque o lead sem
+            contato já estava contado nos dois. */}
         {[['Encontrados', fmtNum(b.enc), 'var(--text)'],
-          ['Segmentadas (perfil)', fmtNum((b.qual||0)+(b.sem_contato||0)), C.blue],
+          ['Segmentadas (perfil)', fmtNum(b.seg ?? b.qual), C.blue],
           ['Qualificados', fmtNum(b.qual), C.green],
-          ['Sem contato', fmtNum(b.sem_contato), C.red],
-          ['Fora do perfil', fmtNum(b.fora), C.amber],
+          ['Só telefone', fmtNum(b.so_telefone), C.amber],
+          ['Sem contato / com perfil', fmtNum(b.sem_contato), C.red],
+          ['Fora do perfil', fmtNum(b.fora), C.gray],
           ['Enviados ao CRM', fmtNum(b.crm), C.cyan]].map(([label,val,col]) => (
           <div key={label} style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:12, padding:'14px 16px' }}>
             <div style={{ fontSize:11.5, color:'var(--faint)', marginBottom:6 }}>{label}</div>
