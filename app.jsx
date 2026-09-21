@@ -4194,6 +4194,36 @@ function Config() {
   const [limpandoDemo, setLimpandoDemo] = useState(false);
   const [base, setBase] = useState(null);
   const [limpandoTudo, setLimpandoTudo] = useState(false);
+  const [chaves, setChaves] = useState([]);
+  const [nomeChave, setNomeChave] = useState('');
+  const [chaveNova, setChaveNova] = useState(null);   // só existe nesta sessão de tela
+  const [criandoChave, setCriandoChave] = useState(false);
+
+  const carregarChaves = () => fetch('/api/chaves', { credentials:'same-origin' })
+    .then(r => r.ok ? r.json() : []).then(d => setChaves(Array.isArray(d) ? d : [])).catch(() => {});
+
+  const criarChave = async () => {
+    if (!nomeChave.trim()) return;
+    setCriandoChave(true);
+    try {
+      const r = await fetch('/api/chaves', {
+        method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ nome: nomeChave.trim() })
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.erro || 'falhou');
+      setChaveNova(d.chave);   // aparece uma vez; o banco só guarda o hash
+      setNomeChave('');
+      carregarChaves();
+    } catch (e) { window.alert('Erro ao criar a chave: ' + e.message); }
+    finally { setCriandoChave(false); }
+  };
+
+  const revogarChave = async (c) => {
+    if (!window.confirm(`Revogar a chave "${c.nome}"? Quem estiver usando ela para de acessar na hora.`)) return;
+    await fetch('/api/chaves/' + c.id, { method:'DELETE', credentials:'same-origin' }).catch(() => {});
+    carregarChaves();
+  };
 
   const carregarSementes = () => fetch('/api/sementes/status', { credentials:'same-origin' })
     .then(r => r.json()).then(setSementes).catch(() => {});
@@ -4208,6 +4238,7 @@ function Config() {
     carregarSementes();
     carregarDemo();
     carregarBase();
+    carregarChaves();
   }, []);
 
   const limparTudo = async () => {
@@ -4510,6 +4541,77 @@ function Config() {
           detecta o CNPJ e a tag em qualquer lugar do payload — não precisa de formato fixo. Se o CRM não deixar
           adicionar o header, mande o segredo na própria URL: <code>…/conversao?token=SEGREDO</code>.
         </div>
+      </div>
+
+      <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:22 }}>
+        <h3 style={{ fontSize:14, fontWeight:600, margin:'0 0 4px' }}>Chaves de API (MCP)</h3>
+        <p style={{ fontSize:12.5, color:'var(--faint)', margin:'0 0 16px', lineHeight:1.5 }}>
+          Ligam um agente externo às <b>Propostas</b> deste Hunter. O agente conversa com o cliente, e ao final
+          salva a proposta aprovada aqui. A chave só enxerga propostas — não alcança leads, integrações nem usuários.
+        </p>
+
+        <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>
+          Endereço do servidor MCP
+        </label>
+        <input readOnly value={(typeof window !== 'undefined' ? window.location.origin : '') + '/mcp'}
+          onFocus={e => e.target.select()}
+          style={{ ...inp, fontFamily:'ui-monospace, monospace', fontSize:12, marginBottom:16 }}/>
+
+        <div style={{ display:'flex', gap:8, marginBottom:14, flexWrap:'wrap' }}>
+          <input value={nomeChave} onChange={e => setNomeChave(e.target.value)}
+            placeholder="Nome da chave (ex.: Agente de propostas — Hermes)"
+            style={{ ...inp, flex:'1 1 240px' }}/>
+          <button onClick={criarChave} disabled={criandoChave || !nomeChave.trim()}
+            style={{ height:38, padding:'0 16px', borderRadius:9, border:'none', background:'var(--gold)',
+              color:'#0E1936', fontWeight:600, fontSize:12.5, fontFamily:'inherit', whiteSpace:'nowrap',
+              cursor: (criandoChave || !nomeChave.trim()) ? 'default' : 'pointer',
+              opacity: (criandoChave || !nomeChave.trim()) ? .6 : 1 }}>
+            {criandoChave ? 'Gerando…' : 'Gerar chave'}
+          </button>
+        </div>
+
+        {/* A chave em claro existe só aqui, uma vez: o banco guarda o hash. Se a
+            pessoa fechar a tela sem copiar, o caminho é gerar outra. */}
+        {chaveNova && (
+          <div style={{ background:'var(--panel2)', border:'1px solid '+C.gold, borderRadius:10,
+            padding:'12px 14px', marginBottom:14 }}>
+            <div style={{ fontSize:12, color:C.gold, fontWeight:600, marginBottom:7 }}>
+              Copie agora — ela não será mostrada de novo.
+            </div>
+            <input readOnly value={chaveNova} onFocus={e => e.target.select()}
+              style={{ ...inp, fontFamily:'ui-monospace, monospace', fontSize:12 }}/>
+            <div style={{ fontSize:11, color:'var(--faint)', marginTop:8, lineHeight:1.5 }}>
+              No agente, configure o servidor MCP com o endereço acima e envie esta chave no cabeçalho
+              <code> Authorization: Bearer …</code>.
+            </div>
+            <button onClick={() => setChaveNova(null)}
+              style={{ marginTop:10, height:32, padding:'0 12px', borderRadius:8, border:'1px solid var(--border)',
+                background:'transparent', color:'var(--dim)', fontSize:12, fontFamily:'inherit', cursor:'pointer' }}>
+              Já copiei, pode esconder
+            </button>
+          </div>
+        )}
+
+        {chaves.length === 0 && (
+          <div style={{ fontSize:12.5, color:'var(--faint)' }}>Nenhuma chave gerada ainda.</div>
+        )}
+        {chaves.map(c => (
+          <div key={c.id} style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 0',
+            borderTop:'1px solid var(--border)', flexWrap:'wrap' }}>
+            <div style={{ flex:1, minWidth:180 }}>
+              <div style={{ fontSize:13, fontWeight:500 }}>{c.nome}</div>
+              <div style={{ fontSize:11, color:'var(--faint)', marginTop:2 }}>
+                <code>{c.prefixo}…</code> · criada {timeAgo(c.criado_em)}
+                {c.ultimo_uso ? ` · usada ${timeAgo(c.ultimo_uso)}` : ' · nunca usada'}
+              </div>
+            </div>
+            <button onClick={() => revogarChave(c)}
+              style={{ height:32, padding:'0 12px', borderRadius:8, border:'1px solid var(--border)',
+                background:'transparent', color:C.red, fontSize:12, fontFamily:'inherit', cursor:'pointer' }}>
+              Revogar
+            </button>
+          </div>
+        ))}
       </div>
 
       <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:22 }}>

@@ -593,7 +593,24 @@ async function init() {
     );
   `);
 
-  for (const t of ['usuarios', 'buscas', 'leads', 'integracoes', 'sementes', 'contadores', 'contadores_hora', 'propostas_valor', 'listas_semelhantes']) {
+  // Chaves de API: como um agente externo (MCP) entra sem saber a senha de
+  // ninguém. Guarda só o HASH — vazou o banco, as chaves não são reutilizáveis;
+  // `prefixo` existe pra a tela mostrar qual é qual sem revelar o segredo.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS chaves_api (
+      id          SERIAL PRIMARY KEY,
+      nome        TEXT NOT NULL,
+      hash        TEXT NOT NULL,
+      prefixo     TEXT NOT NULL,
+      escopo      TEXT NOT NULL DEFAULT 'propostas',
+      criado_por  INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+      criado_em   TIMESTAMPTZ NOT NULL DEFAULT now(),
+      ultimo_uso  TIMESTAMPTZ
+    );
+    CREATE INDEX IF NOT EXISTS idx_chaves_api_hash ON chaves_api(hash);
+  `);
+
+  for (const t of ['usuarios', 'buscas', 'leads', 'integracoes', 'sementes', 'contadores', 'contadores_hora', 'propostas_valor', 'listas_semelhantes', 'chaves_api']) {
     await tenantizarTabela(pool, t);
   }
 
@@ -1096,56 +1113,249 @@ app.get('/api/funil', requireAuth, async (req, res) => {
 const MAX_PROPOSTAS = 5;
 
 app.get('/api/propostas', requireAuth, async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      `SELECT id, rotulo, texto, criado_em FROM propostas_valor ORDER BY criado_em`
-    );
-    res.json(rows);
-  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+  try { res.json(await listarPropostas()); }
+  catch (e) { responderErro(res, e); }
 });
 
+// Regra das propostas num lugar só: a tela e o MCP entram pelas MESMAS funções.
+// Duplicar a validação nos dois caminhos era pedir pra um aceitar o que o outro
+// recusa — e o agente descobriria isso só na hora de salvar.
+const MAX_TEXTO_PROPOSTA = 2000;
+
+class ErroProposta extends Error {
+  constructor(status, mensagem) { super(mensagem); this.status = status; }
+}
+
+function normalizarProposta(dados) {
+  const texto = String(dados.texto || '').trim();
+  const rotulo = String(dados.rotulo || '').trim().slice(0, 60) || null;
+  if (!texto) throw new ErroProposta(400, 'escreva a proposta de valor');
+  if (texto.length > MAX_TEXTO_PROPOSTA) {
+    throw new ErroProposta(400, `proposta muito longa: ${texto.length} caracteres, o limite é ${MAX_TEXTO_PROPOSTA}`);
+  }
+  return { texto, rotulo };
+}
+
+async function listarPropostas() {
+  const { rows } = await pool.query(
+    `SELECT id, rotulo, texto, criado_em FROM propostas_valor ORDER BY criado_em`
+  );
+  return rows;
+}
+
+async function criarProposta(dados) {
+  const { texto, rotulo } = normalizarProposta(dados);
+  const { rows: [{ n }] } = await pool.query(`SELECT COUNT(*)::int n FROM propostas_valor`);
+  if (n >= MAX_PROPOSTAS) {
+    throw new ErroProposta(409,
+      `limite de ${MAX_PROPOSTAS} propostas atingido — exclua ou atualize uma das existentes antes de criar outra`);
+  }
+  const { rows: [row] } = await pool.query(
+    `INSERT INTO propostas_valor (rotulo, texto) VALUES ($1,$2) RETURNING id, rotulo, texto, criado_em`,
+    [rotulo, texto]
+  );
+  return row;
+}
+
+async function atualizarProposta(id, dados) {
+  const { texto, rotulo } = normalizarProposta(dados);
+  const { rows: [row] } = await pool.query(
+    `UPDATE propostas_valor SET rotulo=$2, texto=$3 WHERE id=$1 RETURNING id, rotulo, texto, criado_em`,
+    [id, rotulo, texto]
+  );
+  if (!row) throw new ErroProposta(404, 'proposta não encontrada');
+  return row;
+}
+
+async function excluirProposta(id) {
+  const { rowCount } = await pool.query(`DELETE FROM propostas_valor WHERE id=$1`, [id]);
+  if (!rowCount) throw new ErroProposta(404, 'proposta não encontrada');
+  return { ok: true };
+}
+
+// Traduz o erro de regra no status certo; o resto vira 500 com log.
+function responderErro(res, e) {
+  if (e instanceof ErroProposta) return res.status(e.status).json({ erro: e.message });
+  console.error(e); return res.status(500).json({ erro: 'erro interno' });
+}
+
 app.post('/api/propostas', requireAuth, requireEditor, async (req, res) => {
-  const texto = String(req.body.texto || '').trim();
-  const rotulo = String(req.body.rotulo || '').trim().slice(0, 60) || null;
-  if (!texto) return res.status(400).json({ erro: 'escreva a proposta de valor' });
-  if (texto.length > 2000) return res.status(400).json({ erro: 'proposta muito longa (máx. 2000 caracteres)' });
-  try {
-    const { rows: [{ n }] } = await pool.query(`SELECT COUNT(*)::int n FROM propostas_valor`);
-    if (n >= MAX_PROPOSTAS) return res.status(409).json({ erro: `limite de ${MAX_PROPOSTAS} variações — exclua uma antes de criar outra` });
-    const { rows: [row] } = await pool.query(
-      `INSERT INTO propostas_valor (rotulo, texto) VALUES ($1,$2) RETURNING id, rotulo, texto, criado_em`,
-      [rotulo, texto]
-    );
-    res.status(201).json(row);
-  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+  try { res.status(201).json(await criarProposta(req.body || {})); }
+  catch (e) { responderErro(res, e); }
 });
 
 app.patch('/api/propostas/:id', requireAuth, requireEditor, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
-  const texto = String(req.body.texto || '').trim();
-  const rotulo = String(req.body.rotulo || '').trim().slice(0, 60) || null;
-  if (!texto) return res.status(400).json({ erro: 'escreva a proposta de valor' });
-  if (texto.length > 2000) return res.status(400).json({ erro: 'proposta muito longa (máx. 2000 caracteres)' });
-  try {
-    const { rows: [row] } = await pool.query(
-      `UPDATE propostas_valor SET rotulo=$2, texto=$3 WHERE id=$1 RETURNING id, rotulo, texto, criado_em`,
-      [id, rotulo, texto]
-    );
-    if (!row) return res.status(404).json({ erro: 'não encontrada' });
-    res.json(row);
-  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+  try { res.json(await atualizarProposta(id, req.body || {})); }
+  catch (e) { responderErro(res, e); }
 });
 
 app.delete('/api/propostas/:id', requireAuth, requireEditor, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
+  try { res.json(await excluirProposta(id)); }
+  catch (e) { responderErro(res, e); }
+});
+
+// ── Chaves de API + servidor MCP ──────────────────────────────────────────────
+// O agente que escreve a proposta vive fora do Hunter (Hermes, Buzz, Claude...).
+// Pra ele salvar direto na aba Propostas faltava só uma coisa: um jeito de se
+// autenticar que NÃO fosse a senha de um usuário — com a senha, o agente teria
+// acesso a leads, integrações e usuários por tabela.
+const { criarHandler: criarHandlerMcp } = require('./mcp');
+
+const PREFIXO_CHAVE = 'hk_';
+
+function hashChave(chave) {
+  return crypto.createHash('sha256').update(String(chave)).digest('hex');
+}
+
+app.get('/api/chaves', requireAuth, requireMaster, async (req, res) => {
   try {
-    const { rowCount } = await pool.query(`DELETE FROM propostas_valor WHERE id=$1`, [id]);
+    const { rows } = await pool.query(
+      `SELECT c.id, c.nome, c.prefixo, c.escopo, c.criado_em, c.ultimo_uso, u.nome AS criado_por_nome
+         FROM chaves_api c LEFT JOIN usuarios u ON u.id = c.criado_por
+        ORDER BY c.criado_em DESC`
+    );
+    res.json(rows);
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+app.post('/api/chaves', requireAuth, requireMaster, async (req, res) => {
+  const nome = String(req.body.nome || '').trim().slice(0, 60);
+  if (!nome) return res.status(400).json({ erro: 'dê um nome à chave (ex.: "Agente de propostas")' });
+  try {
+    // 32 bytes em base64url: entropia de sobra e cabe num header sem escapar.
+    const chave = PREFIXO_CHAVE + crypto.randomBytes(32).toString('base64url');
+    const { rows: [row] } = await pool.query(
+      `INSERT INTO chaves_api (nome, hash, prefixo, criado_por) VALUES ($1,$2,$3,$4)
+       RETURNING id, nome, prefixo, escopo, criado_em`,
+      [nome, hashChave(chave), chave.slice(0, 11), req.user.id]
+    );
+    // A chave em claro aparece AQUI e nunca mais: o banco só tem o hash.
+    res.status(201).json({ ...row, chave });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+app.delete('/api/chaves/:id', requireAuth, requireMaster, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
+  try {
+    const { rowCount } = await pool.query(`DELETE FROM chaves_api WHERE id=$1`, [id]);
     if (!rowCount) return res.status(404).json({ erro: 'não encontrada' });
     res.json({ ok: true });
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
+
+// Resolve o Bearer. A consulta roda sob RLS, então a chave de um cliente
+// simplesmente não existe na instância do outro — o isolamento sai de graça.
+async function autenticarChave(req) {
+  const cabecalho = req.get('authorization') || '';
+  const chave = /^Bearer\s+(.+)$/i.exec(cabecalho)?.[1]?.trim()
+    || req.get('x-hunter-key')
+    || '';
+  if (!chave) throw new Error('envie a chave em Authorization: Bearer <chave>');
+  const { rows: [row] } = await pool.query(
+    `SELECT id, nome, escopo FROM chaves_api WHERE hash=$1`, [hashChave(chave)]
+  );
+  if (!row) throw new Error('chave inválida ou revogada');
+  // Best-effort: registrar o uso não pode derrubar a chamada.
+  pool.query(`UPDATE chaves_api SET ultimo_uso=now() WHERE id=$1`, [row.id]).catch(() => {});
+  return { chave: row };
+}
+
+// As ferramentas que o agente enxerga. Descrição é interface: o agente decide
+// o que chamar lendo isto, então diz o limite, o teto de caracteres e quando
+// pedir confirmação — regra que ele não tem como adivinhar sozinho.
+const FERRAMENTAS_MCP = [
+  {
+    nome: 'listar_propostas',
+    descricao: 'Lista as propostas de valor salvas no Hunter, com id, rótulo, texto e quantas vagas ainda existem. '
+      + `Chame ANTES de criar: o limite é de ${MAX_PROPOSTAS} propostas por cliente.`,
+    schema: { type: 'object', properties: {}, additionalProperties: false },
+    executar: async () => {
+      const propostas = await listarPropostas();
+      return {
+        propostas,
+        total: propostas.length,
+        limite: MAX_PROPOSTAS,
+        vagas_restantes: Math.max(0, MAX_PROPOSTAS - propostas.length),
+      };
+    },
+  },
+  {
+    nome: 'criar_proposta',
+    descricao: 'Salva uma nova proposta de valor na aba Propostas do Hunter, onde ela fica disponível para ser '
+      + `escolhida na criação de cada radar. Texto puro, no máximo ${2000} caracteres. `
+      + 'Só chame depois que a pessoa aprovar o texto final — cada chamada ocupa uma das vagas.',
+    schema: {
+      type: 'object',
+      properties: {
+        rotulo: { type: 'string', description: 'Nome curto para identificar a proposta na lista (até 60 caracteres).' },
+        texto: { type: 'string', description: 'O texto da proposta de valor, em texto puro.' },
+      },
+      required: ['texto'],
+      additionalProperties: false,
+    },
+    executar: async (args) => {
+      const row = await criarProposta(args);
+      return { ok: true, proposta: row, mensagem: 'Proposta salva e já disponível na aba Propostas do Hunter.' };
+    },
+  },
+  {
+    nome: 'atualizar_proposta',
+    descricao: 'Substitui o texto de uma proposta existente. Use quando o limite estiver cheio e a pessoa preferir '
+      + 'reescrever uma das atuais em vez de excluir. Confirme com ela qual será substituída.',
+    schema: {
+      type: 'object',
+      properties: {
+        id: { type: 'integer', description: 'id da proposta, obtido em listar_propostas.' },
+        rotulo: { type: 'string' },
+        texto: { type: 'string' },
+      },
+      required: ['id', 'texto'],
+      additionalProperties: false,
+    },
+    executar: async (args) => {
+      const row = await atualizarProposta(parseInt(args.id, 10), args);
+      return { ok: true, proposta: row };
+    },
+  },
+  {
+    nome: 'excluir_proposta',
+    descricao: 'Apaga uma proposta. Ação destrutiva e sem desfazer: confirme com a pessoa, citando o rótulo, '
+      + 'antes de chamar.',
+    schema: {
+      type: 'object',
+      properties: { id: { type: 'integer' } },
+      required: ['id'],
+      additionalProperties: false,
+    },
+    executar: async (args) => excluirProposta(parseInt(args.id, 10)),
+  },
+];
+
+// Limite próprio: a chave não passa pelo loginLimiter, e um agente em laço
+// poderia martelar o endpoint.
+const mcpLimiter = rateLimit({ windowMs: 60_000, max: 120 });
+
+app.post('/mcp', mcpLimiter, criarHandlerMcp({
+  ferramentas: FERRAMENTAS_MCP,
+  servidor: {
+    nome: 'hunter',
+    versao: '1.0.0',
+    instrucoes: 'Ferramentas da aba Propostas do Hunter (motor de prospecção B2B). A proposta de valor é o texto '
+      + 'que o Agente SWOT do Hunter usa como "o que nós vendemos" ao analisar cada empresa encontrada.',
+  },
+  autenticar: autenticarChave,
+}));
+
+// GET no mesmo caminho é o canal servidor→cliente (SSE) do transporte. Não
+// oferecemos: 405 é a resposta que a especificação prevê, e evita o cliente
+// ficar esperando um stream que nunca vem.
+app.get('/mcp', (req, res) => res.status(405).json({ erro: 'use POST (JSON-RPC)' }));
+
 
 app.get('/api/buscas', requireAuth, async (req, res) => {
   try {
