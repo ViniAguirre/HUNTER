@@ -2295,23 +2295,36 @@ app.patch('/api/integracoes/:id', requireAuth, requireMaster, async (req, res) =
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
-// Tracking Hub: confere se a URL de webhook vale, SEM criar evento lá dentro.
-// O truque é o contrato deles: 202 = "payload recusado" e 404 = "token
-// inválido". Mandando de propósito um envelope incompleto, um 202 prova que a
-// URL e o token estão certos (quem respondeu foi o Hub, e nada foi gravado) e o
-// 404 separa "URL errada" de "Hub fora do ar". Um evento de teste de verdade
-// sujaria a jornada de alguém do outro lado.
+// Tracking Hub: confere se a URL de webhook vale, sem criar evento na jornada.
+// O Hub não tem rota de ping, então o teste usa o contrato deles: 202 = "payload
+// recusado", 404 = "token inválido". Um envelope incompleto de propósito volta
+// 202 e prova que a URL e o token estão certos; o 404 separa "URL errada" de
+// "Hub fora do ar". Um evento válido de teste sujaria a jornada de alguém.
+//
+// O que o 202 NÃO é: invisível. Lendo o código do Hub, o envelope rejeitado fica
+// registrado no ledger bruto e na fila de falhas (DLQ) deles — e a contagem de
+// pendentes da DLQ é o sinal de saúde que eles monitoram. Por isso o teste vai
+// marcado (event_id e properties com "teste de conexão"): quem olhar a DLQ
+// reconhece e descarta, em vez de achar que o Hunter está mandando lixo. Os
+// campos a mais não o tornam válido — seguem faltando event_name, occurred_at,
+// identity e idempotency_key.
 app.post('/api/integracoes/tracking/testar', requireAuth, requireMaster, async (req, res) => {
   const informada = String(req.body.url || '').trim();
   try {
     const url = informada || await tracking.urlAtiva(pool);
     if (!url) return res.status(400).json({ erro: 'cole a URL de webhook do Tracking Hub' });
     if (!tracking.urlValida(url)) return res.status(400).json({ erro: 'URL inválida — precisa começar com https://' });
-    const r = await tracking.enviar(url, { schema_version: '1.0', source: { system: 'hunter' } });
+    const r = await tracking.enviar(url, {
+      schema_version: '1.0',
+      event_id: 'hunter-teste-de-conexao-' + Date.now(),
+      source: { system: 'hunter' },
+      properties: { hunter_teste_de_conexao: true },
+    });
     // 202 é o resultado ESPERADO aqui: o Hub recebeu, entendeu e recusou o
     // envelope incompleto. Quer dizer que a URL está viva e o token confere.
     if (r.permanente && /HTTP 202/.test(r.motivo || '')) {
-      return res.json({ ok: true, detalhe: 'URL e token válidos (nenhum evento foi criado no Hub).' });
+      return res.json({ ok: true, detalhe: 'URL e token válidos. O teste aparece na fila de falhas do Hub como '
+        + '"teste de conexão" — é esperado e não entra na jornada de ninguém.' });
     }
     if (r.ok) return res.json({ ok: true, detalhe: 'Hub respondeu 200 — conexão válida.' });
     res.status(400).json({ erro: r.motivo });
