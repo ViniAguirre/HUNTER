@@ -20,7 +20,16 @@ const { registrar } = require('./tracking');
 // (direto) quanto pelo lookalike (como prior dos pesos dinâmicos).
 const W = perfilamento.W;
 
-const MAX_TENTATIVAS_ORCAMENTO = 96; // ~48h em ciclos de 30min — evita ficar preso pra sempre
+// Por quanto tempo uma empresa JÁ APROVADA pode esperar vaga antes de desistir.
+// Era um número de tentativas (96 × 30min = 48h), e isso descartava em silêncio
+// empresas que já tinham custado crédito da CNPJá: com o motor parado no fim de
+// semana, a espera de sexta 18h até segunda 9h é de 63h. Agora a espera é
+// medida em tempo corrido e cada tentativa acorda na hora certa, então o teto
+// só serve pra não segurar um job pra sempre se algo estiver quebrado.
+const ESPERA_MAXIMA_MS = 7 * 24 * 3600_000;
+// Espalha o acordar dos jobs nos primeiros minutos da abertura: na virada das
+// 9h, centenas de empresas represadas batendo no banco no mesmo segundo.
+const ESPALHAR_MS = 5 * 60_000;
 
 module.exports = async function score1(job, pool, queues) {
   const { cnpj, busca_id } = job.data;
@@ -79,13 +88,23 @@ module.exports = async function score1(job, pool, queues) {
 
   const vagas = await orcamento.disponivel(pool);
   if (vagas.dia <= 0 || vagas.hora <= 0) {
-    const tentativas = (job.data.tentativa_orcamento || 0) + 1;
-    if (tentativas <= MAX_TENTATIVAS_ORCAMENTO && queues?.score1) {
-      await queues.score1.add('score1', { cnpj, busca_id, tentativa_orcamento: tentativas },
-        { delay: 30 * 60 * 1000, removeOnComplete: { count: 50 }, removeOnFail: { count: 50 } });
+    const motivo = vagas.foraDaJanela ? 'fora_da_janela' : (vagas.dia <= 0 ? 'limite_diario' : 'cadencia_horaria');
+    const desde = job.data.aguardando_desde || Date.now();
+    const esperando = Date.now() - desde;
+    if (esperando >= ESPERA_MAXIMA_MS || vagas.esperarMs == null) {
+      // Desistir não pode ser silencioso: a empresa já passou no perfil e já
+      // custou crédito. O log diz qual, de qual radar, e há quanto tempo.
+      console.warn(`[score1] ${cnpj} (radar ${busca_id}) desistiu após ${Math.round(esperando / 3600_000)}h `
+        + `esperando vaga (${motivo}) — revise o teto diário ou a janela de funcionamento.`);
+      return { cnpj, score, corte, passou: true, desistiu: true, motivo, horas_esperando: Math.round(esperando / 3600_000) };
     }
-    return { cnpj, score, corte, passou: true, aguardando_orcamento: true, tentativas,
-      motivo: vagas.foraDaJanela ? 'fora_da_janela' : (vagas.dia <= 0 ? 'limite_diario' : 'cadencia_horaria') };
+    if (queues?.score1) {
+      const delay = Math.max(60_000, vagas.esperarMs) + Math.floor(Math.random() * ESPALHAR_MS);
+      await queues.score1.add('score1', { cnpj, busca_id, aguardando_desde: desde },
+        { delay, removeOnComplete: { count: 50 }, removeOnFail: { count: 50 } });
+    }
+    return { cnpj, score, corte, passou: true, aguardando_orcamento: true, motivo,
+      volta_em_min: Math.round((vagas.esperarMs || 0) / 60_000) };
   }
 
   const breakdownJson = JSON.stringify(breakdown);

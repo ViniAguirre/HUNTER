@@ -9073,6 +9073,7 @@ function Config() {
           janela_inicio: cfg.janela_inicio,
           janela_fim: cfg.janela_fim,
           janela_tz: cfg.janela_tz,
+          janela_dias: Array.isArray(cfg.janela_dias) ? cfg.janela_dias : undefined,
           alerta_email: cfg.alerta_email,
           crm_auto_global: cfg.crm_auto_global,
           crm_lookalike_auto: cfg.crm_lookalike_auto,
@@ -9243,12 +9244,53 @@ function Config() {
   }, [['America/Sao_Paulo', 'Brasília (GMT-3)'], ['America/Manaus', 'Manaus (GMT-4)'], ['America/Cuiaba', 'Cuiabá (GMT-4)'], ['America/Campo_Grande', 'Campo Grande (GMT-4)'], ['America/Belem', 'Belém (GMT-3)'], ['America/Fortaleza', 'Fortaleza (GMT-3)'], ['America/Recife', 'Recife (GMT-3)'], ['America/Bahia', 'Salvador (GMT-3)'], ['America/Porto_Velho', 'Porto Velho (GMT-4)'], ['America/Boa_Vista', 'Boa Vista (GMT-4)'], ['America/Rio_Branco', 'Rio Branco (GMT-5)'], ['America/Noronha', 'F. de Noronha (GMT-2)'], ['UTC', 'UTC (GMT-0)']].map(([v, t]) => /*#__PURE__*/React.createElement("option", {
     key: v,
     value: v
-  }, t)))), (() => {
+  }, t)))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 6,
+      flexWrap: 'wrap',
+      marginTop: 10
+    }
+  }, [[1, 'Seg'], [2, 'Ter'], [3, 'Qua'], [4, 'Qui'], [5, 'Sex'], [6, 'Sáb'], [0, 'Dom']].map(([d, rot]) => {
+    const dias = Array.isArray(cfg.janela_dias) ? cfg.janela_dias : [0, 1, 2, 3, 4, 5, 6];
+    const ativo = dias.includes(d);
+    // Não deixa desmarcar o último: sem nenhum dia o motor nunca abre,
+    // e o servidor recusaria salvar do mesmo jeito.
+    const ultimo = ativo && dias.length === 1;
+    return /*#__PURE__*/React.createElement("button", {
+      key: d,
+      type: "button",
+      "aria-pressed": ativo,
+      title: ultimo ? 'Pelo menos um dia precisa ficar marcado' : undefined,
+      onClick: () => {
+        if (ultimo) return;
+        set('janela_dias', ativo ? dias.filter(x => x !== d) : [...dias, d].sort());
+      },
+      style: {
+        height: 34,
+        minWidth: 48,
+        padding: '0 12px',
+        borderRadius: 8,
+        fontSize: 12.5,
+        fontFamily: 'inherit',
+        cursor: ultimo ? 'not-allowed' : 'pointer',
+        fontWeight: ativo ? 600 : 400,
+        border: '1px solid ' + (ativo ? 'var(--accent)' : 'var(--border)'),
+        background: ativo ? 'var(--panel2)' : 'transparent',
+        color: ativo ? 'var(--accent)' : 'var(--faint)'
+      }
+    }, rot);
+  })), (() => {
     const ini = cfg.janela_inicio ?? 0,
       fim = cfg.janela_fim ?? 24;
     const horas = ini === 0 && fim >= 24 ? 24 : fim > ini ? fim - ini : 24 - ini + fim;
     const lim = +cfg.limite_diario || 0;
     const porHora = lim ? Math.max(1, Math.ceil(lim / horas)) : 0;
+    const dias = Array.isArray(cfg.janela_dias) ? cfg.janela_dias : [0, 1, 2, 3, 4, 5, 6];
+    const nDias = dias.length;
+    const nomes = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+    const fechados = [1, 2, 3, 4, 5, 6, 0].filter(d => !dias.includes(d)).map(d => nomes[d]);
+    const fechadosTxt = fechados.length > 1 ? fechados.slice(0, -1).join(', ') + ' e ' + fechados[fechados.length - 1] : fechados[0];
     return /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 11.5,
@@ -9256,7 +9298,7 @@ function Config() {
         marginTop: 10,
         lineHeight: 1.5
       }
-    }, ini === 0 && fim >= 24 ? /*#__PURE__*/React.createElement(React.Fragment, null, "O motor est\xE1 trabalhando ", /*#__PURE__*/React.createElement("b", null, "24 horas por dia"), ". Defina uma janela pra concentrar a capta\xE7\xE3o no hor\xE1rio comercial.") : /*#__PURE__*/React.createElement(React.Fragment, null, "O motor trabalha ", /*#__PURE__*/React.createElement("b", null, horas, "h por dia"), " (", String(ini).padStart(2, '0'), ":00 \xE0s ", String(fim).padStart(2, '0'), ":00", fim <= ini ? ' do dia seguinte' : '', ") e fica parado fora desse per\xEDodo."), lim > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, " O teto de ", lim, " leads/dia \xE9 dividido pelas horas da janela: ", /*#__PURE__*/React.createElement("b", null, "~", porHora, " leads por hora"), ". Sobra de um dia n\xE3o acumula pro dia seguinte."));
+    }, ini === 0 && fim >= 24 ? /*#__PURE__*/React.createElement(React.Fragment, null, "O motor est\xE1 trabalhando ", /*#__PURE__*/React.createElement("b", null, "24 horas por dia"), ". Defina uma janela pra concentrar a capta\xE7\xE3o no hor\xE1rio comercial.") : /*#__PURE__*/React.createElement(React.Fragment, null, "O motor trabalha ", /*#__PURE__*/React.createElement("b", null, horas, "h por dia"), " (", String(ini).padStart(2, '0'), ":00 \xE0s ", String(fim).padStart(2, '0'), ":00", fim <= ini ? ' do dia seguinte' : '', ") e fica parado fora desse per\xEDodo."), nDias < 7 && /*#__PURE__*/React.createElement(React.Fragment, null, " Funciona ", /*#__PURE__*/React.createElement("b", null, nDias, " ", nDias === 1 ? 'dia' : 'dias', " por semana"), " (parado:", ' ', fechadosTxt, ")."), lim > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, " O teto de ", lim, " leads/dia \xE9 dividido pelas horas da janela: ", /*#__PURE__*/React.createElement("b", null, "~", porHora, " leads por hora"), nDias < 7 && /*#__PURE__*/React.createElement(React.Fragment, null, ", at\xE9 ", /*#__PURE__*/React.createElement("b", null, lim * nDias, " por semana")), ". Sobra de um dia n\xE3o acumula pro dia seguinte."), ' ', "Empresa aprovada fora do hor\xE1rio n\xE3o se perde: espera a pr\xF3xima abertura.");
   })()), DESCOBERTA_WEB_HABILITADA && /*#__PURE__*/React.createElement("div", {
     style: {
       borderTop: '1px solid var(--border)',

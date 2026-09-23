@@ -4300,6 +4300,7 @@ function Config() {
           web_paid_lookup_ativo: cfg.web_paid_lookup_ativo, web_paid_lookup_limite: cfg.web_paid_lookup_limite,
           ttl_cache_dias: cfg.ttl_cache_dias, parada_min: cfg.parada_min,
           janela_inicio: cfg.janela_inicio, janela_fim: cfg.janela_fim, janela_tz: cfg.janela_tz,
+          janela_dias: Array.isArray(cfg.janela_dias) ? cfg.janela_dias : undefined,
           alerta_email: cfg.alerta_email, crm_auto_global: cfg.crm_auto_global,
           crm_lookalike_auto: cfg.crm_lookalike_auto,
           crm_conversao_tags: cfg.crm_conversao_tags,
@@ -4369,19 +4370,57 @@ function Config() {
                 ['UTC','UTC (GMT-0)']].map(([v,t]) => <option key={v} value={v}>{t}</option>)}
             </select>
           </div>
+
+          {/* Dias da semana. Ordem começando na segunda porque é como a semana
+              de trabalho é lida; o valor gravado segue o padrão 0 = domingo. */}
+          <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginTop:10 }}>
+            {[[1,'Seg'],[2,'Ter'],[3,'Qua'],[4,'Qui'],[5,'Sex'],[6,'Sáb'],[0,'Dom']].map(([d, rot]) => {
+              const dias = Array.isArray(cfg.janela_dias) ? cfg.janela_dias : [0,1,2,3,4,5,6];
+              const ativo = dias.includes(d);
+              // Não deixa desmarcar o último: sem nenhum dia o motor nunca abre,
+              // e o servidor recusaria salvar do mesmo jeito.
+              const ultimo = ativo && dias.length === 1;
+              return (
+                <button key={d} type="button" aria-pressed={ativo}
+                  title={ultimo ? 'Pelo menos um dia precisa ficar marcado' : undefined}
+                  onClick={() => { if (ultimo) return;
+                    set('janela_dias', ativo ? dias.filter(x => x !== d) : [...dias, d].sort()); }}
+                  style={{ height:34, minWidth:48, padding:'0 12px', borderRadius:8, fontSize:12.5, fontFamily:'inherit',
+                    cursor: ultimo ? 'not-allowed' : 'pointer', fontWeight: ativo ? 600 : 400,
+                    border: '1px solid ' + (ativo ? 'var(--accent)' : 'var(--border)'),
+                    background: ativo ? 'var(--panel2)' : 'transparent',
+                    color: ativo ? 'var(--accent)' : 'var(--faint)' }}>
+                  {rot}
+                </button>
+              );
+            })}
+          </div>
+
           {(() => {
             const ini = cfg.janela_inicio ?? 0, fim = cfg.janela_fim ?? 24;
             const horas = (ini === 0 && fim >= 24) ? 24 : (fim > ini ? fim - ini : 24 - ini + fim);
             const lim = +cfg.limite_diario || 0;
             const porHora = lim ? Math.max(1, Math.ceil(lim / horas)) : 0;
+            const dias = Array.isArray(cfg.janela_dias) ? cfg.janela_dias : [0,1,2,3,4,5,6];
+            const nDias = dias.length;
+            const nomes = ['domingo','segunda','terça','quarta','quinta','sexta','sábado'];
+            const fechados = [1,2,3,4,5,6,0].filter(d => !dias.includes(d)).map(d => nomes[d]);
+            const fechadosTxt = fechados.length > 1
+              ? fechados.slice(0, -1).join(', ') + ' e ' + fechados[fechados.length - 1]
+              : fechados[0];
             return (
               <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:10, lineHeight:1.5 }}>
                 {ini === 0 && fim >= 24
                   ? <>O motor está trabalhando <b>24 horas por dia</b>. Defina uma janela pra concentrar a captação no horário comercial.</>
                   : <>O motor trabalha <b>{horas}h por dia</b> ({String(ini).padStart(2,'0')}:00 às {String(fim).padStart(2,'0')}:00
                      {fim <= ini ? ' do dia seguinte' : ''}) e fica parado fora desse período.</>}
-                {lim > 0 && <> O teto de {lim} leads/dia é dividido pelas horas da janela: <b>~{porHora} leads por hora</b>.
-                  Sobra de um dia não acumula pro dia seguinte.</>}
+                {/* Sem artigo de propósito: "aos sábados" mas "às segundas" — com
+                    lista mista, qualquer artigo erra o gênero de algum dia. */}
+                {nDias < 7 && <> Funciona <b>{nDias} {nDias === 1 ? 'dia' : 'dias'} por semana</b> (parado:
+                  {' '}{fechadosTxt}).</>}
+                {lim > 0 && <> O teto de {lim} leads/dia é dividido pelas horas da janela: <b>~{porHora} leads por hora</b>
+                  {nDias < 7 && <>, até <b>{lim * nDias} por semana</b></>}. Sobra de um dia não acumula pro dia seguinte.</>}
+                {' '}Empresa aprovada fora do horário não se perde: espera a próxima abertura.
               </div>
             );
           })()}

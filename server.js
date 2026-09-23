@@ -471,6 +471,9 @@ async function init() {
     ALTER TABLE config ADD COLUMN IF NOT EXISTS janela_inicio INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE config ADD COLUMN IF NOT EXISTS janela_fim    INTEGER NOT NULL DEFAULT 24;
     ALTER TABLE config ADD COLUMN IF NOT EXISTS janela_tz     TEXT NOT NULL DEFAULT 'America/Sao_Paulo';
+    -- Dias da semana em que o motor capta (0 = domingo). Padrão: todos — quem
+    -- já usa o Hunter segue exatamente como estava até marcar outra coisa.
+    ALTER TABLE config ADD COLUMN IF NOT EXISTS janela_dias   INTEGER[] NOT NULL DEFAULT '{0,1,2,3,4,5,6}';
     ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS master BOOLEAN NOT NULL DEFAULT false;
     CREATE TABLE IF NOT EXISTS sementes (
       id         SERIAL PRIMARY KEY,
@@ -2399,6 +2402,16 @@ app.patch('/api/config', requireAuth, requireMaster, async (req, res) => {
   // janela que atravessa a madrugada (ex.: 22h→6h) — o motor trata isso.
   if ('janela_inicio'  in b) add('janela_inicio',  num(b.janela_inicio, 0, 23));
   if ('janela_fim'     in b) add('janela_fim',     num(b.janela_fim, 1, 24));
+  if ('janela_dias' in b) {
+    // Recusa em vez de "consertar": salvar sem nenhum dia marcado pararia o
+    // motor inteiro, e isso tem que ser uma escolha visível (pausar os radares),
+    // não um efeito colateral de um clique errado.
+    const dias = Array.isArray(b.janela_dias)
+      ? [...new Set(b.janela_dias.map(Number).filter(d => Number.isInteger(d) && d >= 0 && d <= 6))].sort()
+      : [];
+    if (!dias.length) return res.status(400).json({ erro: 'marque pelo menos um dia da semana' });
+    sets.push(`janela_dias=$${sets.length+1}::int[]`); vals.push(dias);
+  }
   if ('janela_tz' in b) {
     // Whitelist: fuso inválido faria o Postgres estourar em toda checagem de
     // orçamento — e o motor pararia de captar sem motivo aparente.
