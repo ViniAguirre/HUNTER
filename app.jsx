@@ -2703,7 +2703,7 @@ const botaoMini = { width:28, height:28, borderRadius:7, border:'1px solid var(-
   color:'var(--dim)', cursor:'pointer', display:'inline-flex', alignItems:'center', justifyContent:'center',
   fontSize:13, fontFamily:'inherit', padding:0, flexShrink:0 };
 
-function RegioesEditor({ regioes, setRegioes, municData, tipo }) {
+function RegioesEditor({ regioes, setRegioes, municData, tipo, onRemoverAuto }) {
   const [busca, setBusca] = useState('');
   const [foco, setFoco] = useState(false);
   const chaves = new Set(regioes.map(r => r.chave));
@@ -2712,7 +2712,13 @@ function RegioesEditor({ regioes, setRegioes, municData, tipo }) {
     const j = i + d; if (j < 0 || j >= prev.length) return prev;
     const n = [...prev]; [n[i], n[j]] = [n[j], n[i]]; return n;
   });
-  const remover = i => setRegioes(prev => prev.filter((_, k) => k !== i));
+  // Tirar uma região que o piloto sugeriu é dizer "não quero esse estado": ela
+  // vai pra lista de exclusão, senão a expansão proporia o mesmo de novo.
+  const remover = i => {
+    const r = regioes[i];
+    if (r?.auto && onRemoverAuto) onRemoverAuto(r.ufs || []);
+    setRegioes(prev => prev.filter((_, k) => k !== i));
+  };
   const resultados = useMemo(() => {
     const q = semAcento(busca.trim());
     if (q.length < 2) return [];
@@ -2746,6 +2752,12 @@ function RegioesEditor({ regioes, setRegioes, municData, tipo }) {
                 {r.rotulo}
                 {r.rotulo !== r.ufs.join('/') && !(r.municipios_rotulos || []).length && (
                   <span style={{ color:'var(--faint)', fontSize:11.5 }}> · {r.ufs.join(', ')}</span>
+                )}
+                {r.auto && (
+                  <span title={r.motivo ? `Escolhida pelo piloto: ${r.motivo}` : 'Escolhida pelo piloto'}
+                    style={{ marginLeft:8, fontSize:10.5, padding:'1px 7px', borderRadius:6, border:`1px solid ${C.cyan}`, color:C.cyan }}>
+                    sugerida{r.motivo ? ` · ${r.motivo}` : ''}
+                  </span>
                 )}
               </span>
               <button type="button" style={botaoMini} title="Subir" aria-label={`Subir ${r.rotulo}`} onClick={() => mover(i, -1)} disabled={i === 0}>↑</button>
@@ -2803,6 +2815,49 @@ function RegioesEditor({ regioes, setRegioes, municData, tipo }) {
   );
 }
 
+function ExpansaoPauta({ expandir, setExpandir, max, setMax, excluir, setExcluir, temRegioes }) {
+  const alterna = uf => setExcluir(excluir.includes(uf) ? excluir.filter(x => x !== uf) : [...excluir, uf].sort());
+  return (
+    <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:20, marginBottom:18 }}>
+      <label style={{ display:'flex', alignItems:'flex-start', gap:10, cursor: temRegioes ? 'pointer' : 'default' }}>
+        <input type="checkbox" checked={expandir && temRegioes} disabled={!temRegioes}
+          onChange={e => setExpandir(e.target.checked)} style={{ marginTop:3, accentColor:'var(--accent)' }}/>
+        <span>
+          <span style={{ fontSize:13, fontWeight:600 }}>Quando as regiões acabarem, o Hunter escolhe a próxima sozinho</span>
+          <span style={{ display:'block', fontSize:12, color:'var(--faint)', marginTop:4, lineHeight:1.45 }}>
+            {temRegioes
+              ? <>Cidade varrida → o estado inteiro dela. Depois, estados vizinhos, começando pelo vizinho da região que mais virou lead
+                  (empate: o maior mercado). Cada escolha aparece na lista de regiões e no diário, com o motivo. Se a pauta varreu
+                  200+ empresas sem virar nenhum lead, ele não expande — o problema é o filtro, não a região.</>
+              : 'Adicione pelo menos uma região acima para ligar a expansão.'}
+          </span>
+        </span>
+      </label>
+      {expandir && temRegioes && (
+        <div style={{ marginTop:16, paddingLeft:26 }}>
+          <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>Até quantas regiões ele pode acrescentar</label>
+          <select value={max} onChange={e => setMax(+e.target.value)}
+            style={{ height:38, borderRadius:9, border:'1px solid var(--border)', background:'var(--panel2)',
+              color:'var(--text)', padding:'0 10px', fontSize:13, fontFamily:'inherit', cursor:'pointer' }}>
+            {[1,2,3,5,8,10,15,27].map(n => <option key={n} value={n}>{n === 27 ? 'sem limite (o Brasil todo)' : n}</option>)}
+          </select>
+          <label style={{ display:'block', fontSize:12, color:'var(--dim)', margin:'14px 0 7px' }}>
+            Nunca expandir para <span style={{ color:'var(--faint)' }}>(opcional)</span>
+          </label>
+          <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
+            {UFS_BR.map(u => (
+              <span key={u} role="button" aria-pressed={excluir.includes(u)} onClick={() => alterna(u)}
+                style={{ ...chipBase, border: excluir.includes(u) ? `1px solid ${C.red}` : '1px solid var(--border)',
+                  color: excluir.includes(u) ? C.red : 'var(--dim)',
+                  textDecoration: excluir.includes(u) ? 'line-through' : 'none' }}>{u}</span>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PeriodoPauta({ semanas, setSemanas, meses, setMeses }) {
   const alterna = (arr, set, v) => set(arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v].sort((a, b) => a - b));
   return (
@@ -2850,7 +2905,75 @@ const ROTULO_EVENTO = {
   criou:['Abriu radar', C.green], continuou:['Continuou', C.green], retomou:['Retomou', C.green],
   pausou:['Pausou', C.amber], recomecou:['Recomeçou', C.cyan], concluiu:['Concluiu', C.blue],
   ligou:['Ligado', C.green], desligou:['Desligado', C.gray], excluiu:['Pauta excluída', C.gray],
+  sugeriu:['Escolheu região', C.cyan], nao_expandiu:['Não expandiu', C.amber], crm:['CRM', C.gold],
 };
+
+// Controle pelo CRM: o CRM informa a fila de leads sem atendimento e o piloto
+// só abre radar novo quando ela cai para o gatilho. Aqui a pessoa liga,
+// escolhe o gatilho e vê o último aviso — e o que passar pro dev do CRM.
+function ControleCrm({ plano, crm, salvando, onSalvar }) {
+  const [gatilho, setGatilho] = useState(String(plano.crm_fila_gatilho ?? 5));
+  const [mostrarComo, setMostrarComo] = useState(false);
+  useEffect(() => { setGatilho(String(plano.crm_fila_gatilho ?? 5)); }, [plano.crm_fila_gatilho]);
+  const salvarGatilho = () => {
+    const n = parseInt(gatilho, 10);
+    if (!(n >= 0)) { setGatilho(String(plano.crm_fila_gatilho ?? 5)); return; }
+    if (n !== plano.crm_fila_gatilho) onSalvar({ crm_fila_gatilho: n });
+  };
+  const url = (typeof window !== 'undefined' ? window.location.origin : '') + (crm?.caminho_webhook || '/api/webhooks/crm/fila');
+  const n = plano.crm_fila_pendentes, g = plano.crm_fila_gatilho ?? 0;
+  const temAviso = plano.crm_fila_em != null && n != null;
+  const code = { fontFamily:'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize:11.5, background:'var(--panel2)',
+    border:'1px solid var(--border)', borderRadius:7, padding:'1px 6px', wordBreak:'break-all' };
+  return (
+    <div style={{ marginTop:18, paddingTop:16, borderTop:'1px solid var(--border)' }}>
+      <label style={{ display:'flex', alignItems:'flex-start', gap:10, cursor:'pointer' }}>
+        <input type="checkbox" checked={!!plano.crm_controle} disabled={salvando}
+          onChange={e => onSalvar({ crm_controle: e.target.checked })} style={{ marginTop:3, accentColor:'var(--accent)' }}/>
+        <span>
+          <span style={{ fontSize:13.5, fontWeight:600 }}>O CRM controla quando abrir radar novo</span>
+          <span style={{ display:'block', fontSize:12, color:'var(--faint)', marginTop:4, lineHeight:1.45 }}>
+            O CRM avisa quantos leads do Hunter estão na fila <b>sem atendimento</b>. Radar novo só abre quando essa fila cai para o
+            número abaixo ou menos — assim o time recebe lead no ritmo em que atende. Os limites de Configurações continuam valendo.
+          </span>
+        </span>
+      </label>
+
+      <div style={{ paddingLeft:26, marginTop:12 }}>
+        {!crm?.conectado && (
+          <div style={{ fontSize:12, color:'#F59E0B', marginBottom:10 }}>Nenhum CRM conectado em Integrações — conecte antes de ligar o controle.</div>
+        )}
+        <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
+          <span style={{ fontSize:12.5, color:'var(--dim)' }}>Abrir radar novo quando a fila tiver</span>
+          <input type="number" min={0} value={gatilho} onChange={e => setGatilho(e.target.value)} onBlur={salvarGatilho}
+            onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }} aria-label="Gatilho da fila do CRM"
+            style={{ width:80, height:34, borderRadius:8, border:'1px solid var(--border)', background:'var(--panel2)',
+              color:'var(--text)', padding:'0 10px', fontSize:13, fontFamily:'inherit' }}/>
+          <span style={{ fontSize:12.5, color:'var(--dim)' }}>lead(s) sem atendimento ou menos {g === 0 && <span style={{ color:'var(--faint)' }}>(0 = só quando todos forem atendidos)</span>}</span>
+        </div>
+        <div style={{ fontSize:12, marginTop:10, color:'var(--dim)' }}>
+          {temAviso
+            ? <>Último aviso do CRM: <b style={{ color: n <= g ? C.green : C.amber }}>{n} lead{n === 1 ? '' : 's'} sem atendimento</b>
+                <span style={{ color:'var(--faint)' }}> · {timeAgo(plano.crm_fila_em)} · {n <= g ? 'libera radar novo' : 'segura radar novo'}</span></>
+            : <span style={{ color:'var(--faint)' }}>O CRM ainda não enviou nenhum aviso.{plano.crm_controle ? ' Enquanto isso, o piloto não abre radar novo.' : ''}</span>}
+        </div>
+        <button type="button" onClick={() => setMostrarComo(v => !v)}
+          style={{ marginTop:10, background:'none', border:'none', padding:0, color:C.gold, fontSize:12, cursor:'pointer', fontFamily:'inherit' }}>
+          {mostrarComo ? 'Esconder' : 'Como o CRM avisa o Hunter'} ›
+        </button>
+        {mostrarComo && (
+          <div style={{ marginTop:10, fontSize:12, color:'var(--dim)', lineHeight:1.7 }}>
+            <div><b>POST</b> <span style={code}>{url}</span></div>
+            <div>Cabeçalho <span style={code}>x-hunter-token</span>: o mesmo token do webhook de conversão (Configurações → Webhook de entrada).
+              {!crm?.webhook_configurado && <span style={{ color:'#F59E0B' }}> Ainda não foi gerado — o master gera em Configurações.</span>}</div>
+            <div>Corpo: <span style={code}>{'{ "pendentes": 3 }'}</span> — quantos leads vindos do Hunter estão na fila sem atendimento agora.</div>
+            <div style={{ color:'var(--faint)' }}>Pode mandar a cada mudança na fila ou de tempos em tempos (ex.: a cada 10 min). Vale sempre o último número recebido.</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function Estrategia({ onNovaPauta, onEditarPauta, onUsarRadar, onAbrirRadar }) {
   const [d, setD] = useState(null);
@@ -2960,6 +3083,8 @@ function Estrategia({ onNovaPauta, onEditarPauta, onUsarRadar, onAbrirRadar }) {
           Segue os limites de Configurações: {lim.limite_diario ? <>até <b>{lim.limite_diario} leads/dia</b></> : 'sem teto diário'} · {horaTxt} · {diasTxt}.
           Só abre radar novo quando a esteira tem espaço — se já há empresa aprovada esperando vaga ou mais de {d.constantes.limiar_fila} em análise, ele espera.
         </div>
+        <ControleCrm plano={plano} crm={d.crm} salvando={salvando}
+          onSalvar={corpo => enviar('/api/estrategia', 'PATCH', corpo)}/>
       </div>
 
       {/* ── Calendário do mês ──────────────────────────────────────────── */}
@@ -3044,6 +3169,7 @@ function Estrategia({ onNovaPauta, onEditarPauta, onUsarRadar, onAbrirRadar }) {
                         : p.no_periodo ? <span style={badgeStyle(C.green)}>No período</span>
                         : <span style={badgeStyle(C.amber)}>Fora do período</span>}
                       {p.crm_auto && <span style={badgeStyle(C.gold)}>CRM automático</span>}
+                      {p.expandir && <span style={badgeStyle(C.cyan)} title={`Acrescenta até ${p.expandir_max} regiões sozinho`}>Expande sozinho</span>}
                     </div>
                     <div style={{ fontSize:12, color:'var(--dim)', marginTop:5 }}>Quando: {textoPeriodo(p)}</div>
                     {filtros.length > 0 && (
@@ -3068,13 +3194,14 @@ function Estrategia({ onNovaPauta, onEditarPauta, onUsarRadar, onAbrirRadar }) {
                     const podeAbrir = r.radar && r.radar.id;
                     return (
                       <span key={r.chave} onClick={() => podeAbrir && onAbrirRadar(r.radar.id)}
-                        title={r.radar ? `${r.radar.nome || r.rotulo} — ${e.rot}\n${fmtNum(r.radar.encontrados)} encontradas · ${fmtNum(r.radar.qualificados)} qualificadas · ${fmtNum(r.radar.enviados)} no CRM` : `${r.rotulo} — ainda não virou radar`}
+                        title={(r.auto ? `Escolhida pelo piloto: ${r.motivo || ''}\n` : '') + (r.radar ? `${r.radar.nome || r.rotulo} — ${e.rot}\n${fmtNum(r.radar.encontrados)} encontradas · ${fmtNum(r.radar.qualificados)} qualificadas · ${fmtNum(r.radar.enviados)} no CRM` : `${r.rotulo} — ainda não virou radar`)}
                         style={{ display:'inline-flex', alignItems:'center', gap:7, padding:'5px 10px', borderRadius:8, fontSize:11.5,
                           cursor: podeAbrir ? 'pointer' : 'default', color:'var(--text)',
                           border: `1px ${e.tracejado ? 'dashed' : 'solid'} ${e.tracejado ? 'var(--border)' : e.cor}` }}>
                         <span style={{ color:'var(--faint)' }}>{k + 1}</span>
                         <StatusDot color={e.cor} pulse={e.pulso}/>
                         {p.sem_regiao ? 'Radar único' : r.rotulo}
+                        {r.auto && <span style={{ color:C.cyan, fontSize:10.5 }}>sugerida</span>}
                         <span style={{ color:'var(--faint)' }}>· {e.rot}{r.radar && r.radar.qualificados ? ` · ${fmtNum(r.radar.qualificados)} qualif.` : ''}</span>
                       </span>
                     );
@@ -3131,6 +3258,9 @@ function NovaBusca({ onSalvar, inicial, modoPauta = false, pautaId = null, onCan
   const [regioes, setRegioes] = useState(() => modoPauta ? regioesIniciais(inicial) : []);
   const [semanas, setSemanas] = useState(Array.isArray(inicial?.semanas) ? inicial.semanas : []);
   const [meses, setMeses] = useState(Array.isArray(inicial?.meses) ? inicial.meses : []);
+  const [expandir, setExpandir] = useState(!!inicial?.expandir);
+  const [expandirMax, setExpandirMax] = useState(inicial?.expandir_max || 5);
+  const [expandirExcluir, setExpandirExcluir] = useState(Array.isArray(inicial?.expandir_excluir) ? inicial.expandir_excluir : []);
   const [corte, setCorte] = useState(inicial?.corte_score ?? 60);
   const [saving, setSaving] = useState(false);
   const [ufs, setUfs] = useState(!modoPauta && Array.isArray(iniP.ufs) ? iniP.ufs : []);
@@ -3452,7 +3582,8 @@ function NovaBusca({ onSalvar, inicial, modoPauta = false, pautaId = null, onCan
             headers:{ 'Content-Type':'application/json' },
             body: JSON.stringify({ nome, tipo, corte_score: corte, crm_auto: crmAuto,
               crm_queue_id: crmQueue || null, lista: listaRadar, criterios,
-              regioes, semanas, meses })
+              regioes, semanas, meses,
+              expandir: expandir && regioes.length > 0, expandir_max: expandirMax, expandir_excluir: expandirExcluir })
           })
         : await fetch('/api/buscas', {
             method:'POST', credentials:'same-origin',
@@ -3901,7 +4032,12 @@ function NovaBusca({ onSalvar, inicial, modoPauta = false, pautaId = null, onCan
       })()}
 
       {modoPauta && (
-        <RegioesEditor regioes={regioes} setRegioes={setRegioes} municData={municData} tipo={tipo}/>
+        <RegioesEditor regioes={regioes} setRegioes={setRegioes} municData={municData} tipo={tipo}
+          onRemoverAuto={ufs => setExpandirExcluir(prev => [...new Set([...prev, ...ufs])].sort())}/>
+      )}
+      {modoPauta && (
+        <ExpansaoPauta expandir={expandir} setExpandir={setExpandir} max={expandirMax} setMax={setExpandirMax}
+          excluir={expandirExcluir} setExcluir={setExpandirExcluir} temRegioes={regioes.length > 0}/>
       )}
       {modoPauta && (
         <PeriodoPauta semanas={semanas} setSemanas={setSemanas} meses={meses} setMeses={setMeses}/>

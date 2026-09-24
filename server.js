@@ -660,6 +660,17 @@ async function init() {
       busca_id   INTEGER,
       detalhe    TEXT
     );
+    -- Controle pelo CRM: o CRM informa quantos leads do Hunter estão na fila sem
+    -- atendimento; com o controle ligado, radar novo só abre quando a fila cai
+    -- para o gatilho ou menos.
+    ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_controle       BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_fila_gatilho   INTEGER NOT NULL DEFAULT 5;
+    ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_fila_pendentes INTEGER;
+    ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_fila_em        TIMESTAMPTZ;
+    -- Expansão automática: acabadas as regiões, o piloto escolhe a próxima.
+    ALTER TABLE estrategia_pautas ADD COLUMN IF NOT EXISTS expandir         BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE estrategia_pautas ADD COLUMN IF NOT EXISTS expandir_max     INTEGER NOT NULL DEFAULT 5;
+    ALTER TABLE estrategia_pautas ADD COLUMN IF NOT EXISTS expandir_excluir TEXT[] NOT NULL DEFAULT '{}';
     -- De qual pauta o radar nasceu (NULL = criado à mão). Excluir a pauta não
     -- apaga os radares: eles só viram radares comuns.
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS estrategia_pauta_id INTEGER
@@ -1589,7 +1600,9 @@ function erroEstrategia(res, e) {
 // O plano é 1 linha por cliente; nasce desligado na primeira leitura.
 async function planoEstrategia() {
   await pool.query(`INSERT INTO estrategia (ativo) VALUES (false) ON CONFLICT (tenant_id) DO NOTHING`);
-  const { rows: [p] } = await pool.query(`SELECT ativo, simultaneos, ao_concluir, estado, estado_em FROM estrategia`);
+  const { rows: [p] } = await pool.query(
+    `SELECT ativo, simultaneos, ao_concluir, estado, estado_em,
+            crm_controle, crm_fila_gatilho, crm_fila_pendentes, crm_fila_em FROM estrategia`);
   return p;
 }
 
@@ -1614,8 +1627,13 @@ app.get('/api/estrategia', requireAuth, async (req, res) => {
         SELECT e.id, e.criado_em, e.acao, e.pauta_id, e.busca_id, e.detalhe, p.nome AS pauta_nome
           FROM estrategia_eventos e LEFT JOIN estrategia_pautas p ON p.id = e.pauta_id
          ORDER BY e.criado_em DESC, e.id DESC LIMIT 40`),
-      pool.query(`SELECT limite_diario, janela_inicio, janela_fim, janela_dias FROM config`).catch(() => ({ rows: [{}] })),
+      pool.query(`SELECT limite_diario, janela_inicio, janela_fim, janela_dias,
+                         (webhook_entrada_secret IS NOT NULL AND webhook_entrada_secret <> '') AS webhook_ok
+                    FROM config`).catch(() => ({ rows: [{}] })),
     ]);
+    // O controle pelo CRM só faz sentido com um CRM conectado — a tela avisa.
+    const { rows: [crmIg] } = await pool.query(
+      `SELECT provedor FROM integracoes WHERE categoria='crm' AND ativo=true ORDER BY ordem LIMIT 1`);
     const saida = pautas.map(p => {
       const meus = slots.filter(s => s.pauta_id === p.id);
       const regioes = estrategiaMotor.regioesDa(p).map(r => {
@@ -1640,6 +1658,8 @@ app.get('/api/estrategia', requireAuth, async (req, res) => {
     });
     res.json({
       plano, periodo, pautas: saida, eventos,
+      crm: { conectado: !!crmIg, provedor: crmIg?.provedor || null, webhook_configurado: !!cfg?.webhook_ok,
+             caminho_webhook: '/api/webhooks/crm/fila' },
       limites: { limite_diario: cfg?.limite_diario ?? 0, janela_inicio: cfg?.janela_inicio ?? 0,
                  janela_fim: cfg?.janela_fim ?? 24, janela_dias: cfg?.janela_dias || [0,1,2,3,4,5,6] },
       constantes: { max_simultaneos: estrategiaMotor.MAX_SIMULTANEOS, dias_recomeco: estrategiaMotor.DIAS_RECOMECO,
@@ -1665,6 +1685,12 @@ app.patch('/api/estrategia', requireAuth, requireEditor, async (req, res) => {
       if (!['parar', 'recomecar'].includes(b.ao_concluir)) return res.status(400).json({ erro: 'ao_concluir inválido' });
       vals.push(b.ao_concluir); sets.push(`ao_concluir=$${vals.length}`);
     }
+    if (typeof b.crm_controle === 'boolean') { vals.push(b.crm_controle); sets.push(`crm_controle=$${vals.length}`); }
+    if (b.crm_fila_gatilho != null) {
+      const n = parseInt(b.crm_fila_gatilho, 10);
+      if (!(n >= 0 && n <= 100000)) return res.status(400).json({ erro: 'gatilho da fila: um número de 0 em diante' });
+      vals.push(n); sets.push(`crm_fila_gatilho=$${vals.length}`);
+    }
     if (!sets.length) return res.status(400).json({ erro: 'nada para atualizar' });
     // Ligar/desligar limpa o estado: o que valia antes não diz nada do agora, e
     // a tela mostraria "rodando" de uma estratégia que acabou de ser desligada.
@@ -1673,6 +1699,10 @@ app.patch('/api/estrategia', requireAuth, requireEditor, async (req, res) => {
     if (typeof b.ativo === 'boolean') {
       await pool.query(`INSERT INTO estrategia_eventos (acao, detalhe) VALUES ($1, $2)`,
         [b.ativo ? 'ligou' : 'desligou', `${b.ativo ? 'ligado' : 'desligado'} por ${req.user.nome || req.user.email}`]);
+    }
+    if (typeof b.crm_controle === 'boolean') {
+      await pool.query(`INSERT INTO estrategia_eventos (acao, detalhe) VALUES ('crm', $1)`,
+        [`controle pela fila do CRM ${b.crm_controle ? 'ligado' : 'desligado'} por ${req.user.nome || req.user.email}`]);
     }
     res.json(await planoEstrategia());
   } catch (e) { erroEstrategia(res, e); }
@@ -1687,12 +1717,14 @@ app.post('/api/estrategia/pautas', requireAuth, requireEditor, async (req, res) 
     }
     const { rows: [nova] } = await pool.query(
       `INSERT INTO estrategia_pautas (nome, tipo, criterios, lista, regioes, semanas, meses, corte_score,
-                                      crm_auto, crm_queue_id, ativo, criado_por, ordem)
-       VALUES ($1,$2,$3::jsonb,$4,$5::jsonb,$6::int[],$7::int[],$8,$9,$10,$11,$12,
+                                      crm_auto, crm_queue_id, ativo, criado_por, expandir, expandir_max,
+                                      expandir_excluir, ordem)
+       VALUES ($1,$2,$3::jsonb,$4,$5::jsonb,$6::int[],$7::int[],$8,$9,$10,$11,$12,$13,$14,$15::text[],
                (SELECT COALESCE(MAX(ordem), 0) + 1 FROM estrategia_pautas))
        RETURNING *`,
       [p.nome, p.tipo, JSON.stringify(p.criterios), p.lista, JSON.stringify(p.regioes), p.semanas, p.meses,
-       p.corte_score, p.crm_auto, p.crm_queue_id, p.ativo ?? true, req.user.id]);
+       p.corte_score, p.crm_auto, p.crm_queue_id, p.ativo ?? true, req.user.id,
+       p.expandir, p.expandir_max, p.expandir_excluir]);
     res.status(201).json(nova);
   } catch (e) { erroEstrategia(res, e); }
 });
@@ -1707,10 +1739,12 @@ app.put('/api/estrategia/pautas/:id', requireAuth, requireEditor, async (req, re
     const { rows: [atual] } = await pool.query(
       `UPDATE estrategia_pautas SET nome=$2, tipo=$3, criterios=$4::jsonb, lista=$5, regioes=$6::jsonb,
               semanas=$7::int[], meses=$8::int[], corte_score=$9, crm_auto=$10, crm_queue_id=$11,
-              ativo=COALESCE($12, ativo), atualizado_em=now()
+              ativo=COALESCE($12, ativo), expandir=$13, expandir_max=$14, expandir_excluir=$15::text[],
+              atualizado_em=now()
         WHERE id=$1 RETURNING *`,
       [id, p.nome, p.tipo, JSON.stringify(p.criterios), p.lista, JSON.stringify(p.regioes), p.semanas, p.meses,
-       p.corte_score, p.crm_auto, p.crm_queue_id, p.ativo ?? null]);
+       p.corte_score, p.crm_auto, p.crm_queue_id, p.ativo ?? null,
+       p.expandir, p.expandir_max, p.expandir_excluir]);
     if (!atual) return res.status(404).json({ erro: 'pauta não encontrada' });
     res.json(atual);
   } catch (e) { erroEstrategia(res, e); }
@@ -2702,6 +2736,43 @@ app.patch('/api/config', requireAuth, requireMaster, async (req, res) => {
 // Quando o closer marca "fechado/comprou/qualificado" no CRM, ele chama esta URL
 // e o CNPJ entra na lista de semelhantes — o perfil se refina sozinho.
 const webhookLimiter = rateLimit({ windowMs: 60_000, max: 120 });
+
+// Fila do CRM → Hunter. O CRM conta quantos leads vindos do Hunter estão na
+// fila SEM ATENDIMENTO e manda esse número aqui (a cada mudança, ou de tempos
+// em tempos). Com o "controle pelo CRM" ligado na Estratégia, o piloto só abre
+// radar novo quando esse número cai para o gatilho ou menos. Mesmo token do
+// webhook de conversão (x-hunter-token).
+app.post('/api/webhooks/crm/fila', webhookLimiter, async (req, res) => {
+  try {
+    const { rows: [cfg] } = await pool.query(`SELECT webhook_entrada_secret FROM config`);
+    const secret = cfg?.webhook_entrada_secret;
+    if (!secret) return res.status(503).json({ erro: 'webhook de entrada não configurado' });
+    const token = req.get('x-hunter-token') || req.query.token;
+    if (token !== secret) return res.status(401).json({ erro: 'token inválido' });
+
+    const b = req.body || {};
+    const bruto = b.pendentes ?? b.sem_atendimento;
+    const n = typeof bruto === 'string' && bruto.trim() !== '' ? Number(bruto) : bruto;
+    if (!Number.isInteger(n) || n < 0 || n > 1_000_000) {
+      return res.status(400).json({ erro: 'envie "pendentes": quantos leads do Hunter estão na fila sem atendimento (inteiro, 0 ou mais)' });
+    }
+    await planoEstrategia();
+    const { rows: [antes] } = await pool.query(`SELECT crm_fila_pendentes, crm_fila_gatilho, crm_controle, ativo FROM estrategia`);
+    await pool.query(`UPDATE estrategia SET crm_fila_pendentes=$1, crm_fila_em=now()`, [n]);
+    const gatilho = antes.crm_fila_gatilho ?? 0;
+    const libera = n <= gatilho;
+    // No diário só a VIRADA (cheia → baixa e vice-versa): o CRM pode avisar a
+    // cada minuto, e cada aviso repetido afogaria o que o piloto fez de fato.
+    const liberavaAntes = antes.crm_fila_pendentes != null && antes.crm_fila_pendentes <= gatilho;
+    if (antes.crm_fila_pendentes == null || liberavaAntes !== libera) {
+      await pool.query(`INSERT INTO estrategia_eventos (acao, detalhe) VALUES ('crm', $1)`, [libera
+        ? `o CRM avisou: ${n} lead(s) sem atendimento (gatilho: ${gatilho} ou menos) — radar novo liberado`
+        : `o CRM avisou: ${n} lead(s) sem atendimento — radar novo segurado até a fila ${gatilho === 0 ? 'zerar' : `cair para ${gatilho}`}`]);
+    }
+    res.json({ ok: true, pendentes: n, gatilho, controle_ligado: !!antes.crm_controle,
+               piloto_ligado: !!antes.ativo, libera_radar_novo: libera });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
 
 app.post('/api/webhooks/crm/conversao', webhookLimiter, async (req, res) => {
   try {
