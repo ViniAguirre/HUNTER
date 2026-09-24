@@ -11072,13 +11072,13 @@ function Config() {
       fontSize: 13.5,
       fontWeight: 500
     }
-  }, cfg.crm_lookalike_auto ? 'Radar "Semelhantes — clientes do CRM" ativo' : 'Aprendizado automático desativado'), /*#__PURE__*/React.createElement("div", {
+  }, cfg.crm_lookalike_auto ? 'Aprendizado automático ligado' : 'Aprendizado automático desativado'), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 12,
       color: 'var(--faint)',
       marginTop: 2
     }
-  }, cfg.crm_lookalike_auto ? 'A cada conversão recebida, o Hunter cria/atualiza um radar lookalike com esses clientes.' : 'As conversões são guardadas, mas não geram radar automático.'))), /*#__PURE__*/React.createElement("label", {
+  }, cfg.crm_lookalike_auto ? 'Cada lista que o CRM alimenta (ex.: "Semelhantes automático") tem um radar de semelhantes: a cada compra ele refaz o perfil e volta a buscar. Liga a partir de 3 clientes.' : 'As conversões são guardadas na lista, mas não geram radar automático. A lista ainda pode ser usada num radar ou numa pauta da Estratégia.'))), /*#__PURE__*/React.createElement("label", {
     style: {
       display: 'block',
       fontSize: 12,
