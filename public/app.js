@@ -673,6 +673,10 @@ const NAV_MAIN = [{
   label: 'Radares',
   icon: 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-4.3-4.3'
 }, {
+  key: 'estrategia',
+  label: 'Estratégia',
+  icon: 'M3 4h18v18H3zM3 10h18M8 2v4M16 2v4M7 14h4M7 18h7'
+}, {
   key: 'leads',
   label: 'Leads',
   icon: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM12 3v3M12 18v3M3 12h3M18 12h3'
@@ -920,7 +924,7 @@ function Sidebar({
   const ini = nome.split(' ').slice(0, 2).map(w => w[0]).join('');
   const adminItems = NAV_ADMIN.filter(it => podeVer(it, user));
   const navStyle = key => {
-    const active = screen === key || key === 'buscas' && screen === 'buscaDetail';
+    const active = screen === key || key === 'buscas' && screen === 'buscaDetail' || key === 'estrategia' && screen === 'pautaForm';
     return {
       display: 'flex',
       alignItems: 'center',
@@ -969,7 +973,7 @@ function Sidebar({
     height: 18,
     viewBox: "0 0 24 24",
     fill: "none",
-    stroke: screen === it.key || it.key === 'buscas' && screen === 'buscaDetail' ? 'var(--accent)' : '#8A95B4',
+    stroke: screen === it.key || it.key === 'buscas' && screen === 'buscaDetail' || it.key === 'estrategia' && screen === 'pautaForm' ? 'var(--accent)' : '#8A95B4',
     strokeWidth: 1.7,
     strokeLinecap: "round",
     strokeLinejoin: "round",
@@ -1129,6 +1133,8 @@ const TITLES = {
   leads: ['Leads', 'Curadoria e envio de leads qualificados'],
   buscas: ['Radares', 'Gerencie seus radares de leads'],
   buscaDetail: ['Detalhe do Radar', 'Produção e leads deste radar'],
+  estrategia: ['Estratégia', 'Linha editorial de radares — o piloto abre o próximo quando um esgota'],
+  pautaForm: ['Pauta da Estratégia', 'O que procurar, onde (em ordem) e quando'],
   nova: ['Criar Radar', 'Configure um novo radar de leads'],
   propostas: ['Propostas', 'Suas propostas de valor (o que você vende)'],
   semelhantes: ['Semelhantes', 'Listas de clientes que servem de modelo para a busca'],
@@ -3584,13 +3590,34 @@ function Buscas({
     "data-rot": "Status"
   }, /*#__PURE__*/React.createElement("span", {
     style: badgeStyle(buscaStatusColors[b.status] || C.gray)
-  }, b.status)), /*#__PURE__*/React.createElement("div", {
+  }, b.status), b.status === 'Pausada' && b.pausa_auto && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10.5,
+      color: 'var(--faint)',
+      marginTop: 4
+    }
+  }, "fora do per\xEDodo da pauta")), /*#__PURE__*/React.createElement("div", {
     "data-rot": "Criada por",
     style: {
       fontSize: 12.5,
-      color: 'var(--dim)'
+      color: 'var(--dim)',
+      minWidth: 0
     }
-  }, b.criador_nome || b.criador || '—'), /*#__PURE__*/React.createElement("div", {
+  }, b.estrategia_pauta_id ? /*#__PURE__*/React.createElement("span", {
+    title: `Aberto pelo piloto da Estratégia (pauta "${b.estrategia_pauta_nome}")`,
+    style: {
+      display: 'inline-block',
+      maxWidth: '100%',
+      padding: '2px 8px',
+      borderRadius: 6,
+      fontSize: 11,
+      border: `1px solid ${C.gold}`,
+      color: C.gold,
+      whiteSpace: 'nowrap',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis'
+    }
+  }, "Estrat\xE9gia \xB7 ", b.estrategia_pauta_nome) : b.criador_nome || b.criador || '—'), /*#__PURE__*/React.createElement("div", {
     "data-rot": "Criada em",
     style: {
       fontSize: 12,
@@ -5785,19 +5812,1132 @@ function AgenteSwot() {
     }
   }, erro))));
 }
+
+// ── Estratégia: piloto automático de radares ──────────────────────────────────
+// Uma pauta é o molde de um radar + as regiões a seguir (uma região = um radar)
+// + o período em que vale. O piloto (worker) abre um radar por vez, na ordem, e
+// abre o próximo quando o atual esgota — dentro dos limites de Configurações.
+const MACRORREGIOES = [['Norte', ['AC', 'AP', 'AM', 'PA', 'RO', 'RR', 'TO']], ['Nordeste', ['AL', 'BA', 'CE', 'MA', 'PB', 'PE', 'PI', 'RN', 'SE']], ['Centro-Oeste', ['DF', 'GO', 'MT', 'MS']], ['Sudeste', ['ES', 'MG', 'RJ', 'SP']], ['Sul', ['PR', 'RS', 'SC']]];
+const NOMES_MES = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez'];
+const NOMES_MES_LONGO = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+const SEMANAS_MES = [[1, '1–7'], [2, '8–14'], [3, '15–21'], [4, '22–28'], [5, '29–31']];
+
+// Mesma chave que o servidor calcula (jobs/estrategia.js): derivada do conteúdo,
+// pra reordenar ou renomear não virar "região nova".
+function novaRegiao({
+  ufs = [],
+  municipios_rotulos = [],
+  rotulo = ''
+}) {
+  const u = [...new Set([...ufs, ...municipios_rotulos.map(m => m.uf).filter(Boolean)])].sort();
+  const chave = municipios_rotulos.length ? 'mun:' + municipios_rotulos.map(m => String(m.c)).sort().join(',') : 'uf:' + u.join(',');
+  const auto = municipios_rotulos.length ? municipios_rotulos.map(m => m.uf ? `${m.n}/${m.uf}` : m.n).join(', ') : u.join('/');
+  return {
+    chave,
+    rotulo: rotulo || auto,
+    ufs: u,
+    municipios_cod: municipios_rotulos.map(m => String(m.c)),
+    municipios_rotulos
+  };
+}
+
+// Pauta sendo editada → as regiões dela. Radar usado como modelo → a geografia
+// dele vira a 1ª região (o resto a pessoa acrescenta).
+function regioesIniciais(ini) {
+  if (!ini) return [];
+  if (Array.isArray(ini.regioes)) return ini.regioes;
+  const c = ini.criterios || {};
+  const g = ini.tipo === 'lookalike' ? c.geo || {} : c.params || {};
+  const ufs = Array.isArray(g.ufs) ? g.ufs : [];
+  const mun = Array.isArray(g.municipios_rotulos) ? g.municipios_rotulos : [];
+  if (!ufs.length && !mun.length) return [];
+  return [novaRegiao({
+    ufs,
+    municipios_rotulos: mun
+  })];
+}
+function textoPeriodo(p) {
+  const s = p.semanas || [],
+    m = p.meses || [];
+  if (!s.length && !m.length) return 'Sempre';
+  const sem = s.length ? `${s.map(n => n + 'ª').join(', ')} semana${s.length > 1 ? 's' : ''} do mês` : 'Todas as semanas';
+  return m.length ? `${sem} · ${m.map(n => NOMES_MES[n - 1]).join(', ')}` : sem;
+}
+const chipBase = {
+  cursor: 'pointer',
+  padding: '5px 10px',
+  borderRadius: 7,
+  fontSize: 11.5,
+  userSelect: 'none'
+};
+const chipOn = on => ({
+  ...chipBase,
+  border: on ? `1px solid ${C.gold}` : '1px solid var(--border)',
+  background: on ? 'color-mix(in srgb, var(--accent) 13%, transparent)' : 'transparent',
+  color: on ? C.gold : 'var(--dim)'
+});
+const botaoMini = {
+  width: 28,
+  height: 28,
+  borderRadius: 7,
+  border: '1px solid var(--border)',
+  background: 'transparent',
+  color: 'var(--dim)',
+  cursor: 'pointer',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  fontSize: 13,
+  fontFamily: 'inherit',
+  padding: 0,
+  flexShrink: 0
+};
+function RegioesEditor({
+  regioes,
+  setRegioes,
+  municData,
+  tipo
+}) {
+  const [busca, setBusca] = useState('');
+  const [foco, setFoco] = useState(false);
+  const chaves = new Set(regioes.map(r => r.chave));
+  const add = r => {
+    if (!chaves.has(r.chave)) setRegioes(prev => [...prev, r]);
+  };
+  const mover = (i, d) => setRegioes(prev => {
+    const j = i + d;
+    if (j < 0 || j >= prev.length) return prev;
+    const n = [...prev];
+    [n[i], n[j]] = [n[j], n[i]];
+    return n;
+  });
+  const remover = i => setRegioes(prev => prev.filter((_, k) => k !== i));
+  const resultados = useMemo(() => {
+    const q = semAcento(busca.trim());
+    if (q.length < 2) return [];
+    // Nome exato primeiro, depois quem começa com o texto: "Campinas" tem que
+    // trazer Campinas/SP no topo, não "Campinas do Piauí" (ordem alfabética).
+    const nivel = m => {
+      const n = semAcento(m.n);
+      return n === q ? 0 : n.startsWith(q) ? 1 : 2;
+    };
+    return municData.filter(m => semAcento(m.n).includes(q)).sort((a, b) => nivel(a) - nivel(b)).slice(0, 25);
+  }, [busca, municData]);
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'var(--panel)',
+      border: '1px solid var(--border)',
+      borderRadius: 14,
+      padding: 20,
+      marginBottom: 18
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      fontSize: 13,
+      fontWeight: 600,
+      marginBottom: 4
+    }
+  }, "Regi\xF5es a seguir", /*#__PURE__*/React.createElement(InfoTip, {
+    text: /*#__PURE__*/React.createElement(React.Fragment, null, "Cada regi\xE3o vira ", /*#__PURE__*/React.createElement("b", null, "um radar"), ". O piloto abre o da 1\xAA; quando ele esgota, abre o da 2\xAA, e assim por diante. Reordene pra mudar a prioridade. Uma regi\xE3o j\xE1 varrida n\xE3o \xE9 varrida de novo.")
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--faint)',
+      marginBottom: 14,
+      lineHeight: 1.45
+    }
+  }, tipo === 'lookalike' ? 'A lista diz o que procurar; as regiões dizem onde, na ordem. Sem região: um radar só, nos estados onde os clientes da lista já estão.' : 'Os filtros acima dizem quem procurar; as regiões dizem onde, na ordem. Sem região: um radar só, no Brasil inteiro.'), regioes.length > 0 ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 6,
+      marginBottom: 16
+    }
+  }, regioes.map((r, i) => /*#__PURE__*/React.createElement("div", {
+    key: r.chave,
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      padding: '8px 10px',
+      borderRadius: 9,
+      border: '1px solid var(--border)',
+      background: 'var(--panel2)'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      width: 22,
+      fontSize: 12,
+      fontWeight: 600,
+      color: C.gold,
+      textAlign: 'center',
+      flexShrink: 0
+    }
+  }, i + 1, "\xBA"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      flex: 1,
+      minWidth: 0,
+      fontSize: 13,
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap'
+    }
+  }, r.rotulo, r.rotulo !== r.ufs.join('/') && !(r.municipios_rotulos || []).length && /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)',
+      fontSize: 11.5
+    }
+  }, " \xB7 ", r.ufs.join(', '))), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    style: botaoMini,
+    title: "Subir",
+    "aria-label": `Subir ${r.rotulo}`,
+    onClick: () => mover(i, -1),
+    disabled: i === 0
+  }, "\u2191"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    style: botaoMini,
+    title: "Descer",
+    "aria-label": `Descer ${r.rotulo}`,
+    onClick: () => mover(i, 1),
+    disabled: i === regioes.length - 1
+  }, "\u2193"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    style: botaoMini,
+    title: "Tirar da lista",
+    "aria-label": `Tirar ${r.rotulo}`,
+    onClick: () => remover(i)
+  }, "\xD7")))) : /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: 'var(--faint)',
+      padding: '11px 13px',
+      borderRadius: 10,
+      border: '1px dashed var(--border)',
+      marginBottom: 16
+    }
+  }, "Nenhuma regi\xE3o ainda \u2014 adicione abaixo, na ordem em que quer prospectar."), /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 7
+    }
+  }, "Adicionar estado inteiro"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: 6,
+      marginBottom: 14
+    }
+  }, UFS_BR.map(u => {
+    const r = novaRegiao({
+      ufs: [u]
+    });
+    const ja = chaves.has(r.chave);
+    return /*#__PURE__*/React.createElement("span", {
+      key: u,
+      onClick: () => add(r),
+      style: {
+        ...chipOn(ja),
+        cursor: ja ? 'default' : 'pointer'
+      }
+    }, u);
+  })), /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 7
+    }
+  }, "Adicionar uma regi\xE3o do pa\xEDs (vira um radar s\xF3)"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: 6,
+      marginBottom: 14
+    }
+  }, MACRORREGIOES.map(([nome, ufs]) => {
+    const r = novaRegiao({
+      ufs,
+      rotulo: nome
+    });
+    const ja = chaves.has(r.chave);
+    return /*#__PURE__*/React.createElement("span", {
+      key: nome,
+      onClick: () => add(r),
+      style: {
+        ...chipOn(ja),
+        cursor: ja ? 'default' : 'pointer'
+      }
+    }, nome);
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'relative'
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 7
+    }
+  }, "Adicionar cidade"), /*#__PURE__*/React.createElement("input", {
+    value: busca,
+    onChange: e => setBusca(e.target.value),
+    onFocus: () => setFoco(true),
+    onBlur: () => setTimeout(() => setFoco(false), 150),
+    placeholder: "Ex: Campinas, Ribeir\xE3o Preto, Joinville\u2026",
+    style: {
+      width: '100%',
+      height: 40,
+      borderRadius: 9,
+      border: '1px solid var(--border)',
+      background: 'var(--panel2)',
+      color: 'var(--text)',
+      padding: '0 12px',
+      fontSize: 13,
+      fontFamily: 'inherit'
+    }
+  }), foco && busca.trim().length >= 2 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      position: 'absolute',
+      zIndex: 30,
+      left: 0,
+      right: 0,
+      top: '100%',
+      marginTop: 4,
+      maxHeight: 248,
+      overflowY: 'auto',
+      background: 'var(--panel2)',
+      border: '1px solid var(--border)',
+      borderRadius: 9,
+      boxShadow: '0 10px 28px rgba(0,0,0,.45)'
+    }
+  }, municData.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '10px 12px',
+      fontSize: 12.5,
+      color: 'var(--faint)'
+    }
+  }, "Carregando munic\xEDpios\u2026") : resultados.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      padding: '10px 12px',
+      fontSize: 12.5,
+      color: 'var(--faint)'
+    }
+  }, "Nenhuma cidade encontrada.") : resultados.map(m => /*#__PURE__*/React.createElement("div", {
+    key: m.c,
+    onMouseDown: () => {
+      add(novaRegiao({
+        municipios_rotulos: [m]
+      }));
+      setBusca('');
+    },
+    className: "row-hover",
+    style: {
+      padding: '9px 12px',
+      fontSize: 12.5,
+      cursor: 'pointer',
+      borderBottom: '1px solid var(--border)',
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      gap: 10
+    }
+  }, /*#__PURE__*/React.createElement("span", null, m.n), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)',
+      flexShrink: 0
+    }
+  }, m.uf))))));
+}
+function PeriodoPauta({
+  semanas,
+  setSemanas,
+  meses,
+  setMeses
+}) {
+  const alterna = (arr, set, v) => set(arr.includes(v) ? arr.filter(x => x !== v) : [...arr, v].sort((a, b) => a - b));
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'var(--panel)',
+      border: '1px solid var(--border)',
+      borderRadius: 14,
+      padding: 20,
+      marginBottom: 18
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      fontSize: 13,
+      fontWeight: 600,
+      marginBottom: 4
+    }
+  }, "Quando seguir esta pauta", /*#__PURE__*/React.createElement(InfoTip, {
+    text: "Fora do per\xEDodo, o piloto pausa os radares desta pauta e passa para as outras. Quando o per\xEDodo volta, ele retoma de onde parou."
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--faint)',
+      marginBottom: 14,
+      lineHeight: 1.45
+    }
+  }, "Nada marcado = vale sempre. Marque semanas para uma estrat\xE9gia ", /*#__PURE__*/React.createElement("b", null, "semanal"), " e meses para uma ", /*#__PURE__*/React.createElement("b", null, "mensal"), " (d\xE1 pra combinar)."), /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 7
+    }
+  }, "Semanas do m\xEAs"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: 6,
+      marginBottom: 14
+    }
+  }, SEMANAS_MES.map(([n, dias]) => /*#__PURE__*/React.createElement("span", {
+    key: n,
+    role: "button",
+    "aria-pressed": semanas.includes(n),
+    onClick: () => alterna(semanas, setSemanas, n),
+    style: chipOn(semanas.includes(n))
+  }, n, "\xAA ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      opacity: .7
+    }
+  }, "(dias ", dias, ")")))), /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 7
+    }
+  }, "Meses"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: 6
+    }
+  }, NOMES_MES.map((m, i) => /*#__PURE__*/React.createElement("span", {
+    key: m,
+    role: "button",
+    "aria-pressed": meses.includes(i + 1),
+    onClick: () => alterna(meses, setMeses, i + 1),
+    style: chipOn(meses.includes(i + 1))
+  }, m))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--faint)',
+      marginTop: 12
+    }
+  }, "Resumo: ", /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: 'var(--text)'
+    }
+  }, textoPeriodo({
+    semanas,
+    meses
+  }))));
+}
+
+// Como cada região aparece na pauta: se já virou radar, o status dele.
+function estadoRegiao(r) {
+  const rd = r.radar;
+  if (!rd) return {
+    rot: 'na fila',
+    cor: C.gray,
+    tracejado: true
+  };
+  if (rd.status === 'Excluído') return {
+    rot: 'radar excluído',
+    cor: C.gray
+  };
+  if (rd.status === 'Ativa') return {
+    rot: 'rodando',
+    cor: C.green,
+    pulso: true
+  };
+  if (rd.status === 'Pausada') return {
+    rot: rd.pausa_auto ? 'pausado (fora do período)' : 'pausado por você',
+    cor: C.amber
+  };
+  if (rd.status === 'Esgotada') return {
+    rot: rd.tem_cursor ? 'continua na próxima vez' : 'varrida',
+    cor: C.blue
+  };
+  return {
+    rot: String(rd.status || '').toLowerCase(),
+    cor: C.gray
+  };
+}
+const ROTULO_EVENTO = {
+  criou: ['Abriu radar', C.green],
+  continuou: ['Continuou', C.green],
+  retomou: ['Retomou', C.green],
+  pausou: ['Pausou', C.amber],
+  recomecou: ['Recomeçou', C.cyan],
+  concluiu: ['Concluiu', C.blue],
+  ligou: ['Ligado', C.green],
+  desligou: ['Desligado', C.gray],
+  excluiu: ['Pauta excluída', C.gray]
+};
+function Estrategia({
+  onNovaPauta,
+  onEditarPauta,
+  onUsarRadar,
+  onAbrirRadar
+}) {
+  const [d, setD] = useState(null);
+  const [erro, setErro] = useState(null);
+  const [radares, setRadares] = useState([]);
+  const [salvando, setSalvando] = useState(false);
+  const carregar = () => fetch('/api/estrategia', {
+    credentials: 'same-origin'
+  }).then(r => r.ok ? r.json() : r.json().then(x => Promise.reject(new Error(x.erro || 'erro')))).then(x => {
+    setD(x);
+    setErro(null);
+  }).catch(e => setErro(e.message));
+  useEffect(() => {
+    carregar();
+    fetch('/api/buscas', {
+      credentials: 'same-origin'
+    }).then(r => r.ok ? r.json() : []).then(x => setRadares(Array.isArray(x) ? x.filter(b => b.tipo !== 'cnpj') : [])).catch(() => {});
+    // O piloto age no worker a cada minuto; a tela acompanha sem precisar recarregar.
+    const t = setInterval(carregar, 30000);
+    return () => clearInterval(t);
+  }, []);
+  const enviar = async (url, metodo, corpo) => {
+    setSalvando(true);
+    try {
+      const r = await fetch(url, {
+        method: metodo,
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: corpo ? JSON.stringify(corpo) : undefined
+      });
+      if (!r.ok) {
+        const x = await r.json().catch(() => ({}));
+        alert(x.erro || 'Não consegui salvar.');
+        return false;
+      }
+      await carregar();
+      return true;
+    } finally {
+      setSalvando(false);
+    }
+  };
+  const plano = d?.plano;
+  const pautas = d?.pautas || [];
+  const mover = (i, dir) => {
+    const j = i + dir;
+    if (j < 0 || j >= pautas.length) return;
+    const ids = pautas.map(p => p.id);
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    enviar('/api/estrategia/ordem', 'PUT', {
+      ids
+    });
+  };
+  const excluir = p => {
+    if (!window.confirm(`Excluir a pauta "${p.nome}"?\n\nOs radares que ela já abriu continuam em Radares, com os leads — só deixa de haver molde pros próximos.`)) return;
+    enviar(`/api/estrategia/pautas/${p.id}`, 'DELETE');
+  };
+  if (erro && !d) return /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      color: '#F59E0B'
+    }
+  }, "N\xE3o consegui carregar a estrat\xE9gia: ", erro);
+  if (!d) return /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      color: 'var(--faint)'
+    }
+  }, "Carregando\u2026");
+  const per = d.periodo;
+  const lim = d.limites || {};
+  const dias = lim.janela_dias || [];
+  const nomesDia = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+  const diasTxt = dias.length === 7 ? 'todos os dias' : [1, 2, 3, 4, 5, 6, 0].filter(x => dias.includes(x)).map(x => nomesDia[x]).join(', ');
+  const horaTxt = lim.janela_inicio === 0 && lim.janela_fim >= 24 ? '24h' : `${String(lim.janela_inicio).padStart(2, '0')}h–${String(lim.janela_fim).padStart(2, '0')}h`;
+  const ultimoDia = new Date(per.ano, per.mes, 0).getDate();
+  const ativas = pautas.filter(p => p.ativo);
+  const cartao = {
+    background: 'var(--panel)',
+    border: '1px solid var(--border)',
+    borderRadius: 14,
+    padding: 20,
+    marginBottom: 18
+  };
+  const selectSt = {
+    height: 38,
+    borderRadius: 9,
+    border: '1px solid var(--border)',
+    background: 'var(--panel2)',
+    color: 'var(--text)',
+    padding: '0 10px',
+    fontSize: 13,
+    fontFamily: 'inherit',
+    cursor: 'pointer'
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      maxWidth: 1000
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: cartao
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'flex-start',
+      gap: 16,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: '1 1 320px',
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      marginBottom: 6
+    }
+  }, /*#__PURE__*/React.createElement(StatusDot, {
+    color: plano.ativo ? C.green : C.gray,
+    pulse: plano.ativo
+  }), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 15,
+      fontWeight: 600
+    }
+  }, "Piloto autom\xE1tico ", plano.ativo ? 'ligado' : 'desligado')), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: 'var(--dim)',
+      lineHeight: 1.5
+    }
+  }, plano.ativo ? plano.estado ? /*#__PURE__*/React.createElement(React.Fragment, null, "Agora: ", /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: 'var(--text)'
+    }
+  }, plano.estado), plano.estado_em && /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, " \xB7 desde ", timeAgo(plano.estado_em))) : 'Aguardando o motor — ele confere a estratégia a cada minuto.' : 'Com ele desligado, nenhum radar é aberto sozinho. Os radares que já existem seguem como estão.')), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    disabled: salvando,
+    onClick: () => {
+      if (!plano.ativo && !ativas.length) {
+        alert('Crie ao menos uma pauta ativa antes de ligar o piloto.');
+        return;
+      }
+      enviar('/api/estrategia', 'PATCH', {
+        ativo: !plano.ativo
+      });
+    },
+    style: {
+      height: 42,
+      padding: '0 20px',
+      borderRadius: 10,
+      fontFamily: 'inherit',
+      fontSize: 13.5,
+      fontWeight: 600,
+      cursor: 'pointer',
+      border: plano.ativo ? '1px solid var(--border)' : 'none',
+      background: plano.ativo ? 'transparent' : 'var(--gold)',
+      color: plano.ativo ? 'var(--text)' : '#0E1936'
+    }
+  }, plano.ativo ? 'Desligar piloto' : 'Ligar piloto')), /*#__PURE__*/React.createElement("div", {
+    className: "h-split",
+    style: {
+      gap: '14px 22px',
+      marginTop: 18,
+      paddingTop: 16,
+      borderTop: '1px solid var(--border)'
+    }
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 7
+    }
+  }, "Radares rodando ao mesmo tempo", /*#__PURE__*/React.createElement(InfoTip, {
+    text: "Quantos radares da estrat\xE9gia ficam ligados juntos. 1 \xE9 o mais econ\xF4mico: um termina, o pr\xF3ximo come\xE7a. Mais que isso s\xF3 acelera se o limite di\xE1rio estiver sobrando."
+  })), /*#__PURE__*/React.createElement("select", {
+    value: plano.simultaneos,
+    disabled: salvando,
+    style: {
+      ...selectSt,
+      width: '100%'
+    },
+    onChange: e => enviar('/api/estrategia', 'PATCH', {
+      simultaneos: +e.target.value
+    })
+  }, Array.from({
+    length: d.constantes.max_simultaneos
+  }, (_, i) => i + 1).map(n => /*#__PURE__*/React.createElement("option", {
+    key: n,
+    value: n
+  }, n)))), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 7
+    }
+  }, "Quando a linha editorial acabar"), /*#__PURE__*/React.createElement("select", {
+    value: plano.ao_concluir,
+    disabled: salvando,
+    style: {
+      ...selectSt,
+      width: '100%'
+    },
+    onChange: e => enviar('/api/estrategia', 'PATCH', {
+      ao_concluir: e.target.value
+    })
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "parar"
+  }, "Parar e avisar aqui"), /*#__PURE__*/React.createElement("option", {
+    value: "recomecar"
+  }, "Recome\xE7ar os radares esgotados h\xE1 ", d.constantes.dias_recomeco, "+ dias (empresas novas)")))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--faint)',
+      marginTop: 14,
+      lineHeight: 1.5
+    }
+  }, "Segue os limites de Configura\xE7\xF5es: ", lim.limite_diario ? /*#__PURE__*/React.createElement(React.Fragment, null, "at\xE9 ", /*#__PURE__*/React.createElement("b", null, lim.limite_diario, " leads/dia")) : 'sem teto diário', " \xB7 ", horaTxt, " \xB7 ", diasTxt, ". S\xF3 abre radar novo quando a esteira tem espa\xE7o \u2014 se j\xE1 h\xE1 empresa aprovada esperando vaga ou mais de ", d.constantes.limiar_fila, " em an\xE1lise, ele espera.")), /*#__PURE__*/React.createElement("div", {
+    style: cartao
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 14,
+      fontWeight: 600,
+      marginBottom: 4
+    }
+  }, "Calend\xE1rio de ", NOMES_MES_LONGO[per.mes - 1]), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--faint)',
+      marginBottom: 14
+    }
+  }, "Quais pautas valem em cada semana deste m\xEAs, na ordem da linha editorial."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+      gap: 10
+    }
+  }, SEMANAS_MES.filter(([n]) => n < 5 || ultimoDia >= 29).map(([n, diasTxtSem]) => {
+    const atual = n === per.semana;
+    const valem = ativas.filter(p => ((p.semanas || []).length === 0 || p.semanas.includes(n)) && ((p.meses || []).length === 0 || p.meses.includes(per.mes)));
+    return /*#__PURE__*/React.createElement("div", {
+      key: n,
+      style: {
+        borderRadius: 10,
+        padding: '10px 12px',
+        minHeight: 86,
+        border: atual ? `1.5px solid ${C.gold}` : '1px solid var(--border)',
+        background: atual ? 'color-mix(in srgb, var(--accent) 7%, transparent)' : 'var(--panel2)'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        fontWeight: 600,
+        color: atual ? C.gold : 'var(--dim)',
+        marginBottom: 7
+      }
+    }, n, "\xAA semana ", /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontWeight: 400,
+        color: 'var(--faint)'
+      }
+    }, "\xB7 dias ", n === 5 ? `29–${ultimoDia}` : diasTxtSem), atual && /*#__PURE__*/React.createElement("span", {
+      style: {
+        display: 'block',
+        fontWeight: 400,
+        fontSize: 11
+      }
+    }, "semana atual")), valem.length ? valem.map(p => /*#__PURE__*/React.createElement("div", {
+      key: p.id,
+      style: {
+        fontSize: 12,
+        lineHeight: 1.35,
+        marginBottom: 4,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap'
+      },
+      title: p.nome
+    }, p.nome)) : /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11.5,
+        color: 'var(--faint)'
+      }
+    }, "nenhuma pauta"));
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: 6,
+      marginTop: 14
+    }
+  }, NOMES_MES.map((m, i) => {
+    const n = ativas.filter(p => (p.meses || []).length === 0 || p.meses.includes(i + 1)).length;
+    const atual = i + 1 === per.mes;
+    return /*#__PURE__*/React.createElement("span", {
+      key: m,
+      title: `${n} pauta(s) valem em ${NOMES_MES_LONGO[i]}`,
+      style: {
+        padding: '4px 9px',
+        borderRadius: 7,
+        fontSize: 11,
+        border: atual ? `1px solid ${C.gold}` : '1px solid var(--border)',
+        color: n ? atual ? C.gold : 'var(--text)' : 'var(--faint)'
+      }
+    }, m, " ", /*#__PURE__*/React.createElement("b", null, n));
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: cartao
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      flexWrap: 'wrap',
+      marginBottom: 14
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: '1 1 240px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 14,
+      fontWeight: 600
+    }
+  }, "Linha editorial"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--faint)',
+      marginTop: 3
+    }
+  }, "O piloto segue de cima pra baixo: termina as regi\xF5es de uma pauta antes de passar pra seguinte.")), /*#__PURE__*/React.createElement("select", {
+    value: "",
+    onChange: e => {
+      const b = radares.find(x => String(x.id) === e.target.value);
+      if (b) onUsarRadar(b);
+    },
+    style: {
+      ...selectSt,
+      maxWidth: 260
+    },
+    "aria-label": "Usar um radar existente como modelo"
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "Usar um radar como modelo\u2026"), radares.map(b => /*#__PURE__*/React.createElement("option", {
+    key: b.id,
+    value: b.id
+  }, b.nome))), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: onNovaPauta,
+    style: {
+      height: 38,
+      padding: '0 16px',
+      borderRadius: 9,
+      border: 'none',
+      background: 'var(--gold)',
+      color: '#0E1936',
+      fontWeight: 600,
+      fontSize: 13,
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, "+ Nova pauta")), pautas.length === 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      color: 'var(--faint)',
+      padding: '18px 16px',
+      borderRadius: 10,
+      border: '1px dashed var(--border)',
+      lineHeight: 1.55
+    }
+  }, "Nenhuma pauta ainda. Uma pauta \xE9 \u201Co que procurar\u201D (filtros ou uma lista de semelhantes) + \u201Conde, em que ordem\u201D (regi\xF5es) + \u201Cquando\u201D (semanas/meses). Comece por ", /*#__PURE__*/React.createElement("b", null, "+ Nova pauta"), " ou transforme um radar que j\xE1 deu certo em pauta com ", /*#__PURE__*/React.createElement("b", null, "Usar um radar como modelo"), "."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 12
+    }
+  }, pautas.map((p, i) => {
+    const filtros = p.tipo === 'lookalike' ? [`Semelhantes à lista: ${p.lista === 'conversoes_crm' ? 'Clientes convertidos (CRM)' : p.lista}`] : (p.criterios?.chips || []).filter(c => !/^(UF|Município): /.test(c));
+    const t = p.totais || {};
+    return /*#__PURE__*/React.createElement("div", {
+      key: p.id,
+      style: {
+        border: '1px solid var(--border)',
+        borderRadius: 12,
+        padding: '14px 16px',
+        background: 'var(--panel2)',
+        opacity: p.ativo ? 1 : .6
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 12,
+        flexWrap: 'wrap'
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 13,
+        fontWeight: 700,
+        color: C.gold,
+        width: 24,
+        flexShrink: 0,
+        paddingTop: 1
+      }
+    }, i + 1, "\xBA"), /*#__PURE__*/React.createElement("div", {
+      style: {
+        flex: '1 1 260px',
+        minWidth: 0
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        flexWrap: 'wrap'
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 14,
+        fontWeight: 600
+      }
+    }, p.nome), /*#__PURE__*/React.createElement("span", {
+      style: badgeStyle(p.tipo === 'lookalike' ? C.cyan : C.blue)
+    }, p.tipo === 'lookalike' ? 'Semelhantes' : 'Perfil (ICP)'), !p.ativo ? /*#__PURE__*/React.createElement("span", {
+      style: badgeStyle(C.gray)
+    }, "Desligada") : p.no_periodo ? /*#__PURE__*/React.createElement("span", {
+      style: badgeStyle(C.green)
+    }, "No per\xEDodo") : /*#__PURE__*/React.createElement("span", {
+      style: badgeStyle(C.amber)
+    }, "Fora do per\xEDodo"), p.crm_auto && /*#__PURE__*/React.createElement("span", {
+      style: badgeStyle(C.gold)
+    }, "CRM autom\xE1tico")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        color: 'var(--dim)',
+        marginTop: 5
+      }
+    }, "Quando: ", textoPeriodo(p)), filtros.length > 0 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11.5,
+        color: 'var(--faint)',
+        marginTop: 4,
+        lineHeight: 1.45
+      }
+    }, filtros.join(' · '))), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        gap: 6,
+        flexShrink: 0
+      }
+    }, /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      style: botaoMini,
+      title: "Subir",
+      "aria-label": `Subir ${p.nome}`,
+      disabled: i === 0 || salvando,
+      onClick: () => mover(i, -1)
+    }, "\u2191"), /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      style: botaoMini,
+      title: "Descer",
+      "aria-label": `Descer ${p.nome}`,
+      disabled: i === pautas.length - 1 || salvando,
+      onClick: () => mover(i, 1)
+    }, "\u2193"), /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      style: {
+        ...botaoMini,
+        width: 'auto',
+        padding: '0 10px',
+        fontSize: 12
+      },
+      onClick: () => onEditarPauta(p)
+    }, "Editar"), /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      style: {
+        ...botaoMini,
+        width: 'auto',
+        padding: '0 10px',
+        fontSize: 12
+      },
+      disabled: salvando,
+      onClick: () => enviar(`/api/estrategia/pautas/${p.id}`, 'PATCH', {
+        ativo: !p.ativo
+      })
+    }, p.ativo ? 'Desligar' : 'Ligar'), /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      style: botaoMini,
+      title: "Excluir pauta",
+      "aria-label": `Excluir ${p.nome}`,
+      disabled: salvando,
+      onClick: () => excluir(p)
+    }, /*#__PURE__*/React.createElement(SvgMulti, {
+      w: 14,
+      h: 14,
+      sw: 1.7
+    }, /*#__PURE__*/React.createElement("path", {
+      d: "M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V6"
+    }))))), /*#__PURE__*/React.createElement("div", {
+      style: {
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: 6,
+        marginTop: 12,
+        paddingLeft: 36
+      }
+    }, p.regioes.map((r, k) => {
+      const e = estadoRegiao(r);
+      const podeAbrir = r.radar && r.radar.id;
+      return /*#__PURE__*/React.createElement("span", {
+        key: r.chave,
+        onClick: () => podeAbrir && onAbrirRadar(r.radar.id),
+        title: r.radar ? `${r.radar.nome || r.rotulo} — ${e.rot}\n${fmtNum(r.radar.encontrados)} encontradas · ${fmtNum(r.radar.qualificados)} qualificadas · ${fmtNum(r.radar.enviados)} no CRM` : `${r.rotulo} — ainda não virou radar`,
+        style: {
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 7,
+          padding: '5px 10px',
+          borderRadius: 8,
+          fontSize: 11.5,
+          cursor: podeAbrir ? 'pointer' : 'default',
+          color: 'var(--text)',
+          border: `1px ${e.tracejado ? 'dashed' : 'solid'} ${e.tracejado ? 'var(--border)' : e.cor}`
+        }
+      }, /*#__PURE__*/React.createElement("span", {
+        style: {
+          color: 'var(--faint)'
+        }
+      }, k + 1), /*#__PURE__*/React.createElement(StatusDot, {
+        color: e.cor,
+        pulse: e.pulso
+      }), p.sem_regiao ? 'Radar único' : r.rotulo, /*#__PURE__*/React.createElement("span", {
+        style: {
+          color: 'var(--faint)'
+        }
+      }, "\xB7 ", e.rot, r.radar && r.radar.qualificados ? ` · ${fmtNum(r.radar.qualificados)} qualif.` : ''));
+    })), t.radares > 0 && /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11.5,
+        color: 'var(--faint)',
+        marginTop: 10,
+        paddingLeft: 36
+      }
+    }, t.radares, " radar", t.radares === 1 ? '' : 'es', " aberto", t.radares === 1 ? '' : 's', " \xB7", ' ', /*#__PURE__*/React.createElement("b", {
+      style: {
+        color: 'var(--text)'
+      }
+    }, fmtNum(t.encontrados)), " encontradas \xB7", ' ', /*#__PURE__*/React.createElement("b", {
+      style: {
+        color: 'var(--text)'
+      }
+    }, fmtNum(t.qualificados)), " qualificadas \xB7", ' ', /*#__PURE__*/React.createElement("b", {
+      style: {
+        color: C.cyan
+      }
+    }, fmtNum(t.enviados)), " no CRM"));
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: cartao
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 14,
+      fontWeight: 600,
+      marginBottom: 4
+    }
+  }, "Di\xE1rio do piloto"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--faint)',
+      marginBottom: 12
+    }
+  }, "Tudo o que o piloto fez sozinho, do mais recente pro mais antigo."), d.eventos.length === 0 ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: 'var(--faint)'
+    }
+  }, "Nada ainda.") : d.eventos.map(ev => {
+    const [rot, cor] = ROTULO_EVENTO[ev.acao] || [ev.acao, C.gray];
+    return /*#__PURE__*/React.createElement("div", {
+      key: ev.id,
+      style: {
+        display: 'flex',
+        gap: 12,
+        alignItems: 'baseline',
+        padding: '8px 0',
+        borderTop: '1px solid var(--border)',
+        fontSize: 12.5
+      }
+    }, /*#__PURE__*/React.createElement("span", {
+      style: {
+        width: 92,
+        flexShrink: 0,
+        color: 'var(--faint)',
+        fontSize: 11.5
+      }
+    }, timeAgo(ev.criado_em)), /*#__PURE__*/React.createElement("span", {
+      style: {
+        ...badgeStyle(cor),
+        flexShrink: 0
+      }
+    }, rot), /*#__PURE__*/React.createElement("span", {
+      style: {
+        flex: 1,
+        minWidth: 0,
+        color: 'var(--dim)',
+        lineHeight: 1.45,
+        cursor: ev.busca_id ? 'pointer' : 'default'
+      },
+      onClick: () => ev.busca_id && onAbrirRadar(ev.busca_id)
+    }, ev.detalhe, ev.pauta_nome && /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: 'var(--faint)'
+      }
+    }, " \xB7 pauta ", ev.pauta_nome)));
+  })));
+}
 function NovaBusca({
   onSalvar,
-  inicial
+  inicial,
+  modoPauta = false,
+  pautaId = null,
+  onCancelar
 }) {
   // Duplicação: pré-preenche a partir de uma busca existente (só os critérios;
   // data de abertura/capital voltam pro padrão e podem ser reajustados).
+  // modoPauta: a MESMA tela vira o editor de pauta da Estratégia — os filtros
+  // são os de um radar, mas a geografia sai dos campos de UF/cidade e vira a
+  // lista de "Regiões a seguir" (uma região = um radar), e ganha o período.
   const iniCrit = inicial?.criterios || {};
   const iniP = iniCrit.params || {};
   const iniProposta = iniP.proposta_valor || iniCrit.proposta_valor || '';
-  const [tipo, setTipo] = useState(inicial?.tipo || 'icp');
+  const [tipo, setTipo] = useState(inicial?.tipo === 'cnpj' && modoPauta ? 'icp' : inicial?.tipo || 'icp');
+  const [regioes, setRegioes] = useState(() => modoPauta ? regioesIniciais(inicial) : []);
+  const [semanas, setSemanas] = useState(Array.isArray(inicial?.semanas) ? inicial.semanas : []);
+  const [meses, setMeses] = useState(Array.isArray(inicial?.meses) ? inicial.meses : []);
   const [corte, setCorte] = useState(inicial?.corte_score ?? 60);
   const [saving, setSaving] = useState(false);
-  const [ufs, setUfs] = useState(Array.isArray(iniP.ufs) ? iniP.ufs : []);
+  const [ufs, setUfs] = useState(!modoPauta && Array.isArray(iniP.ufs) ? iniP.ufs : []);
   const [portes, setPortes] = useState(Array.isArray(iniP.portes) ? iniP.portes : []);
   const [cnaeBusca, setCnaeBusca] = useState('');
   const [cnaeSel, setCnaeSel] = useState(Array.isArray(iniP.cnaes_rotulos) ? iniP.cnaes_rotulos : Array.isArray(iniP.cnaes) ? iniP.cnaes.map(c => ({
@@ -5811,7 +6951,7 @@ function NovaBusca({
   const [cnaeData, setCnaeData] = useState([]);
   const [cnaeFoco, setCnaeFoco] = useState(false);
   const [municBusca, setMunicBusca] = useState('');
-  const [municSel, setMunicSel] = useState(Array.isArray(iniP.municipios_rotulos) ? iniP.municipios_rotulos : []);
+  const [municSel, setMunicSel] = useState(!modoPauta && Array.isArray(iniP.municipios_rotulos) ? iniP.municipios_rotulos : []);
   const [municData, setMunicData] = useState([]);
   const [municFoco, setMunicFoco] = useState(false);
   const [abertura, setAbertura] = useState(aberturaInicial(iniP));
@@ -5957,7 +7097,11 @@ function NovaBusca({
     // Puxa os padrões da tela de Configurações como valores iniciais.
     fetch('/api/config', {
       credentials: 'same-origin'
-    }).then(r => r.json()).then(c => {
+    }).then(r => r.json())
+    // Só pra formulário em branco: ao duplicar um radar ou editar uma pauta,
+    // o padrão atropelava o corte e o modo que vieram dela.
+    .then(c => {
+      if (inicial) return;
       if (c?.corte_padrao != null) setCorte(c.corte_padrao);
       if (c?.descoberta_modo_padrao) setModoDesc(c.descoberta_modo_padrao);
     }).catch(() => {});
@@ -6115,7 +7259,7 @@ function NovaBusca({
   const salvar = async () => {
     const nome = nomeRef.current?.value?.trim();
     if (!nome) {
-      alert('Informe o nome do radar.');
+      alert(modoPauta ? 'Informe o nome da pauta.' : 'Informe o nome do radar.');
       return;
     }
     if (tipo === 'lookalike' && !listaSel) {
@@ -6130,7 +7274,7 @@ function NovaBusca({
       alert('No modo "Pela internet", informe o que buscar (ex.: purificadores de água).');
       return;
     }
-    if (tipo === 'icp' && modoDesc === 'cnpja' && cnaeSel.length === 0 && keywords.length === 0 && municSel.length === 0) {
+    if (tipo === 'icp' && modoDesc === 'cnpja' && cnaeSel.length === 0 && keywords.length === 0 && municSel.length === 0 && !regioes.some(r => (r.municipios_rotulos || []).length)) {
       const ok = window.confirm('Nenhuma atividade, palavra-chave ou município.\n\nO radar vai trazer empresas de TODOS os ramos' + (ufs.length ? ' da(s) UF(s) escolhida(s)' : ' do Brasil') + '. Para mirar o alvo, escolha uma atividade OU use a "palavra-chave no nome" (ex.: purificador, filtro).\n\nContinuar mesmo assim?');
       if (!ok) return;
     }
@@ -6186,7 +7330,29 @@ function NovaBusca({
           municipios_rotulos: municSel
         };
       }
-      const r = await fetch('/api/buscas', {
+
+      // Pauta: vai pra Estratégia, com as regiões e o período. A geografia NÃO
+      // vai nos critérios (ufs/municSel ficam vazios neste modo): quem põe a
+      // região em cada radar é o piloto, uma por vez.
+      const r = modoPauta ? await fetch(pautaId ? `/api/estrategia/pautas/${pautaId}` : '/api/estrategia/pautas', {
+        method: pautaId ? 'PUT' : 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          nome,
+          tipo,
+          corte_score: corte,
+          crm_auto: crmAuto,
+          crm_queue_id: crmQueue || null,
+          lista: listaRadar,
+          criterios,
+          regioes,
+          semanas,
+          meses
+        })
+      }) : await fetch('/api/buscas', {
         method: 'POST',
         credentials: 'same-origin',
         headers: {
@@ -6204,7 +7370,7 @@ function NovaBusca({
       });
       if (!r.ok) {
         const d = await r.json().catch(() => ({}));
-        throw new Error(d.erro || 'Erro ao criar radar.');
+        throw new Error(d.erro || (modoPauta ? 'Erro ao salvar a pauta.' : 'Erro ao criar radar.'));
       }
       onSalvar();
     } catch (e) {
@@ -6223,7 +7389,7 @@ function NovaBusca({
       gap: 12,
       marginBottom: 26
     }
-  }, tipos.map(t => {
+  }, tipos.filter(t => !modoPauta || t.key !== 'cnpj').map(t => {
     const active = tipo === t.key;
     return /*#__PURE__*/React.createElement("div", {
       key: t.key,
@@ -6569,7 +7735,7 @@ function NovaBusca({
       background: 'color-mix(in srgb, var(--accent) 13%, transparent)',
       color: C.gold
     }
-  }, k)))), /*#__PURE__*/React.createElement("div", {
+  }, k)))), !modoPauta && /*#__PURE__*/React.createElement("div", {
     style: {
       marginBottom: 18
     }
@@ -6627,7 +7793,7 @@ function NovaBusca({
       background: portes.includes(p) ? 'color-mix(in srgb, var(--accent) 13%, transparent)' : 'transparent',
       color: portes.includes(p) ? C.gold : 'var(--dim)'
     }
-  }, p)))), /*#__PURE__*/React.createElement("div", {
+  }, p)))), !modoPauta && /*#__PURE__*/React.createElement("div", {
     style: {
       marginBottom: 18,
       position: 'relative'
@@ -6979,7 +8145,7 @@ function NovaBusca({
         fontSize: 11.5,
         color: '#F59E0B'
       }
-    }, "m\xEDnimo ", minimo, tipo === 'lookalike' ? ' · recomendado 15+' : ''))), tipo === 'lookalike' && /*#__PURE__*/React.createElement("div", {
+    }, "m\xEDnimo ", minimo, tipo === 'lookalike' ? ' · recomendado 15+' : ''))), tipo === 'lookalike' && !modoPauta && /*#__PURE__*/React.createElement("div", {
       style: {
         marginTop: 18,
         borderTop: '1px solid var(--border)',
@@ -7154,7 +8320,17 @@ function NovaBusca({
       onChange: setPropostaSel,
       inicial: iniProposta
     })));
-  })(), tipo === 'icp' && modoDesc === 'cnpja' && cnaeSel.length === 0 && keywords.length === 0 && municSel.length === 0 && /*#__PURE__*/React.createElement("div", {
+  })(), modoPauta && /*#__PURE__*/React.createElement(RegioesEditor, {
+    regioes: regioes,
+    setRegioes: setRegioes,
+    municData: municData,
+    tipo: tipo
+  }), modoPauta && /*#__PURE__*/React.createElement(PeriodoPauta, {
+    semanas: semanas,
+    setSemanas: setSemanas,
+    meses: meses,
+    setMeses: setMeses
+  }), tipo === 'icp' && modoDesc === 'cnpja' && cnaeSel.length === 0 && keywords.length === 0 && municSel.length === 0 && !regioes.some(r => (r.municipios_rotulos || []).length) && /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 11,
@@ -7179,7 +8355,7 @@ function NovaBusca({
       fontSize: 12.5,
       lineHeight: 1.5
     }
-  }, /*#__PURE__*/React.createElement("b", null, "Crit\xE9rio muito amplo."), " Sem atividade, palavra-chave ou munic\xEDpio, o radar varre ", ufs.length ? `todas as empresas de ${ufs.join('/')}` : 'o Brasil inteiro', " \u2014 isso traz nicho errado e ", /*#__PURE__*/React.createElement("b", null, "consome muito cr\xE9dito"), ". Escolha ao menos uma atividade, palavra-chave ou munic\xEDpio.")), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("b", null, "Crit\xE9rio muito amplo."), " Sem atividade, palavra-chave ou munic\xEDpio, ", modoPauta ? regioes.length ? 'cada radar desta pauta varre todas as empresas da região dele' : 'o radar varre o Brasil inteiro' : ufs.length ? `o radar varre todas as empresas de ${ufs.join('/')}` : 'o radar varre o Brasil inteiro', " \u2014 isso traz nicho errado e ", /*#__PURE__*/React.createElement("b", null, "consome muito cr\xE9dito"), ". Escolha ao menos uma atividade, palavra-chave ou munic\xEDpio.")), /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'var(--panel)',
       border: '1px solid var(--border)',
@@ -7203,10 +8379,10 @@ function NovaBusca({
       color: 'var(--dim)',
       marginBottom: 7
     }
-  }, "Nome do Radar"), /*#__PURE__*/React.createElement("input", {
+  }, modoPauta ? 'Nome da pauta' : 'Nome do Radar'), /*#__PURE__*/React.createElement("input", {
     ref: nomeRef,
-    defaultValue: inicial?.nome ? inicial.nome + ' (cópia)' : '',
-    placeholder: "Ex: Ag\xEAncias de marketing \u2014 Sul",
+    defaultValue: modoPauta ? inicial?.nome || '' : inicial?.nome ? inicial.nome + ' (cópia)' : '',
+    placeholder: modoPauta ? 'Ex: Clínicas veterinárias' : 'Ex: Agências de marketing — Sul',
     style: {
       width: '100%',
       height: 40,
@@ -7218,7 +8394,14 @@ function NovaBusca({
       fontSize: 13,
       fontFamily: 'inherit'
     }
-  })), /*#__PURE__*/React.createElement("div", {
+  }), modoPauta && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)',
+      marginTop: 7,
+      lineHeight: 1.4
+    }
+  }, "Cada radar que a pauta abrir se chama ", /*#__PURE__*/React.createElement("b", null, "nome \u2014 regi\xE3o"), " (ex.: \u201CCl\xEDnicas veterin\xE1rias \u2014 Campinas/SP\u201D).")), /*#__PURE__*/React.createElement("div", {
     style: {
       gridColumn: '1 / -1'
     }
@@ -7377,7 +8560,21 @@ function NovaBusca({
     w: 16,
     h: 16,
     sw: 2
-  }), saving ? 'Criando radar…' : 'Criar Radar')));
+  }), modoPauta ? saving ? 'Salvando pauta…' : pautaId ? 'Salvar pauta' : 'Adicionar à linha editorial' : saving ? 'Criando radar…' : 'Criar Radar'), modoPauta && onCancelar && /*#__PURE__*/React.createElement("button", {
+    onClick: onCancelar,
+    disabled: saving,
+    style: {
+      height: 46,
+      padding: '0 20px',
+      borderRadius: 11,
+      border: '1px solid var(--border)',
+      background: 'transparent',
+      color: 'var(--dim)',
+      fontSize: 14,
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, "Cancelar")));
 }
 
 // ── Integrações ───────────────────────────────────────────────────────────────
@@ -11689,7 +12886,8 @@ function App() {
   const [leadsRefreshKey, setLeadsRefreshKey] = useState(0);
   const [decisao, setDecisao] = useState(null); // leads aguardando decisão manual
   const [duplicarDe, setDuplicarDe] = useState(null); // busca a duplicar (pré-preenche Nova busca)
-
+  // Editor de pauta: { pauta } edita, { modelo } parte de um radar, {} = nova.
+  const [pautaEdit, setPautaEdit] = useState(null);
   useEffect(() => {
     fetch('/api/auth/me', {
       credentials: 'same-origin'
@@ -11791,6 +12989,48 @@ function App() {
           key: duplicarDe ? 'dup-' + duplicarDe.id : 'nova',
           inicial: duplicarDe,
           onSalvar: () => navTo('buscas')
+        });
+      case 'estrategia':
+        return /*#__PURE__*/React.createElement(Estrategia, {
+          onNovaPauta: () => {
+            setPautaEdit({});
+            setScreen('pautaForm');
+          },
+          onEditarPauta: p => {
+            setPautaEdit({
+              pauta: p
+            });
+            setScreen('pautaForm');
+          },
+          onUsarRadar: async b => {
+            // A lista de radares não traz tudo (ex.: a lista de semelhantes) —
+            // busca o radar completo pra servir de molde.
+            try {
+              const r = await fetch('/api/buscas/' + b.id, {
+                credentials: 'same-origin'
+              });
+              const full = r.ok ? await r.json() : b;
+              setPautaEdit({
+                modelo: full
+              });
+              setScreen('pautaForm');
+            } catch (_) {
+              setPautaEdit({
+                modelo: b
+              });
+              setScreen('pautaForm');
+            }
+          },
+          onAbrirRadar: openBusca
+        });
+      case 'pautaForm':
+        return /*#__PURE__*/React.createElement(NovaBusca, {
+          modoPauta: true,
+          key: pautaEdit?.pauta ? 'pauta-' + pautaEdit.pauta.id : pautaEdit?.modelo ? 'modelo-' + pautaEdit.modelo.id : 'pauta-nova',
+          inicial: pautaEdit?.pauta || pautaEdit?.modelo || null,
+          pautaId: pautaEdit?.pauta?.id || null,
+          onSalvar: () => navTo('estrategia'),
+          onCancelar: () => navTo('estrategia')
         });
       case 'propostas':
         return /*#__PURE__*/React.createElement(Propostas, null);
