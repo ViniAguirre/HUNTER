@@ -2807,19 +2807,45 @@ app.post('/api/webhooks/crm/conversao', webhookLimiter, async (req, res) => {
     }
     const tag = casou || tagsRecebidas[0] || null;
 
+    // Em qual lista de semelhantes o cliente entra. O CRM manda o nome em
+    // `lista_semelhantes` (hoje sempre "Semelhantes automático", a lista da
+    // automação dele); sem o campo, vale a lista histórica do CRM.
+    const lista = listaDaConversao(body);
     await pool.query(
-      `INSERT INTO sementes (cnpj, lista, origem, tag) VALUES ($1,'conversoes_crm','crm',$2)
-       ON CONFLICT (tenant_id, lista, cnpj) DO NOTHING`, [cnpj, tag]
+      `INSERT INTO listas_semelhantes (nome, rotulo) VALUES ($1, $2)
+       ON CONFLICT (tenant_id, nome) DO NOTHING`,
+      [lista, lista === LISTA_CRM ? 'Clientes convertidos (CRM)' : lista]);
+    await pool.query(
+      `INSERT INTO sementes (cnpj, lista, origem, tag) VALUES ($1,$2,'crm',$3)
+       ON CONFLICT (tenant_id, lista, cnpj) DO NOTHING`, [cnpj, lista, tag]
     );
-    const { rows:[{ n }] } = await pool.query(`SELECT COUNT(*)::int n FROM sementes WHERE lista='conversoes_crm'`);
+    const { rows:[{ n }] } = await pool.query(`SELECT COUNT(*)::int n FROM sementes WHERE lista=$1`, [lista]);
     // Converteu no CRM = virou cliente. Sai da esteira de prospecção na hora.
     await retirarClientesDaEsteira([cnpj]);
 
     let busca_auto = null;
-    if (cfg.crm_lookalike_auto) busca_auto = await garantirBuscaLookalikeAuto(n);
-    res.json({ ok: true, cnpj, via, total_lista: n, busca_auto });
+    if (cfg.crm_lookalike_auto) busca_auto = await garantirBuscaLookalikeAuto(lista, n);
+    res.json({ ok: true, cnpj, via, lista, total_lista: n, busca_auto });
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
+
+// Nome da lista de semelhantes pedida pelo CRM (`lista_semelhantes`, em
+// qualquer nível do payload). O nome é usado EXATAMENTE como veio — acento
+// incluído —, só normalizado pra forma composta (NFC): "automático" digitado
+// num sistema e decomposto noutro viraria duas listas diferentes na tela.
+function listaDaConversao(obj) {
+  const achar = (o, prof = 0) => {
+    if (o == null || typeof o !== 'object' || prof > 6) return null;
+    for (const [k, v] of Object.entries(o)) {
+      if (/^lista_?semelhantes$/i.test(k) && typeof v === 'string' && v.trim()) return v;
+    }
+    for (const v of Object.values(o)) { const r = achar(v, prof + 1); if (r) return r; }
+    return null;
+  };
+  const bruto = achar(obj);
+  if (!bruto) return LISTA_CRM;
+  return bruto.normalize('NFC').replace(/\s+/g, ' ').trim().slice(0, 80) || LISTA_CRM;
+}
 
 // Acha o hunter_ref no payload (chave chamada hunter_ref OU valor no formato hnt_xxxx).
 function extrairRef(obj, prof = 0) {
@@ -2880,10 +2906,12 @@ function coletarTags(obj, prof = 0, acc = new Set()) {
 
 // Garante a busca lookalike auto-alimentada; ao chegar semente nova, limpa o
 // perfil e reativa pra o motor re-perfilar com a lista atualizada.
-async function garantirBuscaLookalikeAuto(total) {
+// Um radar por lista alimentada pelo CRM: cada conversão cai numa lista (a
+// histórica ou a que o CRM nomear) e é o radar DAQUELA lista que re-perfila.
+async function garantirBuscaLookalikeAuto(lista, total) {
   const status = total >= 3 ? 'Ativa' : 'Pausada';
   const { rows:[existe] } = await pool.query(
-    `SELECT id, criterios FROM buscas WHERE lista='conversoes_crm' AND tipo='lookalike' ORDER BY id LIMIT 1`
+    `SELECT id, criterios FROM buscas WHERE lista=$1 AND tipo='lookalike' ORDER BY id LIMIT 1`, [lista]
   );
   if (existe) {
     const crit = existe.criterios || {};
@@ -2893,10 +2921,13 @@ async function garantirBuscaLookalikeAuto(total) {
     return existe.id;
   }
   const { rows:[u] } = await pool.query(`SELECT id FROM usuarios ORDER BY id LIMIT 1`);
+  // "Semelhantes automático" já diz o que é; os outros ganham o prefixo.
+  const nomeRadar = lista === LISTA_CRM ? 'Semelhantes — clientes do CRM'
+    : /^semelhantes/i.test(lista) ? lista : `Semelhantes — ${lista}`;
   const { rows:[nova] } = await pool.query(
     `INSERT INTO buscas (nome, tipo, status, lista, ritmo, criterios, corte_score, criador_id, ultima_ativ)
-     VALUES ('Semelhantes — clientes do CRM','lookalike',$1,'conversoes_crm',100,'{"proposta_valor":""}'::jsonb,60,$2,now())
-     RETURNING id`, [status, u?.id || null]
+     VALUES ($3,'lookalike',$1,$4,100,'{"proposta_valor":""}'::jsonb,60,$2,now())
+     RETURNING id`, [status, u?.id || null, nomeRadar, lista]
   );
   return nova.id;
 }
@@ -2996,6 +3027,12 @@ app.delete('/api/listas/:nome', requireAuth, requireEditor, async (req, res) => 
   const nome = String(req.params.nome || '');
   if (nome === LISTA_CRM) return res.status(400).json({ erro: 'a lista do CRM não pode ser apagada' });
   try {
+    // Lista que o CRM alimenta (ex.: "Semelhantes automático") é da automação
+    // dele: apagar aqui só faria ela renascer na próxima conversão, sem o
+    // histórico.
+    const { rows: [doCrm] } = await pool.query(
+      `SELECT 1 FROM sementes WHERE lista=$1 AND origem='crm' LIMIT 1`, [nome]);
+    if (doCrm) return res.status(400).json({ erro: 'esta lista é alimentada pelo CRM e não pode ser apagada' });
     // Radar que usa a lista pararia de re-perfilar — avisa em vez de quebrar.
     const { rows: [{ n }] } = await pool.query(
       `SELECT COUNT(*)::int n FROM buscas WHERE lista=$1`, [nome]);
@@ -3010,14 +3047,18 @@ app.delete('/api/listas/:nome', requireAuth, requireEditor, async (req, res) => 
 
 app.get('/api/sementes/status', requireAuth, requireMaster, async (req, res) => {
   try {
-    const { rows:[{ n }] } = await pool.query(`SELECT COUNT(*)::int n FROM sementes WHERE lista='conversoes_crm'`);
-    const { rows:[b] } = await pool.query(
-      `SELECT id, status FROM buscas WHERE lista='conversoes_crm' AND tipo='lookalike' ORDER BY id LIMIT 1`
-    );
+    // Todas as listas que o CRM alimenta (a histórica + as que ele nomear, ex.
+    // "Semelhantes automático"). O radar mostrado é o da lista mais recente.
+    const listasCrm = `(lista = $1 OR lista IN (SELECT DISTINCT lista FROM sementes WHERE origem='crm'))`;
+    const { rows:[{ n }] } = await pool.query(`SELECT COUNT(*)::int n FROM sementes WHERE ${listasCrm}`, [LISTA_CRM]);
     const { rows: ult } = await pool.query(
-      `SELECT cnpj, tag, criado_em FROM sementes WHERE lista='conversoes_crm' ORDER BY criado_em DESC LIMIT 5`
+      `SELECT cnpj, tag, lista, criado_em FROM sementes WHERE ${listasCrm} ORDER BY criado_em DESC LIMIT 5`, [LISTA_CRM]
     );
-    res.json({ total: n, busca: b || null, ultimas: ult });
+    const listaAtual = ult[0]?.lista || LISTA_CRM;
+    const { rows:[b] } = await pool.query(
+      `SELECT id, status FROM buscas WHERE lista=$1 AND tipo='lookalike' ORDER BY id LIMIT 1`, [listaAtual]
+    );
+    res.json({ total: n, lista: listaAtual, busca: b || null, ultimas: ult });
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
