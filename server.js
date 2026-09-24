@@ -613,7 +613,65 @@ async function init() {
     CREATE INDEX IF NOT EXISTS idx_chaves_api_hash ON chaves_api(hash);
   `);
 
-  for (const t of ['usuarios', 'buscas', 'leads', 'integracoes', 'sementes', 'contadores', 'contadores_hora', 'propostas_valor', 'listas_semelhantes', 'chaves_api']) {
+  // Estratégia (piloto automático de radares): a linha editorial de pautas, o
+  // registro de quais regiões de cada pauta já viraram radar (slots) e o diário
+  // do que o piloto fez. Ver jobs/estrategia.js.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS estrategia (
+      tenant_id    TEXT PRIMARY KEY DEFAULT current_setting('app.tenant_id', true),
+      ativo        BOOLEAN NOT NULL DEFAULT false,
+      simultaneos  INTEGER NOT NULL DEFAULT 1,
+      ao_concluir  TEXT NOT NULL DEFAULT 'parar' CHECK (ao_concluir IN ('parar','recomecar')),
+      estado       TEXT,
+      estado_em    TIMESTAMPTZ,
+      atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS estrategia_pautas (
+      id           SERIAL PRIMARY KEY,
+      nome         TEXT NOT NULL,
+      ordem        INTEGER NOT NULL DEFAULT 0,
+      ativo        BOOLEAN NOT NULL DEFAULT true,
+      tipo         TEXT NOT NULL DEFAULT 'icp' CHECK (tipo IN ('icp','lookalike')),
+      criterios    JSONB NOT NULL DEFAULT '{}',
+      lista        TEXT,
+      regioes      JSONB NOT NULL DEFAULT '[]',
+      semanas      INTEGER[] NOT NULL DEFAULT '{}',
+      meses        INTEGER[] NOT NULL DEFAULT '{}',
+      corte_score  INTEGER NOT NULL DEFAULT 60,
+      crm_auto     BOOLEAN NOT NULL DEFAULT false,
+      crm_queue_id TEXT,
+      criado_por   INTEGER REFERENCES usuarios(id) ON DELETE SET NULL,
+      criado_em    TIMESTAMPTZ NOT NULL DEFAULT now(),
+      atualizado_em TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS estrategia_slots (
+      id            SERIAL PRIMARY KEY,
+      pauta_id      INTEGER NOT NULL REFERENCES estrategia_pautas(id) ON DELETE CASCADE,
+      regiao_chave  TEXT NOT NULL,
+      regiao_rotulo TEXT,
+      busca_id      INTEGER REFERENCES buscas(id) ON DELETE SET NULL,
+      criado_em     TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    CREATE TABLE IF NOT EXISTS estrategia_eventos (
+      id         SERIAL PRIMARY KEY,
+      criado_em  TIMESTAMPTZ NOT NULL DEFAULT now(),
+      acao       TEXT NOT NULL,
+      pauta_id   INTEGER,
+      busca_id   INTEGER,
+      detalhe    TEXT
+    );
+    -- De qual pauta o radar nasceu (NULL = criado à mão). Excluir a pauta não
+    -- apaga os radares: eles só viram radares comuns.
+    ALTER TABLE buscas ADD COLUMN IF NOT EXISTS estrategia_pauta_id INTEGER
+      REFERENCES estrategia_pautas(id) ON DELETE SET NULL;
+    -- Pausa feita PELO PILOTO (pauta fora do período). Só essas ele desfaz
+    -- sozinho; a pausa que o usuário faz à mão ele respeita.
+    ALTER TABLE buscas ADD COLUMN IF NOT EXISTS pausa_auto BOOLEAN NOT NULL DEFAULT false;
+    CREATE INDEX IF NOT EXISTS idx_buscas_estrategia ON buscas(estrategia_pauta_id) WHERE estrategia_pauta_id IS NOT NULL;
+  `);
+
+  for (const t of ['usuarios', 'buscas', 'leads', 'integracoes', 'sementes', 'contadores', 'contadores_hora', 'propostas_valor', 'listas_semelhantes', 'chaves_api',
+                   'estrategia', 'estrategia_pautas', 'estrategia_slots', 'estrategia_eventos']) {
     await tenantizarTabela(pool, t);
   }
 
@@ -628,6 +686,12 @@ async function init() {
   await pool.query(`
     ALTER TABLE integracoes DROP CONSTRAINT IF EXISTS integracoes_categoria_provedor_key;
     CREATE UNIQUE INDEX IF NOT EXISTS uq_integracoes_tenant_cat_prov ON integracoes(tenant_id, categoria, provedor);
+  `);
+  // Cada região de uma pauta vira radar UMA vez por cliente — é o que impede o
+  // piloto de abrir o mesmo radar de novo a cada ciclo.
+  await pool.query(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_estrategia_slots ON estrategia_slots(tenant_id, pauta_id, regiao_chave);
+    CREATE INDEX IF NOT EXISTS idx_estrategia_eventos_em ON estrategia_eventos(tenant_id, criado_em DESC);
   `);
   // sementes (lista, cnpj) era UNIQUE global — idem.
   await pool.query(`
@@ -1373,6 +1437,8 @@ app.get('/api/buscas', requireAuth, async (req, res) => {
         -- mais que o radar original fosse automático, e a lista não tinha como
         -- mostrar em que modo cada radar está.
         b.crm_auto, b.crm_queue_id,
+        -- Radar aberto pelo piloto da Estratégia: a lista mostra de qual pauta.
+        b.estrategia_pauta_id, ep.nome AS estrategia_pauta_nome, b.pausa_auto,
         u.nome AS criador_nome,
         b.universo_varrido AS encontrados,
         COUNT(l.id)::int AS segmentadas,
@@ -1383,8 +1449,9 @@ app.get('/api/buscas', requireAuth, async (req, res) => {
         COUNT(l.id) FILTER (WHERE l.status='Enviado')::int AS enviados
       FROM buscas b
       LEFT JOIN usuarios u ON u.id = b.criador_id
+      LEFT JOIN estrategia_pautas ep ON ep.id = b.estrategia_pauta_id
       LEFT JOIN leads l ON l.busca_id = b.id
-      ${where} GROUP BY b.id, u.nome ORDER BY b.criado_em DESC`, vals);
+      ${where} GROUP BY b.id, u.nome, ep.nome ORDER BY b.criado_em DESC`, vals);
     res.json(rows.map(b => ({ ...b, health: computeHealth(b) })));
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
@@ -1474,6 +1541,10 @@ app.patch('/api/buscas/:id', requireAuth, requireEditor, async (req, res) => {
     sets.push(`crm_auto=$${sets.length+1}`); vals.push(req.body.crm_auto);
   }
   if (!sets.length) return res.status(400).json({ erro: 'nada para atualizar' });
+  // Mexeu no status à mão = a pessoa assumiu o radar. O piloto da Estratégia só
+  // desfaz pausa que ELE fez; esta ele passa a respeitar. (Fica por último: os
+  // $n acima são numerados pela posição em `sets`.)
+  if ('status' in req.body) sets.push('pausa_auto=false');
   vals.push(id);
   try {
     const { rows:[b] } = await pool.query(
@@ -1503,6 +1574,186 @@ app.delete('/api/buscas/:id', requireAuth, requireEditor, async (req, res) => {
   } finally {
     client.release();
   }
+});
+
+// ── API: Estratégia (piloto automático de radares) ────────────────────────────
+// A tela monta a linha editorial; quem executa é o worker (jobs/estrategia.js),
+// a cada ciclo do scheduler. Aqui é só leitura/gravação do plano.
+const estrategiaMotor = require('./jobs/estrategia');
+
+function erroEstrategia(res, e) {
+  if (e instanceof estrategiaMotor.ErroEstrategia) return res.status(e.status).json({ erro: e.message });
+  console.error(e); return res.status(500).json({ erro: 'erro interno' });
+}
+
+// O plano é 1 linha por cliente; nasce desligado na primeira leitura.
+async function planoEstrategia() {
+  await pool.query(`INSERT INTO estrategia (ativo) VALUES (false) ON CONFLICT (tenant_id) DO NOTHING`);
+  const { rows: [p] } = await pool.query(`SELECT ativo, simultaneos, ao_concluir, estado, estado_em FROM estrategia`);
+  return p;
+}
+
+app.get('/api/estrategia', requireAuth, async (req, res) => {
+  try {
+    const plano = await planoEstrategia();
+    const periodo = await estrategiaMotor.periodoAtual(pool);
+    const [{ rows: pautas }, { rows: slots }, { rows: eventos }, { rows: [cfg] }] = await Promise.all([
+      pool.query(`SELECT * FROM estrategia_pautas ORDER BY ordem, id`),
+      // Números de cada radar que a pauta abriu — mesma régua da tela Radares.
+      pool.query(`
+        SELECT s.pauta_id, s.regiao_chave, s.regiao_rotulo, s.criado_em,
+               b.id AS busca_id, b.nome AS busca_nome, b.status, b.pausa_auto,
+               b.ultimo_heartbeat, (b.descoberta_token IS NOT NULL) AS tem_cursor,
+               COALESCE(b.universo_varrido, 0) AS encontrados,
+               (SELECT COUNT(*) FROM leads l WHERE l.busca_id = b.id)::int AS segmentadas,
+               (SELECT COUNT(*) FROM leads l WHERE l.busca_id = b.id AND ${estagioContato('l')} = 'completo')::int AS qualificados,
+               (SELECT COUNT(*) FROM leads l WHERE l.busca_id = b.id AND l.status = 'Enviado')::int AS enviados
+          FROM estrategia_slots s LEFT JOIN buscas b ON b.id = s.busca_id
+         ORDER BY s.criado_em`),
+      pool.query(`
+        SELECT e.id, e.criado_em, e.acao, e.pauta_id, e.busca_id, e.detalhe, p.nome AS pauta_nome
+          FROM estrategia_eventos e LEFT JOIN estrategia_pautas p ON p.id = e.pauta_id
+         ORDER BY e.criado_em DESC, e.id DESC LIMIT 40`),
+      pool.query(`SELECT limite_diario, janela_inicio, janela_fim, janela_dias FROM config`).catch(() => ({ rows: [{}] })),
+    ]);
+    const saida = pautas.map(p => {
+      const meus = slots.filter(s => s.pauta_id === p.id);
+      const regioes = estrategiaMotor.regioesDa(p).map(r => {
+        const s = meus.find(x => x.regiao_chave === r.chave);
+        return { ...r, radar: s ? {
+          id: s.busca_id, nome: s.busca_nome, status: s.busca_id ? s.status : 'Excluído',
+          pausa_auto: !!s.pausa_auto, tem_cursor: !!s.tem_cursor, criado_em: s.criado_em,
+          encontrados: s.encontrados || 0, segmentadas: s.segmentadas || 0,
+          qualificados: s.qualificados || 0, enviados: s.enviados || 0,
+        } : null };
+      });
+      const soma = k => meus.reduce((t, s) => t + (s[k] || 0), 0);
+      return {
+        ...p, regioes,
+        sem_regiao: !(Array.isArray(p.regioes) && p.regioes.length),
+        no_periodo: estrategiaMotor.noPeriodo(p, periodo),
+        // Região que saiu da pauta depois de já ter virado radar: some da lista
+        // de regiões, mas o que ela trouxe continua contando.
+        totais: { radares: meus.length, encontrados: soma('encontrados'), segmentadas: soma('segmentadas'),
+                  qualificados: soma('qualificados'), enviados: soma('enviados') },
+      };
+    });
+    res.json({
+      plano, periodo, pautas: saida, eventos,
+      limites: { limite_diario: cfg?.limite_diario ?? 0, janela_inicio: cfg?.janela_inicio ?? 0,
+                 janela_fim: cfg?.janela_fim ?? 24, janela_dias: cfg?.janela_dias || [0,1,2,3,4,5,6] },
+      constantes: { max_simultaneos: estrategiaMotor.MAX_SIMULTANEOS, dias_recomeco: estrategiaMotor.DIAS_RECOMECO,
+                    limiar_fila: estrategiaMotor.LIMIAR_FILA },
+    });
+  } catch (e) { erroEstrategia(res, e); }
+});
+
+app.patch('/api/estrategia', requireAuth, requireEditor, async (req, res) => {
+  try {
+    await planoEstrategia();
+    const b = req.body || {};
+    const sets = [], vals = [];
+    if (typeof b.ativo === 'boolean') { vals.push(b.ativo); sets.push(`ativo=$${vals.length}`); }
+    if (b.simultaneos != null) {
+      const n = parseInt(b.simultaneos, 10);
+      if (!(n >= 1 && n <= estrategiaMotor.MAX_SIMULTANEOS)) {
+        return res.status(400).json({ erro: `radares ao mesmo tempo: de 1 a ${estrategiaMotor.MAX_SIMULTANEOS}` });
+      }
+      vals.push(n); sets.push(`simultaneos=$${vals.length}`);
+    }
+    if (b.ao_concluir != null) {
+      if (!['parar', 'recomecar'].includes(b.ao_concluir)) return res.status(400).json({ erro: 'ao_concluir inválido' });
+      vals.push(b.ao_concluir); sets.push(`ao_concluir=$${vals.length}`);
+    }
+    if (!sets.length) return res.status(400).json({ erro: 'nada para atualizar' });
+    // Ligar/desligar limpa o estado: o que valia antes não diz nada do agora, e
+    // a tela mostraria "rodando" de uma estratégia que acabou de ser desligada.
+    if (typeof b.ativo === 'boolean') sets.push(`estado=NULL, estado_em=NULL`);
+    await pool.query(`UPDATE estrategia SET ${sets.join(', ')}, atualizado_em=now()`, vals);
+    if (typeof b.ativo === 'boolean') {
+      await pool.query(`INSERT INTO estrategia_eventos (acao, detalhe) VALUES ($1, $2)`,
+        [b.ativo ? 'ligou' : 'desligou', `${b.ativo ? 'ligado' : 'desligado'} por ${req.user.nome || req.user.email}`]);
+    }
+    res.json(await planoEstrategia());
+  } catch (e) { erroEstrategia(res, e); }
+});
+
+app.post('/api/estrategia/pautas', requireAuth, requireEditor, async (req, res) => {
+  try {
+    const p = estrategiaMotor.normalizarPauta(req.body || {});
+    const { rows: [{ n }] } = await pool.query(`SELECT COUNT(*)::int n FROM estrategia_pautas`);
+    if (n >= estrategiaMotor.MAX_PAUTAS) {
+      return res.status(400).json({ erro: `no máximo ${estrategiaMotor.MAX_PAUTAS} pautas — exclua uma antes` });
+    }
+    const { rows: [nova] } = await pool.query(
+      `INSERT INTO estrategia_pautas (nome, tipo, criterios, lista, regioes, semanas, meses, corte_score,
+                                      crm_auto, crm_queue_id, ativo, criado_por, ordem)
+       VALUES ($1,$2,$3::jsonb,$4,$5::jsonb,$6::int[],$7::int[],$8,$9,$10,$11,$12,
+               (SELECT COALESCE(MAX(ordem), 0) + 1 FROM estrategia_pautas))
+       RETURNING *`,
+      [p.nome, p.tipo, JSON.stringify(p.criterios), p.lista, JSON.stringify(p.regioes), p.semanas, p.meses,
+       p.corte_score, p.crm_auto, p.crm_queue_id, p.ativo ?? true, req.user.id]);
+    res.status(201).json(nova);
+  } catch (e) { erroEstrategia(res, e); }
+});
+
+// Edição. Os radares que a pauta JÁ abriu não mudam (são radares normais, com
+// histórico próprio); o que muda é o molde dos próximos.
+app.put('/api/estrategia/pautas/:id', requireAuth, requireEditor, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
+  try {
+    const p = estrategiaMotor.normalizarPauta(req.body || {});
+    const { rows: [atual] } = await pool.query(
+      `UPDATE estrategia_pautas SET nome=$2, tipo=$3, criterios=$4::jsonb, lista=$5, regioes=$6::jsonb,
+              semanas=$7::int[], meses=$8::int[], corte_score=$9, crm_auto=$10, crm_queue_id=$11,
+              ativo=COALESCE($12, ativo), atualizado_em=now()
+        WHERE id=$1 RETURNING *`,
+      [id, p.nome, p.tipo, JSON.stringify(p.criterios), p.lista, JSON.stringify(p.regioes), p.semanas, p.meses,
+       p.corte_score, p.crm_auto, p.crm_queue_id, p.ativo ?? null]);
+    if (!atual) return res.status(404).json({ erro: 'pauta não encontrada' });
+    res.json(atual);
+  } catch (e) { erroEstrategia(res, e); }
+});
+
+// Liga/desliga a pauta sem abrir o formulário. Desligada, o piloto pausa os
+// radares dela no próximo ciclo e não abre região nova.
+app.patch('/api/estrategia/pautas/:id', requireAuth, requireEditor, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
+  if (typeof req.body?.ativo !== 'boolean') return res.status(400).json({ erro: 'informe ativo (true/false)' });
+  try {
+    const { rows: [p] } = await pool.query(
+      `UPDATE estrategia_pautas SET ativo=$2, atualizado_em=now() WHERE id=$1 RETURNING *`, [id, req.body.ativo]);
+    if (!p) return res.status(404).json({ erro: 'pauta não encontrada' });
+    res.json(p);
+  } catch (e) { erroEstrategia(res, e); }
+});
+
+// Nova ordem da linha editorial: a lista inteira de ids, na ordem desejada.
+app.put('/api/estrategia/ordem', requireAuth, requireEditor, async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(n => parseInt(n, 10)).filter(n => n > 0) : [];
+  if (!ids.length) return res.status(400).json({ erro: 'informe ids' });
+  try {
+    await pool.query(
+      `UPDATE estrategia_pautas p SET ordem = o.pos
+         FROM unnest($1::int[]) WITH ORDINALITY AS o(id, pos) WHERE p.id = o.id`, [ids]);
+    res.json({ ok: true });
+  } catch (e) { erroEstrategia(res, e); }
+});
+
+// Excluir a pauta NÃO apaga os radares que ela abriu (viram radares comuns,
+// com os leads intactos) — só deixa de haver molde pros próximos.
+app.delete('/api/estrategia/pautas/:id', requireAuth, requireEditor, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
+  try {
+    const { rows: [p] } = await pool.query(`DELETE FROM estrategia_pautas WHERE id=$1 RETURNING nome`, [id]);
+    if (!p) return res.status(404).json({ erro: 'pauta não encontrada' });
+    await pool.query(`INSERT INTO estrategia_eventos (acao, detalhe) VALUES ('excluiu', $1)`,
+      [`pauta "${p.nome}" excluída por ${req.user.nome || req.user.email} — os radares dela continuam em Radares`]);
+    res.json({ ok: true });
+  } catch (e) { erroEstrategia(res, e); }
 });
 
 // ── API: leads ────────────────────────────────────────────────────────────────

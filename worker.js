@@ -47,6 +47,7 @@ const validacaoFn = require('./jobs/validacao');
 const swotFn = require('./jobs/swot');
 const crmFn = require('./jobs/crm');
 const trackingFn = require('./jobs/tracking');
+const estrategia = require('./jobs/estrategia');
 
 // Preenchido só DEPOIS da trava anti-superuser passar (ver boot() no fim) —
 // nenhum job é consumido antes de confirmar que o RLS vale pro usuário do banco.
@@ -90,6 +91,15 @@ function iniciarWorkers() {
 
 // ── scheduler: respeita o ritmo (leads/h) de cada busca Ativa ───────────────
 async function runScheduler() {
+  // Piloto automático ANTES do disparo: um radar que ele abrir agora já sai
+  // neste mesmo ciclo, em vez de esperar mais 60s. Falha dele não pode travar
+  // os radares que já estão rodando — por isso o try próprio.
+  try {
+    const r = await estrategia.executar(pool, queues);
+    for (const a of r.acoes || []) console.log(`[estrategia] ${a.acao} radar ${a.busca_id}`);
+  } catch (err) {
+    console.error('[estrategia] erro:', err.message);
+  }
   try {
     const { rows: buscas } = await pool.query(
       `SELECT id, criterios, ultimo_heartbeat FROM buscas WHERE status='Ativa'`
