@@ -2815,17 +2815,29 @@ app.post('/api/webhooks/crm/conversao', webhookLimiter, async (req, res) => {
       `INSERT INTO listas_semelhantes (nome, rotulo) VALUES ($1, $2)
        ON CONFLICT (tenant_id, nome) DO NOTHING`,
       [lista, lista === LISTA_CRM ? 'Clientes convertidos (CRM)' : lista]);
+    // Comprou = é cliente, ponto. Se a empresa estava na lista como exemplo
+    // NEGATIVO ("fora do perfil", marcado antes de ela converter), vira
+    // positiva — senão um cliente de verdade ensinaria o radar a evitá-lo.
+    const { rows: [antes] } = await pool.query(
+      `SELECT tipo FROM sementes WHERE lista=$1 AND cnpj=$2`, [lista, cnpj]);
     await pool.query(
-      `INSERT INTO sementes (cnpj, lista, origem, tag) VALUES ($1,$2,'crm',$3)
-       ON CONFLICT (tenant_id, lista, cnpj) DO NOTHING`, [cnpj, lista, tag]
+      `INSERT INTO sementes (cnpj, lista, origem, tag, tipo) VALUES ($1,$2,'crm',$3,'positiva')
+       ON CONFLICT (tenant_id, lista, cnpj) DO UPDATE
+         SET tipo='positiva', origem='crm', tag=COALESCE(EXCLUDED.tag, sementes.tag)
+         WHERE sementes.tipo = 'negativa'`, [cnpj, lista, tag]
     );
-    const { rows:[{ n }] } = await pool.query(`SELECT COUNT(*)::int n FROM sementes WHERE lista=$1`, [lista]);
+    // Mesma conta da tela de Semelhantes: só clientes (positivos). O CRM grava
+    // esse número no histórico do lead, então os dois lados precisam bater.
+    const { rows:[{ n }] } = await pool.query(
+      `SELECT COUNT(*)::int n FROM sementes WHERE lista=$1 AND tipo <> 'negativa'`, [lista]);
+    const ja_estava = !!antes && antes.tipo !== 'negativa';
     // Converteu no CRM = virou cliente. Sai da esteira de prospecção na hora.
     await retirarClientesDaEsteira([cnpj]);
 
     let busca_auto = null;
     if (cfg.crm_lookalike_auto) busca_auto = await garantirBuscaLookalikeAuto(lista, n);
-    res.json({ ok: true, cnpj, via, lista, total_lista: n, busca_auto });
+    res.json({ ok: true, cnpj, via, lista, total_lista: n, ja_estava,
+               ...(antes?.tipo === 'negativa' ? { era_negativa: true } : {}), busca_auto });
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
