@@ -32,6 +32,30 @@ const MAX_PAUTAS = 50;
 const UFS = new Set(['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR',
   'PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO']);
 
+// Fronteiras entre os estados — é por elas que a expansão automática anda:
+// quem vende bem em SP tende a vender bem em MG/PR antes de vender no AM. A
+// tabela é fechada em simetria abaixo, então basta listar cada par uma vez.
+const VIZINHOS = (() => {
+  const pares = {
+    AC:['AM','RO'], AL:['PE','SE','BA'], AP:['PA'], AM:['RO','MT','PA','RR'],
+    BA:['SE','PE','PI','TO','GO','MG','ES'], CE:['RN','PB','PE','PI'], DF:['GO','MG'],
+    ES:['MG','RJ'], GO:['MG','TO','MT','MS'], MA:['PI','TO','PA'], MT:['RO','PA','TO','MS'],
+    MS:['MG','SP','PR'], MG:['RJ','SP'], PA:['RR','TO'], PB:['RN','PE'], PR:['SP','SC'],
+    PE:['PI'], PI:['TO'], RJ:['SP'], RS:['SC'],
+  };
+  const v = {};
+  for (const uf of UFS) v[uf] = new Set();
+  for (const [a, bs] of Object.entries(pares)) for (const b of bs) { v[a].add(b); v[b].add(a); }
+  return v;
+})();
+// Desempate da expansão: do maior mercado (mais empresas ativas) pro menor.
+const UFS_POR_MERCADO = ['SP','MG','RJ','PR','RS','SC','BA','GO','PE','CE','ES','DF','PA','MT','MS',
+  'MA','RN','PB','AM','AL','PI','SE','RO','TO','AC','AP','RR'];
+// Pauta que já varreu isso tudo sem virar um lead sequer não expande: o
+// problema é o filtro, não a região — levar pra outro estado só gasta crédito.
+const EXPANSAO_MIN_AMOSTRA = 200;
+const EXPANSAO_MAX = 27;
+
 class ErroEstrategia extends Error {
   constructor(msg, status = 400) { super(msg); this.status = status; }
 }
@@ -92,7 +116,10 @@ function normalizarRegiao(r) {
     ? municipios.map(m => m.uf ? `${m.n}/${m.uf}` : m.n).join(', ')
     : ufs.join('/');
   const rotulo = String(r.rotulo || '').trim().slice(0, 80) || auto;
-  return { chave, rotulo, ufs, municipios_cod: municipios.map(m => m.c), municipios_rotulos: municipios };
+  const out = { chave, rotulo, ufs, municipios_cod: municipios.map(m => m.c), municipios_rotulos: municipios };
+  // Região que o próprio piloto acrescentou (expansão automática) e por quê.
+  if (r.auto) { out.auto = true; out.motivo = String(r.motivo || '').slice(0, 200); }
+  return out;
 }
 
 function normalizarRegioes(lista) {
@@ -145,6 +172,15 @@ function normalizarPauta(b, { parcial = false } = {}) {
   }
   if (!parcial || 'crm_auto' in b) out.crm_auto = !!b.crm_auto;
   if (!parcial || 'crm_queue_id' in b) out.crm_queue_id = String(b.crm_queue_id || '').trim() || null;
+  if (!parcial || 'expandir' in b) out.expandir = !!b.expandir;
+  if (!parcial || 'expandir_max' in b) {
+    const n = parseInt(b.expandir_max, 10);
+    out.expandir_max = Number.isFinite(n) ? Math.max(1, Math.min(EXPANSAO_MAX, n)) : 5;
+  }
+  if (!parcial || 'expandir_excluir' in b) {
+    out.expandir_excluir = [...new Set((Array.isArray(b.expandir_excluir) ? b.expandir_excluir : [])
+      .map(u => String(u).toUpperCase()).filter(u => UFS.has(u)))].sort();
+  }
   if ('ativo' in b) out.ativo = !!b.ativo;
   return out;
 }
@@ -174,6 +210,68 @@ function montarRadar(p, reg) {
     lista: p.tipo === 'lookalike' ? p.lista : null,
     corte_score: p.corte_score ?? 60, crm_auto: !!p.crm_auto, crm_queue_id: p.crm_queue_id || null,
   };
+}
+
+// ── Expansão automática ───────────────────────────────────────────────────────
+// A pauta acabou as regiões que a pessoa escolheu: qual a próxima? Regras, em
+// ordem, todas explicáveis no diário (nada de caixa-preta):
+//   1. cidade varrida → o estado inteiro dela;
+//   2. estado vizinho de uma região já varrida, começando pelo vizinho da
+//      região que MAIS rendeu (empresas encontradas que viraram lead);
+//   3. empate → o maior mercado.
+// `usadas` = chaves que já viraram radar nesta pauta (inclusive regiões que a
+// pessoa tirou da lista depois): nunca propõe de novo o que já foi varrido.
+// `desempenho` = { [chave]: { encontrados, leads } }.
+function proximaExpansao(p, usadas, desempenho = {}) {
+  const regs = Array.isArray(p.regioes) ? p.regioes : [];
+  if (!p.expandir || !regs.length) return null;
+  if (regs.filter(r => r.auto).length >= (p.expandir_max || 5)) return null;
+  const excluir = new Set(p.expandir_excluir || []);
+  const chaves = new Set(regs.map(r => r.chave));
+  const livre = uf => !excluir.has(uf) && !chaves.has('uf:' + uf) && !usadas.has('uf:' + uf);
+  const taxa = r => {
+    const d = desempenho[r.chave];
+    return d && d.encontrados >= 20 ? d.leads / d.encontrados : null;
+  };
+  const pct = t => `${Math.round(t * 100)}% das empresas encontradas lá viraram lead`;
+
+  // 1) cidade → estado inteiro (se nenhuma região já cobre o estado todo)
+  for (const r of regs) {
+    if (!(r.municipios_rotulos || []).length) continue;
+    for (const uf of r.ufs) {
+      const cobertoInteiro = regs.some(x => !(x.municipios_rotulos || []).length && x.ufs.includes(uf));
+      if (!cobertoInteiro && livre(uf)) {
+        const t = taxa(r);
+        return { uf, motivo: `o estado inteiro de ${r.rotulo}${t != null ? ` (${pct(t)})` : ''}` };
+      }
+    }
+  }
+
+  // 2) vizinhos das regiões cobertas
+  const cobertas = new Set(regs.flatMap(r => r.ufs));
+  const candidatos = UFS_POR_MERCADO.filter(u => !cobertas.has(u) && livre(u));
+  if (!candidatos.length) return null;
+  const avaliados = candidatos.map(u => {
+    const origens = regs.filter(r => r.ufs.some(x => VIZINHOS[u].has(x)));
+    let melhor = null, melhorTaxa = -1;
+    // Empate de desempenho → cita a região de estado inteiro ("vizinho de SP"),
+    // não a cidade que fica dentro dele ("vizinho de Campinas/SP").
+    const ehCidade = r => (r.municipios_rotulos || []).length > 0;
+    for (const r of origens) {
+      const t = taxa(r) ?? -0.5;
+      if (t > melhorTaxa || (t === melhorTaxa && melhor && ehCidade(melhor) && !ehCidade(r))) { melhorTaxa = t; melhor = r; }
+    }
+    return { uf: u, origens, melhor, melhorTaxa, mercado: UFS_POR_MERCADO.indexOf(u) };
+  });
+  const vizinhos = avaliados.filter(a => a.origens.length);
+  if (vizinhos.length) {
+    vizinhos.sort((a, b) => (b.melhorTaxa - a.melhorTaxa) || (b.origens.length - a.origens.length) || (a.mercado - b.mercado));
+    const a = vizinhos[0];
+    const t = a.melhorTaxa >= 0 ? a.melhorTaxa : null;
+    return { uf: a.uf, motivo: `vizinho de ${a.melhor.rotulo}${t != null ? ` (${pct(t)})` : ''}` };
+  }
+  // 3) nenhum vizinho livre (todos excluídos/varridos): o maior mercado que sobrou
+  return { uf: candidatos[0], motivo: 'o maior mercado que a pauta ainda não varreu' };
 }
 
 // ── Portão: dá pra abrir radar AGORA sem furar limite nem inchar a fila? ────────
@@ -222,6 +320,38 @@ async function lerPlano(db) {
   return p || null;
 }
 
+async function abrirRegiao(db, p, reg) {
+  const r = montarRadar(p, reg);
+  const { rows: [b] } = await db.query(
+    `INSERT INTO buscas (nome, tipo, status, ritmo, criterios, corte_score, crm_auto, crm_queue_id, lista,
+                         criador_id, estrategia_pauta_id, ultima_ativ)
+     VALUES ($1,$2,'Ativa',120,$3::jsonb,$4,$5,$6,$7,$8,$9,now()) RETURNING id, nome`,
+    [r.nome, r.tipo, JSON.stringify(r.criterios), r.corte_score, r.crm_auto, r.crm_queue_id, r.lista,
+     p.criado_por || null, p.id]);
+  await db.query(
+    `INSERT INTO estrategia_slots (pauta_id, regiao_chave, regiao_rotulo, busca_id) VALUES ($1,$2,$3,$4)`,
+    [p.id, reg.chave, reg.rotulo, b.id]);
+  return b;
+}
+
+// Controle pelo CRM: o CRM conta os leads do Hunter parados na fila sem
+// atendimento e avisa (POST /api/webhooks/crm/fila). Com o controle ligado,
+// radar novo só abre quando a fila cai para o gatilho ou menos — o time
+// comercial dita o ritmo, em vez de receber lead mais rápido do que atende.
+// Sem aviso nenhum ainda, espera: ligar o controle é dizer "quem manda é o CRM".
+function portaoCrm(plano) {
+  if (!plano.crm_controle) return { livre: true };
+  if (plano.crm_fila_em == null || plano.crm_fila_pendentes == null) {
+    return { livre: false, motivo: 'o CRM ainda não informou quantos leads estão na fila sem atendimento' };
+  }
+  const n = plano.crm_fila_pendentes, g = plano.crm_fila_gatilho ?? 0;
+  if (n > g) {
+    return { livre: false, motivo: `o CRM tem ${n} lead(s) sem atendimento na fila — radar novo abre ${g === 0
+      ? 'quando todos forem atendidos' : `quando cair para ${g} ou menos`}` };
+  }
+  return { livre: true };
+}
+
 async function passo(db, pool, queues) {
   const plano = await lerPlano(db);
   if (!plano || !plano.ativo) return { desligado: true };
@@ -263,6 +393,8 @@ async function passo(db, pool, queues) {
 
   const gate = await portao(pool, queues);
   if (!gate.livre) return { acoes, estado: `aguardando: ${gate.motivo}` };
+  const crm = portaoCrm(plano);
+  if (!crm.livre) return { acoes, estado: `aguardando: ${crm.motivo}` };
 
   const porOrdem = rows => rows.sort((a, b) =>
     (posicao.get(a.estrategia_pauta_id) - posicao.get(b.estrategia_pauta_id)) || (a.id - b.id));
@@ -302,18 +434,48 @@ async function passo(db, pool, queues) {
   for (const p of elegiveis) {
     for (const reg of regioesDa(p)) {
       if (usado.has(`${p.id}|${reg.chave}`)) continue;
-      const r = montarRadar(p, reg);
-      const { rows: [b] } = await db.query(
-        `INSERT INTO buscas (nome, tipo, status, ritmo, criterios, corte_score, crm_auto, crm_queue_id, lista,
-                             criador_id, estrategia_pauta_id, ultima_ativ)
-         VALUES ($1,$2,'Ativa',120,$3::jsonb,$4,$5,$6,$7,$8,$9,now()) RETURNING id, nome`,
-        [r.nome, r.tipo, JSON.stringify(r.criterios), r.corte_score, r.crm_auto, r.crm_queue_id, r.lista,
-         p.criado_por || null, p.id]);
-      await db.query(
-        `INSERT INTO estrategia_slots (pauta_id, regiao_chave, regiao_rotulo, busca_id) VALUES ($1,$2,$3,$4)`,
-        [p.id, reg.chave, reg.rotulo, b.id]);
+      const b = await abrirRegiao(db, p, reg);
       await evento(db, 'criou', { pauta_id: p.id, busca_id: b.id, detalhe: `criou e ligou "${b.nome}"` });
       return { acoes: [...acoes, { acao: 'criou', busca_id: b.id }], estado: `abriu "${b.nome}"` };
+    }
+  }
+
+  // 2c') Expansão automática: acabaram as regiões que a pessoa escolheu numa
+  //      pauta com "expandir" ligado → o piloto escolhe a próxima (ver
+  //      proximaExpansao), grava na pauta — fica visível e editável na tela —
+  //      e já abre o radar dela.
+  const expansiveis = elegiveis.filter(p => p.expandir && (p.regioes || []).length);
+  if (expansiveis.length) {
+    const { rows: desemp } = await db.query(
+      `SELECT s.pauta_id, s.regiao_chave, COALESCE(b.universo_varrido, 0)::int AS encontrados,
+              (SELECT COUNT(*) FROM leads l WHERE l.busca_id = b.id)::int AS leads
+         FROM estrategia_slots s LEFT JOIN buscas b ON b.id = s.busca_id
+        WHERE s.pauta_id = ANY($1::int[])`, [expansiveis.map(p => p.id)]);
+    for (const p of expansiveis) {
+      const meus = desemp.filter(d => d.pauta_id === p.id);
+      const total = meus.reduce((t, d) => ({ enc: t.enc + d.encontrados, leads: t.leads + d.leads }), { enc: 0, leads: 0 });
+      if (total.enc >= EXPANSAO_MIN_AMOSTRA && total.leads === 0) {
+        const { rows: ja } = await db.query(
+          `SELECT 1 FROM estrategia_eventos WHERE acao='nao_expandiu' AND pauta_id=$1 LIMIT 1`, [p.id]);
+        if (!ja.length) {
+          await evento(db, 'nao_expandiu', { pauta_id: p.id,
+            detalhe: `${p.nome}: ${total.enc} empresas encontradas e nenhuma virou lead — revise os filtros antes de levar a pauta pra outras regiões` });
+        }
+        continue;
+      }
+      const desempenho = Object.fromEntries(meus.map(d => [d.regiao_chave, d]));
+      const usadas = new Set(meus.map(d => d.regiao_chave));
+      const prox = proximaExpansao(p, usadas, desempenho);
+      if (!prox) continue;
+      const reg = normalizarRegiao({ ufs: [prox.uf], auto: true, motivo: prox.motivo });
+      await db.query(
+        `UPDATE estrategia_pautas SET regioes = regioes || $2::jsonb, atualizado_em=now() WHERE id=$1`,
+        [p.id, JSON.stringify([reg])]);
+      await evento(db, 'sugeriu', { pauta_id: p.id,
+        detalhe: `${p.nome}: acabaram as regiões — escolheu ${prox.uf}, ${prox.motivo}` });
+      const b = await abrirRegiao(db, { ...p, regioes: [...p.regioes, reg] }, reg);
+      await evento(db, 'criou', { pauta_id: p.id, busca_id: b.id, detalhe: `criou e ligou "${b.nome}"` });
+      return { acoes: [...acoes, { acao: 'sugeriu', busca_id: b.id }], estado: `expandiu a pauta e abriu "${b.nome}"` };
     }
   }
 
@@ -375,7 +537,7 @@ async function executar(pool, queues) {
 }
 
 module.exports = {
-  executar, portao, periodoAtual, semanaDoMes, noPeriodo, montarRadar, regioesDa,
+  executar, portao, portaoCrm, proximaExpansao, VIZINHOS, periodoAtual, semanaDoMes, noPeriodo, montarRadar, regioesDa,
   normalizarPauta, normalizarRegioes, ErroEstrategia,
   LIMIAR_FILA, DIAS_RECOMECO, MAX_SIMULTANEOS, MAX_PAUTAS, REGIAO_UNICA,
 };

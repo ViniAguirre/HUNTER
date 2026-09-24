@@ -5896,7 +5896,8 @@ function RegioesEditor({
   regioes,
   setRegioes,
   municData,
-  tipo
+  tipo,
+  onRemoverAuto
 }) {
   const [busca, setBusca] = useState('');
   const [foco, setFoco] = useState(false);
@@ -5911,7 +5912,13 @@ function RegioesEditor({
     [n[i], n[j]] = [n[j], n[i]];
     return n;
   });
-  const remover = i => setRegioes(prev => prev.filter((_, k) => k !== i));
+  // Tirar uma região que o piloto sugeriu é dizer "não quero esse estado": ela
+  // vai pra lista de exclusão, senão a expansão proporia o mesmo de novo.
+  const remover = i => {
+    const r = regioes[i];
+    if (r?.auto && onRemoverAuto) onRemoverAuto(r.ufs || []);
+    setRegioes(prev => prev.filter((_, k) => k !== i));
+  };
   const resultados = useMemo(() => {
     const q = semAcento(busca.trim());
     if (q.length < 2) return [];
@@ -5989,7 +5996,17 @@ function RegioesEditor({
       color: 'var(--faint)',
       fontSize: 11.5
     }
-  }, " \xB7 ", r.ufs.join(', '))), /*#__PURE__*/React.createElement("button", {
+  }, " \xB7 ", r.ufs.join(', ')), r.auto && /*#__PURE__*/React.createElement("span", {
+    title: r.motivo ? `Escolhida pelo piloto: ${r.motivo}` : 'Escolhida pelo piloto',
+    style: {
+      marginLeft: 8,
+      fontSize: 10.5,
+      padding: '1px 7px',
+      borderRadius: 6,
+      border: `1px solid ${C.cyan}`,
+      color: C.cyan
+    }
+  }, "sugerida", r.motivo ? ` · ${r.motivo}` : '')), /*#__PURE__*/React.createElement("button", {
     type: "button",
     style: botaoMini,
     title: "Subir",
@@ -6154,6 +6171,112 @@ function RegioesEditor({
     }
   }, m.uf))))));
 }
+function ExpansaoPauta({
+  expandir,
+  setExpandir,
+  max,
+  setMax,
+  excluir,
+  setExcluir,
+  temRegioes
+}) {
+  const alterna = uf => setExcluir(excluir.includes(uf) ? excluir.filter(x => x !== uf) : [...excluir, uf].sort());
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'var(--panel)',
+      border: '1px solid var(--border)',
+      borderRadius: 14,
+      padding: 20,
+      marginBottom: 18
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'flex',
+      alignItems: 'flex-start',
+      gap: 10,
+      cursor: temRegioes ? 'pointer' : 'default'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: expandir && temRegioes,
+    disabled: !temRegioes,
+    onChange: e => setExpandir(e.target.checked),
+    style: {
+      marginTop: 3,
+      accentColor: 'var(--accent)'
+    }
+  }), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 13,
+      fontWeight: 600
+    }
+  }, "Quando as regi\xF5es acabarem, o Hunter escolhe a pr\xF3xima sozinho"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--faint)',
+      marginTop: 4,
+      lineHeight: 1.45
+    }
+  }, temRegioes ? /*#__PURE__*/React.createElement(React.Fragment, null, "Cidade varrida \u2192 o estado inteiro dela. Depois, estados vizinhos, come\xE7ando pelo vizinho da regi\xE3o que mais virou lead (empate: o maior mercado). Cada escolha aparece na lista de regi\xF5es e no di\xE1rio, com o motivo. Se a pauta varreu 200+ empresas sem virar nenhum lead, ele n\xE3o expande \u2014 o problema \xE9 o filtro, n\xE3o a regi\xE3o.") : 'Adicione pelo menos uma região acima para ligar a expansão.'))), expandir && temRegioes && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 16,
+      paddingLeft: 26
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 7
+    }
+  }, "At\xE9 quantas regi\xF5es ele pode acrescentar"), /*#__PURE__*/React.createElement("select", {
+    value: max,
+    onChange: e => setMax(+e.target.value),
+    style: {
+      height: 38,
+      borderRadius: 9,
+      border: '1px solid var(--border)',
+      background: 'var(--panel2)',
+      color: 'var(--text)',
+      padding: '0 10px',
+      fontSize: 13,
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, [1, 2, 3, 5, 8, 10, 15, 27].map(n => /*#__PURE__*/React.createElement("option", {
+    key: n,
+    value: n
+  }, n === 27 ? 'sem limite (o Brasil todo)' : n))), /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      margin: '14px 0 7px'
+    }
+  }, "Nunca expandir para ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, "(opcional)")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: 6
+    }
+  }, UFS_BR.map(u => /*#__PURE__*/React.createElement("span", {
+    key: u,
+    role: "button",
+    "aria-pressed": excluir.includes(u),
+    onClick: () => alterna(u),
+    style: {
+      ...chipBase,
+      border: excluir.includes(u) ? `1px solid ${C.red}` : '1px solid var(--border)',
+      color: excluir.includes(u) ? C.red : 'var(--dim)',
+      textDecoration: excluir.includes(u) ? 'line-through' : 'none'
+    }
+  }, u)))));
+}
 function PeriodoPauta({
   semanas,
   setSemanas,
@@ -6284,8 +6407,193 @@ const ROTULO_EVENTO = {
   concluiu: ['Concluiu', C.blue],
   ligou: ['Ligado', C.green],
   desligou: ['Desligado', C.gray],
-  excluiu: ['Pauta excluída', C.gray]
+  excluiu: ['Pauta excluída', C.gray],
+  sugeriu: ['Escolheu região', C.cyan],
+  nao_expandiu: ['Não expandiu', C.amber],
+  crm: ['CRM', C.gold]
 };
+
+// Controle pelo CRM: o CRM informa a fila de leads sem atendimento e o piloto
+// só abre radar novo quando ela cai para o gatilho. Aqui a pessoa liga,
+// escolhe o gatilho e vê o último aviso — e o que passar pro dev do CRM.
+function ControleCrm({
+  plano,
+  crm,
+  salvando,
+  onSalvar
+}) {
+  const [gatilho, setGatilho] = useState(String(plano.crm_fila_gatilho ?? 5));
+  const [mostrarComo, setMostrarComo] = useState(false);
+  useEffect(() => {
+    setGatilho(String(plano.crm_fila_gatilho ?? 5));
+  }, [plano.crm_fila_gatilho]);
+  const salvarGatilho = () => {
+    const n = parseInt(gatilho, 10);
+    if (!(n >= 0)) {
+      setGatilho(String(plano.crm_fila_gatilho ?? 5));
+      return;
+    }
+    if (n !== plano.crm_fila_gatilho) onSalvar({
+      crm_fila_gatilho: n
+    });
+  };
+  const url = (typeof window !== 'undefined' ? window.location.origin : '') + (crm?.caminho_webhook || '/api/webhooks/crm/fila');
+  const n = plano.crm_fila_pendentes,
+    g = plano.crm_fila_gatilho ?? 0;
+  const temAviso = plano.crm_fila_em != null && n != null;
+  const code = {
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    fontSize: 11.5,
+    background: 'var(--panel2)',
+    border: '1px solid var(--border)',
+    borderRadius: 7,
+    padding: '1px 6px',
+    wordBreak: 'break-all'
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 18,
+      paddingTop: 16,
+      borderTop: '1px solid var(--border)'
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'flex',
+      alignItems: 'flex-start',
+      gap: 10,
+      cursor: 'pointer'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: !!plano.crm_controle,
+    disabled: salvando,
+    onChange: e => onSalvar({
+      crm_controle: e.target.checked
+    }),
+    style: {
+      marginTop: 3,
+      accentColor: 'var(--accent)'
+    }
+  }), /*#__PURE__*/React.createElement("span", null, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 13.5,
+      fontWeight: 600
+    }
+  }, "O CRM controla quando abrir radar novo"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--faint)',
+      marginTop: 4,
+      lineHeight: 1.45
+    }
+  }, "O CRM avisa quantos leads do Hunter est\xE3o na fila ", /*#__PURE__*/React.createElement("b", null, "sem atendimento"), ". Radar novo s\xF3 abre quando essa fila cai para o n\xFAmero abaixo ou menos \u2014 assim o time recebe lead no ritmo em que atende. Os limites de Configura\xE7\xF5es continuam valendo."))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      paddingLeft: 26,
+      marginTop: 12
+    }
+  }, !crm?.conectado && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: '#F59E0B',
+      marginBottom: 10
+    }
+  }, "Nenhum CRM conectado em Integra\xE7\xF5es \u2014 conecte antes de ligar o controle."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 12.5,
+      color: 'var(--dim)'
+    }
+  }, "Abrir radar novo quando a fila tiver"), /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    min: 0,
+    value: gatilho,
+    onChange: e => setGatilho(e.target.value),
+    onBlur: salvarGatilho,
+    onKeyDown: e => {
+      if (e.key === 'Enter') e.currentTarget.blur();
+    },
+    "aria-label": "Gatilho da fila do CRM",
+    style: {
+      width: 80,
+      height: 34,
+      borderRadius: 8,
+      border: '1px solid var(--border)',
+      background: 'var(--panel2)',
+      color: 'var(--text)',
+      padding: '0 10px',
+      fontSize: 13,
+      fontFamily: 'inherit'
+    }
+  }), /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 12.5,
+      color: 'var(--dim)'
+    }
+  }, "lead(s) sem atendimento ou menos ", g === 0 && /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, "(0 = s\xF3 quando todos forem atendidos)"))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      marginTop: 10,
+      color: 'var(--dim)'
+    }
+  }, temAviso ? /*#__PURE__*/React.createElement(React.Fragment, null, "\xDAltimo aviso do CRM: ", /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: n <= g ? C.green : C.amber
+    }
+  }, n, " lead", n === 1 ? '' : 's', " sem atendimento"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, " \xB7 ", timeAgo(plano.crm_fila_em), " \xB7 ", n <= g ? 'libera radar novo' : 'segura radar novo')) : /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, "O CRM ainda n\xE3o enviou nenhum aviso.", plano.crm_controle ? ' Enquanto isso, o piloto não abre radar novo.' : '')), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => setMostrarComo(v => !v),
+    style: {
+      marginTop: 10,
+      background: 'none',
+      border: 'none',
+      padding: 0,
+      color: C.gold,
+      fontSize: 12,
+      cursor: 'pointer',
+      fontFamily: 'inherit'
+    }
+  }, mostrarComo ? 'Esconder' : 'Como o CRM avisa o Hunter', " \u203A"), mostrarComo && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 10,
+      fontSize: 12,
+      color: 'var(--dim)',
+      lineHeight: 1.7
+    }
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("b", null, "POST"), " ", /*#__PURE__*/React.createElement("span", {
+    style: code
+  }, url)), /*#__PURE__*/React.createElement("div", null, "Cabe\xE7alho ", /*#__PURE__*/React.createElement("span", {
+    style: code
+  }, "x-hunter-token"), ": o mesmo token do webhook de convers\xE3o (Configura\xE7\xF5es \u2192 Webhook de entrada).", !crm?.webhook_configurado && /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: '#F59E0B'
+    }
+  }, " Ainda n\xE3o foi gerado \u2014 o master gera em Configura\xE7\xF5es.")), /*#__PURE__*/React.createElement("div", null, "Corpo: ", /*#__PURE__*/React.createElement("span", {
+    style: code
+  }, '{ "pendentes": 3 }'), " \u2014 quantos leads vindos do Hunter est\xE3o na fila sem atendimento agora."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, "Pode mandar a cada mudan\xE7a na fila ou de tempos em tempos (ex.: a cada 10 min). Vale sempre o \xFAltimo n\xFAmero recebido."))));
+}
 function Estrategia({
   onNovaPauta,
   onEditarPauta,
@@ -6518,7 +6826,12 @@ function Estrategia({
       marginTop: 14,
       lineHeight: 1.5
     }
-  }, "Segue os limites de Configura\xE7\xF5es: ", lim.limite_diario ? /*#__PURE__*/React.createElement(React.Fragment, null, "at\xE9 ", /*#__PURE__*/React.createElement("b", null, lim.limite_diario, " leads/dia")) : 'sem teto diário', " \xB7 ", horaTxt, " \xB7 ", diasTxt, ". S\xF3 abre radar novo quando a esteira tem espa\xE7o \u2014 se j\xE1 h\xE1 empresa aprovada esperando vaga ou mais de ", d.constantes.limiar_fila, " em an\xE1lise, ele espera.")), /*#__PURE__*/React.createElement("div", {
+  }, "Segue os limites de Configura\xE7\xF5es: ", lim.limite_diario ? /*#__PURE__*/React.createElement(React.Fragment, null, "at\xE9 ", /*#__PURE__*/React.createElement("b", null, lim.limite_diario, " leads/dia")) : 'sem teto diário', " \xB7 ", horaTxt, " \xB7 ", diasTxt, ". S\xF3 abre radar novo quando a esteira tem espa\xE7o \u2014 se j\xE1 h\xE1 empresa aprovada esperando vaga ou mais de ", d.constantes.limiar_fila, " em an\xE1lise, ele espera."), /*#__PURE__*/React.createElement(ControleCrm, {
+    plano: plano,
+    crm: d.crm,
+    salvando: salvando,
+    onSalvar: corpo => enviar('/api/estrategia', 'PATCH', corpo)
+  })), /*#__PURE__*/React.createElement("div", {
     style: cartao
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -6732,7 +7045,10 @@ function Estrategia({
       style: badgeStyle(C.amber)
     }, "Fora do per\xEDodo"), p.crm_auto && /*#__PURE__*/React.createElement("span", {
       style: badgeStyle(C.gold)
-    }, "CRM autom\xE1tico")), /*#__PURE__*/React.createElement("div", {
+    }, "CRM autom\xE1tico"), p.expandir && /*#__PURE__*/React.createElement("span", {
+      style: badgeStyle(C.cyan),
+      title: `Acrescenta até ${p.expandir_max} regiões sozinho`
+    }, "Expande sozinho")), /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 12,
         color: 'var(--dim)',
@@ -6813,7 +7129,7 @@ function Estrategia({
       return /*#__PURE__*/React.createElement("span", {
         key: r.chave,
         onClick: () => podeAbrir && onAbrirRadar(r.radar.id),
-        title: r.radar ? `${r.radar.nome || r.rotulo} — ${e.rot}\n${fmtNum(r.radar.encontrados)} encontradas · ${fmtNum(r.radar.qualificados)} qualificadas · ${fmtNum(r.radar.enviados)} no CRM` : `${r.rotulo} — ainda não virou radar`,
+        title: (r.auto ? `Escolhida pelo piloto: ${r.motivo || ''}\n` : '') + (r.radar ? `${r.radar.nome || r.rotulo} — ${e.rot}\n${fmtNum(r.radar.encontrados)} encontradas · ${fmtNum(r.radar.qualificados)} qualificadas · ${fmtNum(r.radar.enviados)} no CRM` : `${r.rotulo} — ainda não virou radar`),
         style: {
           display: 'inline-flex',
           alignItems: 'center',
@@ -6832,7 +7148,12 @@ function Estrategia({
       }, k + 1), /*#__PURE__*/React.createElement(StatusDot, {
         color: e.cor,
         pulse: e.pulso
-      }), p.sem_regiao ? 'Radar único' : r.rotulo, /*#__PURE__*/React.createElement("span", {
+      }), p.sem_regiao ? 'Radar único' : r.rotulo, r.auto && /*#__PURE__*/React.createElement("span", {
+        style: {
+          color: C.cyan,
+          fontSize: 10.5
+        }
+      }, "sugerida"), /*#__PURE__*/React.createElement("span", {
         style: {
           color: 'var(--faint)'
         }
@@ -6935,6 +7256,9 @@ function NovaBusca({
   const [regioes, setRegioes] = useState(() => modoPauta ? regioesIniciais(inicial) : []);
   const [semanas, setSemanas] = useState(Array.isArray(inicial?.semanas) ? inicial.semanas : []);
   const [meses, setMeses] = useState(Array.isArray(inicial?.meses) ? inicial.meses : []);
+  const [expandir, setExpandir] = useState(!!inicial?.expandir);
+  const [expandirMax, setExpandirMax] = useState(inicial?.expandir_max || 5);
+  const [expandirExcluir, setExpandirExcluir] = useState(Array.isArray(inicial?.expandir_excluir) ? inicial.expandir_excluir : []);
   const [corte, setCorte] = useState(inicial?.corte_score ?? 60);
   const [saving, setSaving] = useState(false);
   const [ufs, setUfs] = useState(!modoPauta && Array.isArray(iniP.ufs) ? iniP.ufs : []);
@@ -7350,7 +7674,10 @@ function NovaBusca({
           criterios,
           regioes,
           semanas,
-          meses
+          meses,
+          expandir: expandir && regioes.length > 0,
+          expandir_max: expandirMax,
+          expandir_excluir: expandirExcluir
         })
       }) : await fetch('/api/buscas', {
         method: 'POST',
@@ -8324,7 +8651,16 @@ function NovaBusca({
     regioes: regioes,
     setRegioes: setRegioes,
     municData: municData,
-    tipo: tipo
+    tipo: tipo,
+    onRemoverAuto: ufs => setExpandirExcluir(prev => [...new Set([...prev, ...ufs])].sort())
+  }), modoPauta && /*#__PURE__*/React.createElement(ExpansaoPauta, {
+    expandir: expandir,
+    setExpandir: setExpandir,
+    max: expandirMax,
+    setMax: setExpandirMax,
+    excluir: expandirExcluir,
+    setExcluir: setExpandirExcluir,
+    temRegioes: regioes.length > 0
   }), modoPauta && /*#__PURE__*/React.createElement(PeriodoPauta, {
     semanas: semanas,
     setSemanas: setSemanas,
