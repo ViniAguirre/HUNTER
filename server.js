@@ -559,7 +559,7 @@ async function init() {
   await pool.query(`
     ALTER TABLE integracoes DROP CONSTRAINT IF EXISTS integracoes_categoria_check;
     ALTER TABLE integracoes ADD CONSTRAINT integracoes_categoria_check
-      CHECK (categoria IN ('descoberta','contato','validacao_email','validacao_tel','crm','ia','busca_web','tracking'));
+      CHECK (categoria IN ('descoberta','contato','validacao_email','validacao_tel','crm','ia','busca_web','tracking','decisao'));
   `);
 
   // ── Multi-tenant: registro de clientes + isolamento por tenant_id (RLS) ──────
@@ -681,8 +681,29 @@ async function init() {
     CREATE INDEX IF NOT EXISTS idx_buscas_estrategia ON buscas(estrategia_pauta_id) WHERE estrategia_pauta_id IS NOT NULL;
   `);
 
+  // Modo observação do Jev (providers/typesafe.js): o que as regras decidiram e o
+  // que o Jev diria, lado a lado, para comparar antes de o Jev decidir algo.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS decisoes_jev (
+      id                 BIGSERIAL PRIMARY KEY,
+      criado_em          TIMESTAMPTZ NOT NULL DEFAULT now(),
+      tipo               TEXT NOT NULL,
+      cnpj               TEXT,
+      alvo               TEXT,
+      regra              TEXT,
+      jev_tipo           TEXT,
+      jev_confianca      REAL,
+      jev_pertence       REAL,
+      jev_probabilidades JSONB,
+      modelo             TEXT,
+      latencia_ms        INTEGER,
+      erro               TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_decisoes_jev_tipo_data ON decisoes_jev(tipo, criado_em DESC);
+  `);
+
   for (const t of ['usuarios', 'buscas', 'leads', 'integracoes', 'sementes', 'contadores', 'contadores_hora', 'propostas_valor', 'listas_semelhantes', 'chaves_api',
-                   'estrategia', 'estrategia_pautas', 'estrategia_slots', 'estrategia_eventos']) {
+                   'estrategia', 'estrategia_pautas', 'estrategia_slots', 'estrategia_eventos', 'decisoes_jev']) {
     await tenantizarTabela(pool, t);
   }
 
@@ -763,7 +784,8 @@ async function init() {
            ('contato', 'econodata', false, 20),
            ('ia', 'openai', false, 60),
            ('crm', 'gk', false, 35),
-           ('crm', 'webhook', false, 40)
+           ('crm', 'webhook', false, 40),
+           ('decisao', 'typesafe', false, 70)
     ON CONFLICT (tenant_id, categoria, provedor) DO NOTHING
   `);
 
@@ -2501,6 +2523,45 @@ app.get('/api/alertas', requireAuth, async (req, res) => {
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
+// ── API: relatório do modo observação do Jev (decisoes_jev) ────────────────────
+// Para cada veredito das regras de "site da empresa", o que o Jev diria. Serve
+// pra decidir, com dado real do tenant, se o Jev pode passar a decidir.
+app.get('/api/decisao/relatorio', requireAuth, requireMaster, async (req, res) => {
+  const dias = Math.min(Math.max(parseInt(req.query.dias, 10) || 30, 1), 365);
+  try {
+    const { rows: [total] } = await pool.query(
+      `SELECT count(*)::int AS avaliacoes, count(*) FILTER (WHERE erro IS NOT NULL)::int AS erros,
+              count(DISTINCT cnpj)::int AS empresas, round(avg(latencia_ms))::int AS latencia_media_ms
+       FROM decisoes_jev WHERE tipo='site' AND criado_em > now() - ($1 || ' days')::interval`, [dias]);
+    const { rows: porRegra } = await pool.query(
+      `SELECT regra,
+              count(*)::int AS total,
+              count(*) FILTER (WHERE jev_pertence >= 0.8)::int AS jev_sim,
+              count(*) FILTER (WHERE jev_pertence <= 0.2)::int AS jev_nao,
+              count(*) FILTER (WHERE jev_pertence > 0.2 AND jev_pertence < 0.8)::int AS jev_incerto,
+              jsonb_object_agg(COALESCE(jev_tipo, 'sem_resposta'), n) AS jev_tipos
+       FROM (SELECT regra, jev_pertence, jev_tipo,
+                    count(*) OVER (PARTITION BY regra, jev_tipo) AS n
+             FROM decisoes_jev WHERE tipo='site' AND criado_em > now() - ($1 || ' days')::interval) x
+       GROUP BY regra ORDER BY total DESC`, [dias]);
+    // Concordância: regra aceitou × Jev disse que pertence (e vice-versa).
+    const aceitas = porRegra.filter(r => String(r.regra).startsWith('aceito'));
+    const recusadas = porRegra.filter(r => !String(r.regra).startsWith('aceito'));
+    const soma = (xs, k) => xs.reduce((a, r) => a + r[k], 0);
+    res.json({
+      dias, ...total,
+      concordancia: {
+        regra_aceitou_jev_sim: soma(aceitas, 'jev_sim'),
+        regra_aceitou_jev_nao: soma(aceitas, 'jev_nao'),
+        regra_recusou_jev_sim: soma(recusadas, 'jev_sim'),
+        regra_recusou_jev_nao: soma(recusadas, 'jev_nao'),
+        incertos: soma(porRegra, 'jev_incerto'),
+      },
+      por_regra: porRegra,
+    });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
 // ── API: integrações (chaves dos providers, Fase 3) ────────────────────────────
 // Cifragem real da key fica pra tela dedicada da Fase 3.1; por ora a tela de
 // Integrações usa estes endpoints pra ligar/desligar e trocar a chave do CNPJá.
@@ -2543,7 +2604,7 @@ app.post('/api/integracoes', requireAuth, requireMaster, async (req, res) => {
   const ativo = !!req.body.ativo;
   const ordem = Number.isInteger(req.body.ordem) ? req.body.ordem : 100;
   const config = req.body.config && typeof req.body.config === 'object' ? JSON.stringify(req.body.config) : null;
-  const categoriasValidas = ['descoberta','contato','validacao_email','validacao_tel','crm','ia','busca_web','tracking'];
+  const categoriasValidas = ['descoberta','contato','validacao_email','validacao_tel','crm','ia','busca_web','tracking','decisao'];
   if (!categoriasValidas.includes(categoria) || !provedor) {
     return res.status(400).json({ erro: 'categoria/provedor inválidos' });
   }

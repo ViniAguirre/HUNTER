@@ -10,6 +10,30 @@ const tracking = require('../providers/tracking');
 const { registrar } = require('./tracking');
 const google = require('../providers/google');
 const fontes = require('./fontes');
+const typesafe = require('../providers/typesafe');
+
+// Modo observação do Jev (só para o tenant com a integração decisao|typesafe
+// ativa): opina sobre os mesmos candidatos a site que as regras do google.js
+// avaliaram e grava as duas respostas em `decisoes_jev`. Não altera o lead.
+function observarSites(pool, jev, empresa) {
+  return async (avaliados) => {
+    let r = null, erro = null;
+    try {
+      r = await typesafe.avaliarSites(jev.apiKey, empresa, avaliados, { modelo: jev.modelo });
+    } catch (e) {
+      erro = String(e.message || e).slice(0, 300);
+    }
+    for (const [i, c] of avaliados.entries()) {
+      const o = r?.candidatos?.[i] || null;
+      await pool.query(
+        `INSERT INTO decisoes_jev (tipo, cnpj, alvo, regra, jev_tipo, jev_confianca, jev_pertence, jev_probabilidades, modelo, latencia_ms, erro)
+         VALUES ('site', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [empresa.cnpj, c.site, c.regra, o?.tipo ?? null, o?.confianca ?? null, o?.pertence ?? null,
+         o?.probabilidades ? JSON.stringify(o.probabilidades) : null, r?.modelo ?? null, r?.latencia_ms ?? null, erro]
+      ).catch(err => console.error('[jev] gravar decisão:', err.message));
+    }
+  };
+}
 
 const MAX_TENT_CONTATO = 1;   // 1 re-enriquecimento se o contato vier incompleto
 
@@ -44,7 +68,7 @@ module.exports = async function validacao(job, pool, queues) {
 
   try {
     const { rows: [emp] } = await pool.query(
-      `SELECT razao, fantasia, cidade, uf, contato_receita, contatos_verificados FROM empresas WHERE cnpj=$1`, [cnpj]
+      `SELECT razao, fantasia, cidade, uf, setor, contato_receita, contatos_verificados FROM empresas WHERE cnpj=$1`, [cnpj]
     );
     const nome = emp?.fantasia || emp?.razao || '';
 
@@ -96,7 +120,11 @@ module.exports = async function validacao(job, pool, queues) {
       // O CNPJ vai junto: quando o site imprime o CNPJ no rodapé, ele CONFIRMA
       // (ou desmente) que aquele site é mesmo desta empresa — prova mais forte
       // que qualquer semelhança de domínio.
-      const g = await google.buscarContatoGratis(nome, emp?.cidade, emp?.uf, { ...busca, cnpj }).catch(() => null);
+      const jev = await typesafe.integracao(pool).catch(() => null);
+      const aoAvaliar = jev ? observarSites(pool, jev, {
+        cnpj, nome, razao: emp?.razao, fantasia: emp?.fantasia, cidade: emp?.cidade, uf: emp?.uf, setor: emp?.setor,
+      }) : undefined;
+      const g = await google.buscarContatoGratis(nome, emp?.cidade, emp?.uf, { ...busca, cnpj, aoAvaliar }).catch(() => null);
       if (g && (g.website || g.email || g.telefone)) {
         if (!c) {
           c = g;
