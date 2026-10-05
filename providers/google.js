@@ -527,6 +527,20 @@ async function buscarContatoGratis(nome, cidade, uf, opts = {}) {
   // quando o SearXNG passou a devolver resultado pra todo mundo.
   const prazo = Date.now() + PRAZO_CANDIDATOS_MS;
   const olhar = r.slice(0, 6);
+  // Modo observação do Jev (providers/typesafe.js): guarda o veredito das regras
+  // para cada candidato cuja home foi lida e entrega a lista a quem chamou
+  // (opts.aoAvaliar). Não muda nenhuma decisão daqui; o callback nunca é
+  // aguardado e um erro nele não afeta a busca.
+  const avaliados = [];
+  const anotar = (cand, h0, regra) => avaliados.push({
+    site: cand.site, titulo: cand.titulo || null, identidade: h0.identidade || null,
+    resumo: h0.resumo || null, telefone: h0.telefone || null, cnpj: h0.cnpj || null,
+    qtd_telefones: h0.qtd_telefones || 0, regra,
+  });
+  const entregar = () => {
+    if (typeof opts.aoAvaliar !== 'function' || !avaliados.length) return;
+    try { Promise.resolve(opts.aoAvaliar(avaliados)).catch(() => {}); } catch (_) { /* observação nunca quebra a busca */ }
+  };
   for (const cand of olhar) {
     // Teto de tempo do laço: um lead nunca pode segurar o worker indefinidamente.
     // Sai pelo que já tem em vez de arrastar a fila inteira.
@@ -538,10 +552,10 @@ async function buscarContatoGratis(nome, cidade, uf, opts = {}) {
     const h0 = await lerHome(cand.site);
     if (!h0) continue;
     const cnpjSite = String(h0.cnpj || '').replace(/\D/g, '');
-    if (cnpjAlvo && cnpjSite && cnpjSite !== cnpjAlvo) continue;   // veto: site de OUTRA empresa
+    if (cnpjAlvo && cnpjSite && cnpjSite !== cnpjAlvo) { anotar(cand, h0, 'cnpj_diferente'); continue; }   // veto: site de OUTRA empresa
     const confereCnpj = !!(cnpjAlvo && cnpjSite && cnpjSite === cnpjAlvo);
     const confereNome = paginaSeApresentaComo(nome, cidade, h0.identidade);
-    if (!f.ok && !confereCnpj && !confereNome) continue;            // nenhuma prova
+    if (!f.ok && !confereCnpj && !confereNome) { anotar(cand, h0, 'sem_prova'); continue; }   // nenhuma prova
 
     // Domínio curto que casa com UMA palavra do nome é evidência fraca demais
     // sozinha: "ASPEN Refrigeração" (MG) casou com aspentech.com (software
@@ -549,22 +563,24 @@ async function buscarContatoGratis(nome, cidade, uf, opts = {}) {
     // domínio e explica ele quase todo — mas é sobrenome ou palavra comum, não
     // marca. Nesses casos exige que a PÁGINA também confirme o nome. Com 2+
     // tokens no domínio a coincidência já é improvável e o domínio basta.
-    if (f.ok && f.casados < 2 && !confereCnpj && !confereNome) continue;
+    if (f.ok && f.casados < 2 && !confereCnpj && !confereNome) { anotar(cand, h0, 'dominio_fraco'); continue; }
 
     // O telefone do site desmente a UF do cadastro? Então é outra empresa de
     // mesmo nome noutro estado — caso clássico em nome genérico de refrigeração,
     // que se repete em toda cidade do país. O CNPJ conferido é prova definitiva e
     // passa por cima disso (empresa pode ter número de outro estado); as provas
     // de nome, não. Nenhuma delas fala de LUGAR — o DDD é a única que fala.
-    if (!confereCnpj && telefoneDesmenteUf(h0.telefone, uf)) continue;
+    if (!confereCnpj && telefoneDesmenteUf(h0.telefone, uf)) { anotar(cand, h0, 'ddd_outra_uf'); continue; }
 
     // Descarta diretório ANTES de aprofundar: a página se descreve como guia/
     // lista/consulta de CNPJ, ou lista muitos negócios (muitos telefones
     // distintos). Ambos os sinais já estão na home — não vale ler mais páginas
     // de um catálogo pra depois jogar fora.
-    if (pareceDiretorio(h0.resumo) || pareceDiretorio(cand.titulo) || (h0.qtd_telefones || 0) >= 10) continue;
+    if (pareceDiretorio(h0.resumo) || pareceDiretorio(cand.titulo) || (h0.qtd_telefones || 0) >= 10) { anotar(cand, h0, 'diretorio'); continue; }
 
     // Passou em tudo: agora sim vale ler "sobre" e "contato".
+    anotar(cand, h0, confereCnpj ? 'aceito_cnpj' : (f.ok ? 'aceito_dominio' : 'aceito_nome'));
+    entregar();
     const s = await aprofundar(cand.site, h0);
     const resumo = s.resumo || cand.conteudo || null;
     return {
@@ -587,6 +603,7 @@ async function buscarContatoGratis(nome, cidade, uf, opts = {}) {
   }
   // Nenhum resultado se PROVOU o site próprio da empresa → melhor não trazer
   // dado nenhum (fica vermelho "sem contato") do que trazer contato errado.
+  entregar();
   return { encontrado: false, fonte: 'busca_gratis', fonte_busca: fonteBusca, validado: false,
     validado_em: agora, motivo: 'sem_site_proprio' };
 }
