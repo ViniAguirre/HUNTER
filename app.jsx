@@ -4180,8 +4180,11 @@ const INTEGRACOES_META = {
     icon:'M12 3v2M12 19v2M5 12H3M21 12h-2M7 7L5.5 5.5M18.5 18.5L17 17M17 7l1.5-1.5M5.5 18.5L7 17', editavel:true,
     placeholder:'Colar chave da OpenRouter (sk-or-…)…',
     temModelo:true, modeloPlaceholder:'modelo (ex.: meta-llama/llama-3.3-70b-instruct:free)' },
+  'decisao|typesafe': { nome:'Decisões (Jev) — modo observação', provedor:'TypeSafe Jev — opina se o site achado é mesmo da empresa, ao lado das regras atuais, sem mudar o lead',
+    icon:'M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11', editavel:true,
+    placeholder:'Colar chave da TypeSafe…', temModelo:true, modeloPlaceholder:'modelo (padrão jev-latest)' },
 };
-const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'contato|google', 'contato|econodata', 'busca_web|searxng', 'busca_web|tavily', 'ia|openrouter', 'ia|openai', 'crm|gk', 'crm|webhook', 'tracking|hub'];
+const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'contato|google', 'contato|econodata', 'busca_web|searxng', 'busca_web|tavily', 'ia|openrouter', 'ia|openai', 'decisao|typesafe', 'crm|gk', 'crm|webhook', 'tracking|hub'];
 
 // Card do Tracking Hub: a URL de webhook carrega o token dentro, então é
 // tratada como segredo (vai pro mesmo campo das outras chaves, que a API nunca
