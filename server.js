@@ -14,6 +14,7 @@ const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
 const { Pool } = require('pg');
 const { TENANT_ID, TENANT_LEGADO, ligarTenantNoPool, exigirRlsEnforcavel, tenantizarTabela, migrarSingletonParaTenant } = require('./tenant');
+const { normalizarTags } = require('./tags');
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'troque-este-segredo';
@@ -675,6 +676,10 @@ async function init() {
     -- apaga os radares: eles só viram radares comuns.
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS estrategia_pauta_id INTEGER
       REFERENCES estrategia_pautas(id) ON DELETE SET NULL;
+    -- Tags do radar: vão em cada lead enviado ao CRM, pra triagem lá. A pauta
+    -- da Estratégia carrega as dela e passa pros radares que abrir.
+    ALTER TABLE buscas ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
+    ALTER TABLE estrategia_pautas ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
     -- Pausa feita PELO PILOTO (pauta fora do período). Só essas ele desfaz
     -- sozinho; a pausa que o usuário faz à mão ele respeita.
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS pausa_auto BOOLEAN NOT NULL DEFAULT false;
@@ -1469,7 +1474,7 @@ app.get('/api/buscas', requireAuth, async (req, res) => {
         -- crm_auto vai junto: sem ele o "Duplicar" nascia sempre no Manual, por
         -- mais que o radar original fosse automático, e a lista não tinha como
         -- mostrar em que modo cada radar está.
-        b.crm_auto, b.crm_queue_id,
+        b.crm_auto, b.crm_queue_id, b.tags,
         -- Radar aberto pelo piloto da Estratégia: a lista mostra de qual pauta.
         b.estrategia_pauta_id, ep.nome AS estrategia_pauta_nome, b.pausa_auto,
         u.nome AS criador_nome,
@@ -1504,14 +1509,28 @@ app.post('/api/buscas', requireAuth, requireEditor, async (req, res) => {
   // Lookalike ligado a uma LISTA salva: o radar re-perfila a partir dela (e
   // acompanha quando ela cresce), em vez de congelar os CNPJs dentro do radar.
   const lista = tipo === 'lookalike' ? (String(req.body.lista || '').trim() || null) : null;
+  const tags = normalizarTags(req.body.tags);
   try {
     const { rows:[b] } = await pool.query(
-      `INSERT INTO buscas (nome, tipo, ritmo, criterios, corte_score, crm_auto, crm_queue_id, lista, criador_id, ultima_ativ)
-       VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9,now()) RETURNING *`,
-      [nome, tipo, ritmo, JSON.stringify(criterios), corteScore, crmAuto, crmQueueId, lista, req.user.id]
+      `INSERT INTO buscas (nome, tipo, ritmo, criterios, corte_score, crm_auto, crm_queue_id, lista, tags, criador_id, ultima_ativ)
+       VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9::text[],$10,now()) RETURNING *`,
+      [nome, tipo, ritmo, JSON.stringify(criterios), corteScore, crmAuto, crmQueueId, lista, tags, req.user.id]
     );
     res.status(201).json({ ...b, health: computeHealth(b), criador_nome: req.user.nome });
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// Tags já usadas (radares + pautas), as mais usadas primeiro — a tela sugere
+// essas pra o time escrever sempre igual e a regra de triagem do CRM pegar.
+app.get('/api/tags', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT tag, COUNT(*)::int AS usos FROM (
+        SELECT unnest(tags) AS tag FROM buscas
+        UNION ALL SELECT unnest(tags) FROM estrategia_pautas
+      ) t GROUP BY tag ORDER BY usos DESC, tag LIMIT 50`);
+    res.json(rows);
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
 app.get('/api/buscas/:id', requireAuth, async (req, res) => {
@@ -1572,6 +1591,11 @@ app.patch('/api/buscas/:id', requireAuth, requireEditor, async (req, res) => {
   // saída era duplicar e apagar o original.
   if (typeof req.body.crm_auto === 'boolean') {
     sets.push(`crm_auto=$${sets.length+1}`); vals.push(req.body.crm_auto);
+  }
+  // Tags editáveis depois de criado: valem pros leads que forem ao CRM daqui
+  // pra frente (o que já foi enviado não é reenviado).
+  if ('tags' in req.body) {
+    sets.push(`tags=$${sets.length+1}::text[]`); vals.push(normalizarTags(req.body.tags));
   }
   if (!sets.length) return res.status(400).json({ erro: 'nada para atualizar' });
   // Mexeu no status à mão = a pessoa assumiu o radar. O piloto da Estratégia só
@@ -1740,13 +1764,13 @@ app.post('/api/estrategia/pautas', requireAuth, requireEditor, async (req, res) 
     const { rows: [nova] } = await pool.query(
       `INSERT INTO estrategia_pautas (nome, tipo, criterios, lista, regioes, semanas, meses, corte_score,
                                       crm_auto, crm_queue_id, ativo, criado_por, expandir, expandir_max,
-                                      expandir_excluir, ordem)
-       VALUES ($1,$2,$3::jsonb,$4,$5::jsonb,$6::int[],$7::int[],$8,$9,$10,$11,$12,$13,$14,$15::text[],
+                                      expandir_excluir, tags, ordem)
+       VALUES ($1,$2,$3::jsonb,$4,$5::jsonb,$6::int[],$7::int[],$8,$9,$10,$11,$12,$13,$14,$15::text[],$16::text[],
                (SELECT COALESCE(MAX(ordem), 0) + 1 FROM estrategia_pautas))
        RETURNING *`,
       [p.nome, p.tipo, JSON.stringify(p.criterios), p.lista, JSON.stringify(p.regioes), p.semanas, p.meses,
        p.corte_score, p.crm_auto, p.crm_queue_id, p.ativo ?? true, req.user.id,
-       p.expandir, p.expandir_max, p.expandir_excluir]);
+       p.expandir, p.expandir_max, p.expandir_excluir, p.tags]);
     res.status(201).json(nova);
   } catch (e) { erroEstrategia(res, e); }
 });
@@ -1762,11 +1786,11 @@ app.put('/api/estrategia/pautas/:id', requireAuth, requireEditor, async (req, re
       `UPDATE estrategia_pautas SET nome=$2, tipo=$3, criterios=$4::jsonb, lista=$5, regioes=$6::jsonb,
               semanas=$7::int[], meses=$8::int[], corte_score=$9, crm_auto=$10, crm_queue_id=$11,
               ativo=COALESCE($12, ativo), expandir=$13, expandir_max=$14, expandir_excluir=$15::text[],
-              atualizado_em=now()
+              tags=$16::text[], atualizado_em=now()
         WHERE id=$1 RETURNING *`,
       [id, p.nome, p.tipo, JSON.stringify(p.criterios), p.lista, JSON.stringify(p.regioes), p.semanas, p.meses,
        p.corte_score, p.crm_auto, p.crm_queue_id, p.ativo ?? null,
-       p.expandir, p.expandir_max, p.expandir_excluir]);
+       p.expandir, p.expandir_max, p.expandir_excluir, p.tags]);
     if (!atual) return res.status(404).json({ erro: 'pauta não encontrada' });
     res.json(atual);
   } catch (e) { erroEstrategia(res, e); }

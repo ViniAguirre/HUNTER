@@ -1821,6 +1821,10 @@ function ForaDoPerfil({ leadId, marcado, onMudou, onVarrer, compacto }) {
 function BuscaDetail({ buscaId, onBack, onOpenLead, onDuplicar }) {
   const [data, setData] = useState(null);
   const [toggling, setToggling] = useState(false);
+  // Hooks das tags ficam aqui em cima: depois do "Carregando…" (return
+  // antecipado) o React perderia a ordem dos hooks entre um render e outro.
+  const [editandoTags, setEditandoTags] = useState(false);
+  const [tagsEd, setTagsEd] = useState([]);
 
   const carregar = () => {
     fetch('/api/buscas/' + buscaId, { credentials:'same-origin' })
@@ -1860,6 +1864,19 @@ function BuscaDetail({ buscaId, onBack, onOpenLead, onDuplicar }) {
         .flatMap(([k, v]) => Array.isArray(v) ? v.map(x => k + ': ' + x) : (typeof v === 'object' ? [] : [k + ': ' + v]))
         .filter(Boolean);
   const proposta = criterios.params?.proposta_valor || criterios.proposta_valor || '';
+
+  // Tags editáveis no radar já criado: valem pros próximos envios ao CRM.
+  const salvarTags = async () => {
+    setToggling(true);
+    const r = await fetch('/api/buscas/' + buscaId, {
+      method:'PATCH', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify({ tags: tagsEd })
+    }).catch(() => null);
+    setToggling(false);
+    if (!r || !r.ok) { alert('Não consegui salvar as tags.'); return; }
+    setEditandoTags(false);
+    carregar();
+  };
 
   // Trocar o modo de envio sem recriar o radar. Antes só existia na criação.
   const trocarCrmAuto = async (novo) => {
@@ -1982,6 +1999,34 @@ function BuscaDetail({ buscaId, onBack, onOpenLead, onDuplicar }) {
             cursor: toggling?'default':'pointer', opacity: toggling?.6:1 }}>
           {toggling ? '…' : (b.crm_auto ? 'Passar para manual' : 'Passar para automático')}
         </button>
+        <div style={{ flexBasis:'100%', borderTop:'1px solid var(--border)', paddingTop:11, marginTop:2 }}>
+          {editandoTags ? (
+            <div>
+              <TagsInput value={tagsEd} onChange={setTagsEd}/>
+              <div style={{ display:'flex', gap:8, marginTop:10 }}>
+                <button onClick={salvarTags} disabled={toggling}
+                  style={{ height:32, padding:'0 14px', borderRadius:8, border:'none', background:'var(--gold)',
+                    color:'#0E1936', fontWeight:600, fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>Salvar tags</button>
+                <button onClick={() => setEditandoTags(false)} disabled={toggling}
+                  style={{ height:32, padding:'0 14px', borderRadius:8, border:'1px solid var(--border)', background:'transparent',
+                    color:'var(--dim)', fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>Cancelar</button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+              <span style={{ fontSize:12.5, fontWeight:500 }}>Tags para o CRM:</span>
+              {(b.tags || []).length
+                ? b.tags.map(t => (
+                    <span key={t} style={{ padding:'3px 9px', borderRadius:7, fontSize:11.5, border:`1px solid ${C.cyan}`, color:C.cyan }}>{t}</span>
+                  ))
+                : <span style={{ fontSize:12, color:'var(--faint)' }}>nenhuma</span>}
+              <button onClick={() => { setTagsEd(b.tags || []); setEditandoTags(true); }}
+                style={{ background:'none', border:'none', padding:0, color:C.gold, fontSize:12, cursor:'pointer', fontFamily:'inherit' }}>
+                {(b.tags || []).length ? 'Editar' : 'Adicionar'}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="h-split" style={{ '--split':'1.6fr 1fr', gap:16, marginBottom:18 }}>
@@ -2106,6 +2151,76 @@ function aberturaInicial(p) {
 // Dropdown enxuto pra escolher UMA proposta salva na criação do radar. A gestão
 // (criar/editar/excluir as até 5) vive na tela Propostas. `value` = texto da
 // variação escolhida; `onChange(texto)` sobe pro NovaBusca.
+// Tags do radar: etiquetas livres que vão junto em cada lead enviado ao CRM,
+// pra triagem lá. Enter ou vírgula adiciona; as já usadas aparecem como
+// sugestão, pra o time escrever sempre igual (a regra do CRM casa por texto).
+const MAX_TAGS_RADAR = 10;
+function TagsInput({ value, onChange, rotuloId }) {
+  const [texto, setTexto] = useState('');
+  const [sugestoes, setSugestoes] = useState([]);
+  useEffect(() => {
+    fetch('/api/tags', { credentials:'same-origin' }).then(r => r.ok ? r.json() : [])
+      .then(d => setSugestoes(Array.isArray(d) ? d.map(x => x.tag) : [])).catch(() => {});
+  }, []);
+  const chave = t => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  const tem = t => value.some(v => chave(v) === chave(t));
+  const adicionar = bruto => {
+    const novas = [];
+    for (const parte of String(bruto).split(',')) {
+      const t = parte.replace(/\s+/g, ' ').trim().slice(0, 40).trim();
+      if (t && !tem(t) && !novas.some(n => chave(n) === chave(t))) novas.push(t);
+    }
+    if (novas.length) onChange([...value, ...novas].slice(0, MAX_TAGS_RADAR));
+    setTexto('');
+  };
+  const remover = t => onChange(value.filter(v => v !== t));
+  const cheio = value.length >= MAX_TAGS_RADAR;
+  const livres = sugestoes.filter(t => !tem(t)).slice(0, 8);
+  return (
+    <div>
+      <div style={{ display:'flex', flexWrap:'wrap', alignItems:'center', gap:6, minHeight:40, padding:'5px 8px',
+        borderRadius:9, border:'1px solid var(--border)', background:'var(--panel2)' }}>
+        {value.map(t => (
+          <span key={t} style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'4px 9px', borderRadius:7,
+            fontSize:12, border:`1px solid ${C.cyan}`, color:C.cyan }}>
+            {t}
+            <button type="button" onClick={() => remover(t)} aria-label={`Tirar a tag ${t}`}
+              style={{ background:'none', border:'none', padding:0, color:'inherit', cursor:'pointer', fontSize:13, lineHeight:1 }}>×</button>
+          </span>
+        ))}
+        {!cheio && (
+          <input id={rotuloId} value={texto} onChange={e => {
+              const v = e.target.value;
+              if (v.includes(',')) adicionar(v); else setTexto(v);
+            }}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { e.preventDefault(); adicionar(texto); }
+              else if (e.key === 'Backspace' && !texto && value.length) remover(value[value.length - 1]);
+            }}
+            onBlur={() => texto.trim() && adicionar(texto)}
+            placeholder={value.length ? 'Mais uma…' : 'Ex: Campanha Outubro, VIP, Região Sul — Enter para adicionar'}
+            style={{ flex:1, minWidth:160, height:28, border:'none', outline:'none', background:'transparent',
+              color:'var(--text)', fontSize:13, fontFamily:'inherit' }}/>
+        )}
+      </div>
+      {livres.length > 0 && !cheio && (
+        <div style={{ display:'flex', flexWrap:'wrap', alignItems:'center', gap:6, marginTop:8 }}>
+          <span style={{ fontSize:11, color:'var(--faint)' }}>Já usadas:</span>
+          {livres.map(t => (
+            <button type="button" key={t} onClick={() => adicionar(t)}
+              style={{ padding:'3px 9px', borderRadius:7, fontSize:11.5, border:'1px dashed var(--border)',
+                background:'transparent', color:'var(--dim)', cursor:'pointer', fontFamily:'inherit' }}>+ {t}</button>
+          ))}
+        </div>
+      )}
+      <div style={{ fontSize:11, color:'var(--faint)', marginTop:7, lineHeight:1.4 }}>
+        Vão junto em cada lead enviado ao CRM ({`até ${MAX_TAGS_RADAR}`}), pra triagem lá: fila, automação, vendedor.
+        {cheio && ' Limite atingido.'}
+      </div>
+    </div>
+  );
+}
+
 function PropostaDropdown({ value, onChange, inicial }) {
   const [lista, setLista] = useState(null);
 
@@ -3170,6 +3285,10 @@ function Estrategia({ onNovaPauta, onEditarPauta, onUsarRadar, onAbrirRadar }) {
                         : <span style={badgeStyle(C.amber)}>Fora do período</span>}
                       {p.crm_auto && <span style={badgeStyle(C.gold)}>CRM automático</span>}
                       {p.expandir && <span style={badgeStyle(C.cyan)} title={`Acrescenta até ${p.expandir_max} regiões sozinho`}>Expande sozinho</span>}
+                      {(p.tags || []).map(t => (
+                        <span key={t} title="Tag enviada ao CRM com cada lead"
+                          style={{ padding:'2px 8px', borderRadius:6, fontSize:11, border:`1px solid ${C.cyan}`, color:C.cyan }}>{t}</span>
+                      ))}
                     </div>
                     <div style={{ fontSize:12, color:'var(--dim)', marginTop:5 }}>Quando: {textoPeriodo(p)}</div>
                     {filtros.length > 0 && (
@@ -3284,6 +3403,7 @@ function NovaBusca({ onSalvar, inicial, modoPauta = false, pautaId = null, onCan
   const [abertura, setAbertura] = useState(aberturaInicial(iniP));
   const [capital, setCapital] = useState(capitalInicial(iniP));
   const [crmAuto, setCrmAuto] = useState(!!inicial?.crm_auto);
+  const [tagsRadar, setTagsRadar] = useState(Array.isArray(inicial?.tags) ? inicial.tags : []);
   // Filas do CRM (se houver CRM configurado): permite mandar cada radar pra uma
   // fila diferente. Vazio = usa a fila padrão das Integrações.
   const [crmFilas, setCrmFilas] = useState([]);
@@ -3581,7 +3701,7 @@ function NovaBusca({ onSalvar, inicial, modoPauta = false, pautaId = null, onCan
             method: pautaId ? 'PUT' : 'POST', credentials:'same-origin',
             headers:{ 'Content-Type':'application/json' },
             body: JSON.stringify({ nome, tipo, corte_score: corte, crm_auto: crmAuto,
-              crm_queue_id: crmQueue || null, lista: listaRadar, criterios,
+              crm_queue_id: crmQueue || null, lista: listaRadar, criterios, tags: tagsRadar,
               regioes, semanas, meses,
               expandir: expandir && regioes.length > 0, expandir_max: expandirMax, expandir_excluir: expandirExcluir })
           })
@@ -3589,7 +3709,7 @@ function NovaBusca({ onSalvar, inicial, modoPauta = false, pautaId = null, onCan
             method:'POST', credentials:'same-origin',
             headers:{ 'Content-Type':'application/json' },
             body: JSON.stringify({ nome, tipo, corte_score: corte, crm_auto: crmAuto,
-              crm_queue_id: crmQueue || null, lista: listaRadar, criterios })
+              crm_queue_id: crmQueue || null, lista: listaRadar, criterios, tags: tagsRadar })
           });
       if (!r.ok) { const d = await r.json().catch(()=>({})); throw new Error(d.erro || (modoPauta ? 'Erro ao salvar a pauta.' : 'Erro ao criar radar.')); }
       onSalvar();
@@ -4107,6 +4227,12 @@ function NovaBusca({ onSalvar, inicial, modoPauta = false, pautaId = null, onCan
             </div>
             <div style={{ fontSize:11, color:'var(--faint)', marginTop:7, lineHeight:1.4 }}>
               No automático, cada lead aprovado é enviado ao webhook após o SWOT. No manual, você envia pela triagem. Configure a URL em Integrações.
+            </div>
+            <div style={{ marginTop:16 }}>
+              <label htmlFor="tags-radar" style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>
+                Tags para o CRM <span style={{ color:'var(--faint)' }}>(opcional)</span>
+              </label>
+              <TagsInput value={tagsRadar} onChange={setTagsRadar} rotuloId="tags-radar"/>
             </div>
             {crmFilas.length > 0 && (
               <div style={{ marginTop:16 }}>

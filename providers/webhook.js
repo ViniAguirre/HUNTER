@@ -47,6 +47,9 @@ function montarPayload(empresa, lead, busca, ref, crm) {
     // lead na própria base e o adiciona à lista de semelhantes.
     hunter_ref: ref || lead?.crm_ref || null,
     score: lead?.score ?? null,
+    // Tags do radar que achou o lead (definidas na configuração do radar), pra
+    // triagem no CRM. Sempre um array — vazio quando o radar não tem tag.
+    tags: Array.isArray(busca?.tags) ? busca.tags : [],
     empresa: {
       cnpj: de('cnpj'),
       razao: de('razao'),
@@ -72,7 +75,7 @@ function montarPayload(empresa, lead, busca, ref, crm) {
       whatsapp: normalizarTelefoneBR(lead.contato_validado.whatsapp || lead.contato_validado.telefone),
     } : null,
     swot: lead?.swot || null,
-    busca: busca ? { id: busca.id, nome: busca.nome } : null,
+    busca: busca ? { id: busca.id, nome: busca.nome, tags: Array.isArray(busca.tags) ? busca.tags : [] } : null,
     // Conexão do CRM de destino: quem recebe (n8n) usa pra abrir o ticket.
     // fila_id já respeita a fila configurada no radar, caindo na padrão quando
     // o radar não define uma.
