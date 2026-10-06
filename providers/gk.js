@@ -107,9 +107,83 @@ function amostraCorpo(data) {
   return (txt || '').slice(0, 200);
 }
 
-// Cria/atualiza o contato e devolve o contactId. Bearer primeiro, como manda a
-// doc; se voltar 401/403 ainda tenta o token cru antes de desistir.
+// Desembrulha a resposta de "Obter um Contato" — cada fork embrulha diferente.
+function extrairContato(data) {
+  const alvo = Array.isArray(data) ? data[0] : data;
+  if (!alvo || typeof alvo !== 'object') return null;
+  const c = alvo.contact && typeof alvo.contact === 'object' ? alvo.contact
+          : alvo.data && typeof alvo.data === 'object' && !Array.isArray(alvo.data) ? alvo.data
+          : alvo;
+  return c && c.id != null ? c : null;
+}
+
+// Procura o contato pelo número (doc: GET /api/contacts/single, com o número no
+// corpo). Devolve o contato, null se não existe, ou undefined se não deu pra
+// saber (rota ausente, erro do CRM) — aí quem chama segue pelo caminho antigo
+// de criar, pra não travar o envio por causa da consulta.
+async function buscarContato(backend, token, number) {
+  if (!number) return undefined;
+  try {
+    const { data } = await comAuth(backend, token, (c) =>
+      c.request({ method: 'GET', url: '/api/contacts/single', data: { number } }), ['bearer', 'raw']);
+    return extrairContato(data);
+  } catch (err) {
+    const s = err.response?.status;
+    if (s === 404) {
+      // 404 pode ser "contato não existe" ou "rota não existe". Só confia no
+      // primeiro quando o corpo é um erro de negócio (JSON), não página de rota.
+      const d = err.response?.data;
+      return d && typeof d === 'object' ? null : undefined;
+    }
+    if (s === 400) return null;   // alguns forks respondem 400 ERR_NO_CONTACT_FOUND
+    return undefined;
+  }
+}
+
+// Junta o que o Hunter sabe com o que já está no CRM SEM apagar nada de lá: o
+// contato pode ser um cliente com histórico. Campos do CRM preenchidos ficam;
+// só os vazios recebem o dado do Hunter. Nas informações adicionais, as que o
+// Hunter escreve (Origem, hunter_ref, Score...) são atualizadas e as demais
+// ficam intactas.
+function mesclarContato(existente, novo) {
+  const out = { id: existente.id };
+  for (const [k, v] of Object.entries(novo)) {
+    if (k === 'extraInfo' || k === 'companyId') continue;
+    const atual = existente[k];
+    out[k] = (atual != null && String(atual).trim() !== '') ? atual : v;
+  }
+  // O número do CRM manda: a consulta casou por ele.
+  if (existente.number) out.number = existente.number;
+  const nossos = new Set((novo.extraInfo || []).map(x => x.name));
+  const deles = (Array.isArray(existente.extraInfo) ? existente.extraInfo : [])
+    .filter(x => x && x.name && !nossos.has(x.name))
+    .map(x => ({ name: x.name, value: x.value }));
+  out.extraInfo = [...deles, ...(novo.extraInfo || [])];
+  if (novo.companyId) out.companyId = novo.companyId;
+  return out;
+}
+
+// Upsert de verdade: a rota de criar só cria, então primeiro procura pelo
+// número. Achou → atualiza (mesclando) e reusa o id; não achou → cria. É o que
+// impede o retry do job de duplicar contato quando o ticket falha depois.
 async function upsertContato(backend, token, contato) {
+  const existente = await buscarContato(backend, token, contato.number);
+  if (existente) {
+    try {
+      await comAuth(backend, token, (c) => c.post('/api/contact/update', mesclarContato(existente, contato)),
+        ['bearer', 'raw']);
+    } catch (err) {
+      // O contato existe: dado desatualizado não pode impedir o ticket. Segue.
+      console.warn('[gk] contato existe, mas a atualização falhou:', traduzErro(err, 'Atualizar contato').message);
+    }
+    return existente.id;
+  }
+  return criarContato(backend, token, contato);
+}
+
+// Cria o contato e devolve o contactId. Bearer primeiro, como manda a doc; se
+// voltar 401/403 ainda tenta o token cru antes de desistir.
+async function criarContato(backend, token, contato) {
   const rotas = [EP_CONTATO, EP_CONTATO_ALT];
   for (let i = 0; i < rotas.length; i++) {
     const rota = rotas[i];
@@ -181,13 +255,67 @@ async function checarRotaContato(backend, token) {
   }
 }
 
-async function abrirTicket(backend, token, { contactId, queueId, status }) {
+function extrairTicket(data) {
+  const alvo = Array.isArray(data) ? data[0] : data;
+  if (!alvo || typeof alvo !== 'object') return null;
+  const t = alvo.ticket && typeof alvo.ticket === 'object' ? alvo.ticket
+          : alvo.data && typeof alvo.data === 'object' && !Array.isArray(alvo.data) ? alvo.data
+          : alvo;
+  const id = t.ticketId ?? t.id;
+  return id != null ? { id, status: t.status, queueId: t.queueId ?? t.queue?.id ?? null, contactId: t.contactId } : null;
+}
+
+// Quando o createTicketAPI não devolve o ticket (doc: "se o contato já tiver
+// ticket nesta conexão, nada acontece"), acha o ticket pelos tickets do
+// contato. Devolve o ticket ainda aberto mais recente (Aguardando primeiro); quem
+// chama decide se mexe — um em atendimento é de alguém e fica como está.
+async function acharTicketPendente(backend, token, { contactId, number }) {
+  if (!number) return null;
   try {
     const { data } = await comAuth(backend, token, (c) =>
+      c.request({ method: 'GET', url: '/api/contacts/alltickets', data: { number } }), ['bearer', 'raw']);
+    const lista = Array.isArray(data) ? data : (data?.tickets || data?.data || []);
+    const candidatos = lista.map(extrairTicket).filter(t => t && t.status !== 'closed'
+      && (t.contactId == null || String(t.contactId) === String(contactId)));
+    candidatos.sort((a, b) => (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1)
+      || Number(b.id) - Number(a.id));
+    return candidatos[0] || null;
+  } catch (_) { return null; }
+}
+
+// Abre o ticket e põe na fila. A doc do createTicketAPI só aceita contactId e
+// abre "em Aguardando, sem Setor" — o queueId mandado ali é ignorado, e o lead
+// caía sem fila. Por isso a fila é aplicada depois, no updateAPI, com o id do
+// ticket. Ticket já em atendimento (open) não é mexido: tem alguém nele.
+async function abrirTicket(backend, token, { contactId, queueId, status, number }) {
+  let data;
+  try {
+    ({ data } = await comAuth(backend, token, (c) =>
+      // queueId/status seguem no corpo: inofensivo onde é ignorado, e há
+      // instalação que respeita.
       c.post('/api/tickets/createTicketAPI', { contactId, queueId, status: status || 'pending' }),
-      ['bearer', 'raw']);
-    return data;
+      ['bearer', 'raw']));
   } catch (err) { throw traduzErro(err, 'Abrir ticket'); }
+
+  const ticket = extrairTicket(data) || await acharTicketPendente(backend, token, { contactId, number });
+  if (!ticket) {
+    // Sem id não há como pôr na fila. O contato e o ticket existem, então não
+    // vale falhar o job (o retry não mudaria nada) — mas fica registrado.
+    console.warn(`[gk] ticket do contato ${contactId} sem id na resposta — fila ${queueId} não aplicada`);
+    return { ticketId: null, filaAplicada: false, motivo: 'ticket_sem_id' };
+  }
+  if (ticket.status && ticket.status !== 'pending') {
+    return { ticketId: ticket.id, filaAplicada: false, motivo: `ticket_${ticket.status}` };
+  }
+  if (!queueId || String(ticket.queueId) === String(queueId)) {
+    return { ticketId: ticket.id, filaAplicada: !!queueId };
+  }
+  try {
+    await comAuth(backend, token, (c) =>
+      c.post('/api/tickets/updateAPI', { ticketId: String(ticket.id), queueId: String(queueId), status: 'pending' }),
+      ['bearer', 'raw']);
+  } catch (err) { throw traduzErro(err, `Pôr o ticket ${ticket.id} na fila ${queueId}`); }
+  return { ticketId: ticket.id, filaAplicada: true };
 }
 
 // A doc do GK mostra o número com DDI: 5541992018982. Os telefones do Hunter
@@ -242,5 +370,5 @@ function montarContato(empresa, lead, extras = {}) {
   return contato;
 }
 
-module.exports = { listarEmpresas, listarFilas, upsertContato, abrirTicket, montarContato,
-  checarRotaContato, normalizarNumero, EP_CONTATO, EP_CONTATO_ALT };
+module.exports = { listarEmpresas, listarFilas, upsertContato, criarContato, buscarContato, mesclarContato,
+  abrirTicket, montarContato, checarRotaContato, normalizarNumero, EP_CONTATO, EP_CONTATO_ALT };

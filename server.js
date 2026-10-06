@@ -2318,7 +2318,9 @@ app.post('/api/leads/acoes', requireAuth, requireEditor, async (req, res) => {
       if (!ig) return res.status(400).json({ erro: 'Nenhum CRM conectado no momento. Fale com o administrador do sistema.' });
       await Promise.all(idsInt.map(id =>
         monitorQueues.crm.add('crm', { lead_id: id },
-          { jobId: `crm-manual-${id}-${Date.now()}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 4, backoff: { type: 'exponential', delay: 15000 } })
+          // jobId por minuto: clique duplo (ou dois usuários juntos) não
+          // enfileira o mesmo lead duas vezes; reenvio depois continua livre.
+          { jobId: `crm-manual-${id}-${Math.floor(Date.now() / 60000)}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 4, backoff: { type: 'exponential', delay: 15000 } })
       ));
       return res.json({ ok: true, enfileirados: idsInt.length });
     }
