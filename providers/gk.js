@@ -318,6 +318,75 @@ async function abrirTicket(backend, token, { contactId, queueId, status, number 
   return { ticketId: ticket.id, filaAplicada: true };
 }
 
+const LIMITE_CAMPO = 250;
+function cortar(txt, max) { return txt.length > max ? txt.slice(0, max - 1) + '…' : txt; }
+
+// Briefing completo do agente em texto, pra nota interna do ticket: é o que o
+// closer lê antes de abordar. Seções vazias não aparecem.
+function montarBriefing(empresa, lead, extras = {}) {
+  const e = empresa || {};
+  const l = lead || {};
+  const de = (campo) => e[campo] || l[campo] || '';
+  const sw = l.swot || {};
+  const s = sw.swot || {};
+  const cv = l.contato_validado || {};
+  const lista = (titulo, itens) => Array.isArray(itens) && itens.length
+    ? `*${titulo}*\n${itens.map(x => `• ${typeof x === 'string' ? x : JSON.stringify(x)}`).join('\n')}` : '';
+  const linha = (rot, v) => v ? `${rot}: ${v}` : '';
+  const motivos = Array.isArray(l.breakdown) && l.breakdown.length
+    ? l.breakdown.map(b => `• ${b.item}${b.pts != null ? ` (+${b.pts})` : ''}`).join('\n') : '';
+
+  const blocos = [
+    `🎯 *Lead Hunter* — ${de('fantasia') || de('razao') || 'empresa'}${l.score != null ? ` · Score ${l.score}` : ''}`,
+    [
+      '*Empresa*',
+      linha('Razão social', de('razao')),
+      linha('Nome fantasia', de('fantasia')),
+      linha('CNPJ', de('cnpj')),
+      linha('Setor', [de('setor'), de('cnae')].filter(Boolean).join(' · ')),
+      linha('Porte', de('porte')),
+      linha('Capital social', de('capital')),
+      linha('Abertura', de('abertura')),
+      linha('Situação', de('situacao')),
+      linha('Natureza jurídica', e.natureza_juridica),
+      linha('Simples Nacional', e.opcao_simples === true ? 'optante' : e.opcao_simples === false ? 'não optante' : ''),
+      linha('Endereço', [de('endereco'), de('cidade'), de('uf')].filter(Boolean).join(' — ')),
+    ].filter(Boolean).join('\n'),
+    [
+      '*Contato*',
+      linha('Decisor', [de('decisor'), de('cargo')].filter(Boolean).join(' — ')),
+      linha('Telefone', normalizarNumero(cv.telefone || extras.telefone)),
+      linha('WhatsApp', normalizarNumero(cv.whatsapp)),
+      linha('E-mail', cv.email || extras.email),
+      linha('Site', cv.website),
+      linha('Origem do contato', extras.contatoStatus),
+    ].filter(Boolean).join('\n'),
+    sw.resumo ? `*Resumo*\n${sw.resumo}` : '',
+    lista('Fatos úteis', sw.fatos_uteis),
+    lista('Dores prováveis', sw.dores_provaveis),
+    lista('Forças', s.forcas),
+    lista('Fraquezas', s.fraquezas),
+    lista('Oportunidades', s.oportunidades),
+    lista('Ameaças', s.ameacas),
+    sw.sinal_comercial ? `*Sinal comercial*\n${sw.sinal_comercial}` : '',
+    motivos ? `*Por que deu match (score)*\n${motivos}` : '',
+    cv.resumo_site ? `*O que o site da empresa diz*\n${cv.resumo_site}` : '',
+    [linha('Radar', extras.radar), linha('Tags', (extras.tags || []).join(', ')), linha('Ref', extras.ref)]
+      .filter(Boolean).join('\n'),
+  ];
+  // Bloco só com o título (ex.: "*Contato*" sem nenhuma linha) não entra.
+  return blocos.filter(b => b && b.includes('\n') || (b && !b.startsWith('*'))).join('\n\n');
+}
+
+// Grava o briefing como nota interna (whisper) no ticket — só a equipe vê,
+// nada vai ao cliente. Doc: POST /api/messages/internal/send {ticketId, body}.
+async function enviarNotaInterna(backend, token, ticketId, body) {
+  try {
+    await comAuth(backend, token, (c) =>
+      c.post('/api/messages/internal/send', { ticketId: String(ticketId), body }), ['bearer', 'raw']);
+  } catch (err) { throw traduzErro(err, `Nota interna no ticket ${ticketId}`); }
+}
+
 // A doc do GK mostra o número com DDI: 5541992018982. Os telefones do Hunter
 // vêm como (41) 99201-8982, e sem o 55 na frente o contato entra no CRM com um
 // número que não existe no WhatsApp — o contato até é criado, mas o ticket
@@ -343,16 +412,43 @@ function montarContato(empresa, lead, extras = {}) {
   // ninguém conseguia achar o lead do outro lado.
   const de = (campo) => e[campo] || l[campo] || '';
   const tel = normalizarNumero(extras.telefone);
+  const cv = l.contato_validado || {};
+  const sw = l.swot || {};
+  const simNao = (v) => v === true ? 'Sim' : v === false ? 'Não' : '';
+  // Toda a ficha que o agente montou vai como informação adicional — antes iam
+  // só 6 campos e o closer não via porte, capital, site, decisor nem o resumo
+  // da IA. O briefing completo (SWOT etc.) vai como nota interna no ticket,
+  // porque não cabe num campo.
   const extraInfo = [
     { name: 'Origem', value: 'Hunter' },
     // Identificador de ida-e-volta: quando o contato for marcado como convertido,
     // o webhook do GK devolve este ref e o Hunter acha o lead na própria base.
     { name: 'hunter_ref', value: extras.ref || '' },
     { name: 'Empresa', value: de('razao') || de('fantasia') },
-    { name: 'CNAE', value: de('setor') },
+    { name: 'Nome fantasia', value: de('fantasia') },
+    { name: 'CNPJ', value: de('cnpj') },
+    { name: 'Setor', value: de('setor') },
+    { name: 'CNAE', value: de('cnae') },
+    { name: 'Porte', value: de('porte') },
+    { name: 'Capital social', value: de('capital') },
+    { name: 'Abertura', value: de('abertura') },
+    { name: 'Situação cadastral', value: de('situacao') },
+    { name: 'Natureza jurídica', value: e.natureza_juridica || '' },
+    { name: 'Optante pelo Simples', value: simNao(e.opcao_simples) },
+    { name: 'Endereço', value: [de('endereco'), de('cidade'), de('uf')].filter(Boolean).join(' — ') },
+    { name: 'Decisor', value: de('decisor') },
+    { name: 'Cargo do decisor', value: de('cargo') },
+    { name: 'WhatsApp', value: normalizarNumero(cv.whatsapp) },
+    { name: 'Site', value: cv.website || '' },
     { name: 'Score do Lead', value: l.score != null ? String(l.score) : '' },
+    { name: 'Radar', value: extras.radar || '' },
+    { name: 'Resumo IA', value: sw.resumo || '' },
+    { name: 'Sinal comercial', value: sw.sinal_comercial || '' },
     { name: 'Capturado em', value: new Date().toISOString() },
-  ].filter(x => x.value);
+  ].filter(x => x.value)
+    // Campo adicional costuma ser VARCHAR(255) no CRM: valor maior derruba o
+    // contato inteiro. O texto completo segue na nota interna.
+    .map(x => ({ name: x.name, value: cortar(String(x.value), LIMITE_CAMPO) }));
   const contato = {
     name: de('decisor') || de('fantasia') || de('razao') || 'Contato',
     number: tel,
@@ -371,4 +467,4 @@ function montarContato(empresa, lead, extras = {}) {
 }
 
 module.exports = { listarEmpresas, listarFilas, upsertContato, criarContato, buscarContato, mesclarContato,
-  abrirTicket, montarContato, checarRotaContato, normalizarNumero, EP_CONTATO, EP_CONTATO_ALT };
+  abrirTicket, montarContato, montarBriefing, enviarNotaInterna, checarRotaContato, normalizarNumero, EP_CONTATO, EP_CONTATO_ALT };

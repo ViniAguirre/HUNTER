@@ -33,7 +33,7 @@ module.exports = async function crm(job, pool, queues) {
   const { rows: [lead] } = await pool.query(
     `SELECT l.id, l.cnpj, l.busca_id, l.score, l.swot, l.contato_validado, l.crm_ref,
             l.fantasia, l.razao, l.setor, l.cnae, l.porte, l.cidade, l.uf,
-            l.decisor, l.cargo, l.endereco, l.situacao, l.abertura, l.capital,
+            l.decisor, l.cargo, l.endereco, l.situacao, l.abertura, l.capital, l.breakdown,
             b.nome AS busca_nome, b.crm_queue_id AS busca_queue_id, b.tags AS busca_tags
      FROM leads l LEFT JOIN buscas b ON b.id=l.busca_id WHERE l.id=$1`, [lead_id]
   );
@@ -75,20 +75,31 @@ module.exports = async function crm(job, pool, queues) {
     const telefone = cv.telefone || (Array.isArray(cr.telefones) && cr.telefones[0]) || '';
     const email = cv.email || (Array.isArray(cr.emails) && cr.emails[0]) || '';
 
-    const contato = gk.montarContato(empresa, lead, { telefone, email, ref, companyId: ig.config?.companyId || null });
-    contato.extraInfo.push({ name: 'Contato', value: validado ? 'validado (decisor)' : (telefone || email ? 'não validado (Receita)' : 'sem contato') });
-    if (lead.swot?.resumo) contato.extraInfo.push({ name: 'Resumo IA', value: String(lead.swot.resumo).slice(0, 240) });
+    const contatoStatus = validado ? 'validado (decisor)' : (telefone || email ? 'não validado (Receita)' : 'sem contato');
+    const tags = Array.isArray(lead.busca_tags) ? lead.busca_tags : [];
+    const extras = { telefone, email, ref, companyId: ig.config?.companyId || null,
+                     radar: lead.busca_nome || '', tags, contatoStatus };
+    const contato = gk.montarContato(empresa, lead, extras);
+    contato.extraInfo.push({ name: 'Contato', value: contatoStatus });
     // Tags do radar pra triagem no CRM. A API de contato do GK não tem campo
     // de tag documentado, então vão em informação adicional, como o hunter_ref.
-    if (Array.isArray(lead.busca_tags) && lead.busca_tags.length) {
-      contato.extraInfo.push({ name: 'Tags', value: lead.busca_tags.join(', ') });
-    }
+    if (tags.length) contato.extraInfo.push({ name: 'Tags', value: tags.join(', ').slice(0, 250) });
 
     const contactId = await gk.upsertContato(backend, token, contato);
     crmLeadId = contactId != null ? String(contactId) : null;
     const tk = await gk.abrirTicket(backend, token,
       { contactId, queueId, status: ig.config?.status || 'pending', number: contato.number });
-    resultadoGk = { contactId, ticketId: tk.ticketId, fila_aplicada: tk.filaAplicada, ...(tk.motivo ? { motivo: tk.motivo } : {}) };
+    // Briefing completo do agente (empresa + SWOT + fatos + dores + sinal +
+    // motivos do score) como nota interna no ticket: é o material que o closer
+    // usa, e não cabe nos campos do contato. Sem ticket não há onde gravar —
+    // fica registrado no resultado do job.
+    let nota = false;
+    if (tk.ticketId) {
+      await gk.enviarNotaInterna(backend, token, tk.ticketId, gk.montarBriefing(empresa, lead, extras));
+      nota = true;
+    }
+    resultadoGk = { contactId, ticketId: tk.ticketId, fila_aplicada: tk.filaAplicada, nota_briefing: nota,
+                    ...(tk.motivo ? { motivo: tk.motivo } : {}) };
   } else {
     // webhook genérico
     const url = ig.key_cifrada;
