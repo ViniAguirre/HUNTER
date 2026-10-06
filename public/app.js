@@ -3998,6 +3998,10 @@ function BuscaDetail({
 }) {
   const [data, setData] = useState(null);
   const [toggling, setToggling] = useState(false);
+  // Hooks das tags ficam aqui em cima: depois do "Carregando…" (return
+  // antecipado) o React perderia a ordem dos hooks entre um render e outro.
+  const [editandoTags, setEditandoTags] = useState(false);
+  const [tagsEd, setTagsEd] = useState([]);
   const carregar = () => {
     fetch('/api/buscas/' + buscaId, {
       credentials: 'same-origin'
@@ -4038,6 +4042,28 @@ function BuscaDetail({
   const criterios = b.criterios || {};
   const tags = Array.isArray(criterios.chips) && criterios.chips.length ? criterios.chips : Object.entries(criterios).filter(([k]) => !['params', 'cnaes_rotulos', 'texto', 'query', 'proposta_valor'].includes(k)).flatMap(([k, v]) => Array.isArray(v) ? v.map(x => k + ': ' + x) : typeof v === 'object' ? [] : [k + ': ' + v]).filter(Boolean);
   const proposta = criterios.params?.proposta_valor || criterios.proposta_valor || '';
+
+  // Tags editáveis no radar já criado: valem pros próximos envios ao CRM.
+  const salvarTags = async () => {
+    setToggling(true);
+    const r = await fetch('/api/buscas/' + buscaId, {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        tags: tagsEd
+      })
+    }).catch(() => null);
+    setToggling(false);
+    if (!r || !r.ok) {
+      alert('Não consegui salvar as tags.');
+      return;
+    }
+    setEditandoTags(false);
+    carregar();
+  };
 
   // Trocar o modo de envio sem recriar o radar. Antes só existia na criação.
   const trocarCrmAuto = async novo => {
@@ -4300,7 +4326,92 @@ function BuscaDetail({
       cursor: toggling ? 'default' : 'pointer',
       opacity: toggling ? .6 : 1
     }
-  }, toggling ? '…' : b.crm_auto ? 'Passar para manual' : 'Passar para automático')), /*#__PURE__*/React.createElement("div", {
+  }, toggling ? '…' : b.crm_auto ? 'Passar para manual' : 'Passar para automático'), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flexBasis: '100%',
+      borderTop: '1px solid var(--border)',
+      paddingTop: 11,
+      marginTop: 2
+    }
+  }, editandoTags ? /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement(TagsInput, {
+    value: tagsEd,
+    onChange: setTagsEd
+  }), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      marginTop: 10
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: salvarTags,
+    disabled: toggling,
+    style: {
+      height: 32,
+      padding: '0 14px',
+      borderRadius: 8,
+      border: 'none',
+      background: 'var(--gold)',
+      color: '#0E1936',
+      fontWeight: 600,
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, "Salvar tags"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => setEditandoTags(false),
+    disabled: toggling,
+    style: {
+      height: 32,
+      padding: '0 14px',
+      borderRadius: 8,
+      border: '1px solid var(--border)',
+      background: 'transparent',
+      color: 'var(--dim)',
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, "Cancelar"))) : /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 12.5,
+      fontWeight: 500
+    }
+  }, "Tags para o CRM:"), (b.tags || []).length ? b.tags.map(t => /*#__PURE__*/React.createElement("span", {
+    key: t,
+    style: {
+      padding: '3px 9px',
+      borderRadius: 7,
+      fontSize: 11.5,
+      border: `1px solid ${C.cyan}`,
+      color: C.cyan
+    }
+  }, t)) : /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 12,
+      color: 'var(--faint)'
+    }
+  }, "nenhuma"), /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      setTagsEd(b.tags || []);
+      setEditandoTags(true);
+    },
+    style: {
+      background: 'none',
+      border: 'none',
+      padding: 0,
+      color: C.gold,
+      fontSize: 12,
+      cursor: 'pointer',
+      fontFamily: 'inherit'
+    }
+  }, (b.tags || []).length ? 'Editar' : 'Adicionar')))), /*#__PURE__*/React.createElement("div", {
     className: "h-split",
     style: {
       '--split': '1.6fr 1fr',
@@ -4594,6 +4705,135 @@ function aberturaInicial(p) {
 // Dropdown enxuto pra escolher UMA proposta salva na criação do radar. A gestão
 // (criar/editar/excluir as até 5) vive na tela Propostas. `value` = texto da
 // variação escolhida; `onChange(texto)` sobe pro NovaBusca.
+// Tags do radar: etiquetas livres que vão junto em cada lead enviado ao CRM,
+// pra triagem lá. Enter ou vírgula adiciona; as já usadas aparecem como
+// sugestão, pra o time escrever sempre igual (a regra do CRM casa por texto).
+const MAX_TAGS_RADAR = 10;
+function TagsInput({
+  value,
+  onChange,
+  rotuloId
+}) {
+  const [texto, setTexto] = useState('');
+  const [sugestoes, setSugestoes] = useState([]);
+  useEffect(() => {
+    fetch('/api/tags', {
+      credentials: 'same-origin'
+    }).then(r => r.ok ? r.json() : []).then(d => setSugestoes(Array.isArray(d) ? d.map(x => x.tag) : [])).catch(() => {});
+  }, []);
+  const chave = t => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  const tem = t => value.some(v => chave(v) === chave(t));
+  const adicionar = bruto => {
+    const novas = [];
+    for (const parte of String(bruto).split(',')) {
+      const t = parte.replace(/\s+/g, ' ').trim().slice(0, 40).trim();
+      if (t && !tem(t) && !novas.some(n => chave(n) === chave(t))) novas.push(t);
+    }
+    if (novas.length) onChange([...value, ...novas].slice(0, MAX_TAGS_RADAR));
+    setTexto('');
+  };
+  const remover = t => onChange(value.filter(v => v !== t));
+  const cheio = value.length >= MAX_TAGS_RADAR;
+  const livres = sugestoes.filter(t => !tem(t)).slice(0, 8);
+  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      gap: 6,
+      minHeight: 40,
+      padding: '5px 8px',
+      borderRadius: 9,
+      border: '1px solid var(--border)',
+      background: 'var(--panel2)'
+    }
+  }, value.map(t => /*#__PURE__*/React.createElement("span", {
+    key: t,
+    style: {
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 6,
+      padding: '4px 9px',
+      borderRadius: 7,
+      fontSize: 12,
+      border: `1px solid ${C.cyan}`,
+      color: C.cyan
+    }
+  }, t, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => remover(t),
+    "aria-label": `Tirar a tag ${t}`,
+    style: {
+      background: 'none',
+      border: 'none',
+      padding: 0,
+      color: 'inherit',
+      cursor: 'pointer',
+      fontSize: 13,
+      lineHeight: 1
+    }
+  }, "\xD7"))), !cheio && /*#__PURE__*/React.createElement("input", {
+    id: rotuloId,
+    value: texto,
+    onChange: e => {
+      const v = e.target.value;
+      if (v.includes(',')) adicionar(v);else setTexto(v);
+    },
+    onKeyDown: e => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        adicionar(texto);
+      } else if (e.key === 'Backspace' && !texto && value.length) remover(value[value.length - 1]);
+    },
+    onBlur: () => texto.trim() && adicionar(texto),
+    placeholder: value.length ? 'Mais uma…' : 'Ex: Campanha Outubro, VIP, Região Sul — Enter para adicionar',
+    style: {
+      flex: 1,
+      minWidth: 160,
+      height: 28,
+      border: 'none',
+      outline: 'none',
+      background: 'transparent',
+      color: 'var(--text)',
+      fontSize: 13,
+      fontFamily: 'inherit'
+    }
+  })), livres.length > 0 && !cheio && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      gap: 6,
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)'
+    }
+  }, "J\xE1 usadas:"), livres.map(t => /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    key: t,
+    onClick: () => adicionar(t),
+    style: {
+      padding: '3px 9px',
+      borderRadius: 7,
+      fontSize: 11.5,
+      border: '1px dashed var(--border)',
+      background: 'transparent',
+      color: 'var(--dim)',
+      cursor: 'pointer',
+      fontFamily: 'inherit'
+    }
+  }, "+ ", t))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)',
+      marginTop: 7,
+      lineHeight: 1.4
+    }
+  }, "V\xE3o junto em cada lead enviado ao CRM (", `até ${MAX_TAGS_RADAR}`, "), pra triagem l\xE1: fila, automa\xE7\xE3o, vendedor.", cheio && ' Limite atingido.'));
+}
 function PropostaDropdown({
   value,
   onChange,
@@ -7048,7 +7288,17 @@ function Estrategia({
     }, "CRM autom\xE1tico"), p.expandir && /*#__PURE__*/React.createElement("span", {
       style: badgeStyle(C.cyan),
       title: `Acrescenta até ${p.expandir_max} regiões sozinho`
-    }, "Expande sozinho")), /*#__PURE__*/React.createElement("div", {
+    }, "Expande sozinho"), (p.tags || []).map(t => /*#__PURE__*/React.createElement("span", {
+      key: t,
+      title: "Tag enviada ao CRM com cada lead",
+      style: {
+        padding: '2px 8px',
+        borderRadius: 6,
+        fontSize: 11,
+        border: `1px solid ${C.cyan}`,
+        color: C.cyan
+      }
+    }, t))), /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 12,
         color: 'var(--dim)',
@@ -7281,6 +7531,7 @@ function NovaBusca({
   const [abertura, setAbertura] = useState(aberturaInicial(iniP));
   const [capital, setCapital] = useState(capitalInicial(iniP));
   const [crmAuto, setCrmAuto] = useState(!!inicial?.crm_auto);
+  const [tagsRadar, setTagsRadar] = useState(Array.isArray(inicial?.tags) ? inicial.tags : []);
   // Filas do CRM (se houver CRM configurado): permite mandar cada radar pra uma
   // fila diferente. Vazio = usa a fila padrão das Integrações.
   const [crmFilas, setCrmFilas] = useState([]);
@@ -7672,6 +7923,7 @@ function NovaBusca({
           crm_queue_id: crmQueue || null,
           lista: listaRadar,
           criterios,
+          tags: tagsRadar,
           regioes,
           semanas,
           meses,
@@ -7692,7 +7944,8 @@ function NovaBusca({
           crm_auto: crmAuto,
           crm_queue_id: crmQueue || null,
           lista: listaRadar,
-          criterios
+          criterios,
+          tags: tagsRadar
         })
       });
       if (!r.ok) {
@@ -8828,7 +9081,27 @@ function NovaBusca({
       marginTop: 7,
       lineHeight: 1.4
     }
-  }, "No autom\xE1tico, cada lead aprovado \xE9 enviado ao webhook ap\xF3s o SWOT. No manual, voc\xEA envia pela triagem. Configure a URL em Integra\xE7\xF5es."), crmFilas.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, "No autom\xE1tico, cada lead aprovado \xE9 enviado ao webhook ap\xF3s o SWOT. No manual, voc\xEA envia pela triagem. Configure a URL em Integra\xE7\xF5es."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 16
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    htmlFor: "tags-radar",
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 7
+    }
+  }, "Tags para o CRM ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, "(opcional)")), /*#__PURE__*/React.createElement(TagsInput, {
+    value: tagsRadar,
+    onChange: setTagsRadar,
+    rotuloId: "tags-radar"
+  })), crmFilas.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 16
     }
@@ -11081,13 +11354,13 @@ function Config() {
       fontSize: 13.5,
       fontWeight: 500
     }
-  }, cfg.crm_lookalike_auto ? 'Radar "Semelhantes — clientes do CRM" ativo' : 'Aprendizado automático desativado'), /*#__PURE__*/React.createElement("div", {
+  }, cfg.crm_lookalike_auto ? 'Aprendizado automático ligado' : 'Aprendizado automático desativado'), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 12,
       color: 'var(--faint)',
       marginTop: 2
     }
-  }, cfg.crm_lookalike_auto ? 'A cada conversão recebida, o Hunter cria/atualiza um radar lookalike com esses clientes.' : 'As conversões são guardadas, mas não geram radar automático.'))), /*#__PURE__*/React.createElement("label", {
+  }, cfg.crm_lookalike_auto ? 'Cada lista que o CRM alimenta (ex.: "Semelhantes automático") tem um radar de semelhantes: a cada compra ele refaz o perfil e volta a buscar. Liga a partir de 3 clientes.' : 'As conversões são guardadas na lista, mas não geram radar automático. A lista ainda pode ser usada num radar ou numa pauta da Estratégia.'))), /*#__PURE__*/React.createElement("label", {
     style: {
       display: 'block',
       fontSize: 12,

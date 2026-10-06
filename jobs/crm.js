@@ -34,7 +34,7 @@ module.exports = async function crm(job, pool, queues) {
     `SELECT l.id, l.cnpj, l.busca_id, l.score, l.swot, l.contato_validado, l.crm_ref,
             l.fantasia, l.razao, l.setor, l.cnae, l.porte, l.cidade, l.uf,
             l.decisor, l.cargo, l.endereco, l.situacao, l.abertura, l.capital,
-            b.nome AS busca_nome, b.crm_queue_id AS busca_queue_id
+            b.nome AS busca_nome, b.crm_queue_id AS busca_queue_id, b.tags AS busca_tags
      FROM leads l LEFT JOIN buscas b ON b.id=l.busca_id WHERE l.id=$1`, [lead_id]
   );
   if (!lead) return { error: 'lead ausente', lead_id };
@@ -75,6 +75,11 @@ module.exports = async function crm(job, pool, queues) {
     const contato = gk.montarContato(empresa, lead, { telefone, email, ref, companyId: ig.config?.companyId || null });
     contato.extraInfo.push({ name: 'Contato', value: validado ? 'validado (decisor)' : (telefone || email ? 'não validado (Receita)' : 'sem contato') });
     if (lead.swot?.resumo) contato.extraInfo.push({ name: 'Resumo IA', value: String(lead.swot.resumo).slice(0, 240) });
+    // Tags do radar pra triagem no CRM. A API de contato do GK não tem campo
+    // de tag documentado, então vão em informação adicional, como o hunter_ref.
+    if (Array.isArray(lead.busca_tags) && lead.busca_tags.length) {
+      contato.extraInfo.push({ name: 'Tags', value: lead.busca_tags.join(', ') });
+    }
 
     const contactId = await gk.upsertContato(backend, token, contato);
     crmLeadId = contactId != null ? String(contactId) : null;
@@ -97,7 +102,8 @@ module.exports = async function crm(job, pool, queues) {
       fila_id: lead.busca_queue_id || gkIg.config?.queueId || null,
       empresa_id: gkIg.config?.companyId || null,
     } : null;
-    const payload = webhook.montarPayload(empresa, lead, { id: lead.busca_id, nome: lead.busca_nome }, ref, crmInfo);
+    const payload = webhook.montarPayload(empresa, lead,
+      { id: lead.busca_id, nome: lead.busca_nome, tags: lead.busca_tags || [] }, ref, crmInfo);
     await webhook.enviar(url, payload, ig.config?.secret || null);
   }
 

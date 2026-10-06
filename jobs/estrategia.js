@@ -16,6 +16,7 @@
  * gastaria crédito da CNPJá pra aumentar a fila.
  */
 const orcamento = require('./orcamento');
+const { normalizarTags } = require('../tags');
 
 // Quantas empresas ainda sem veredito (enriquecimento → filtro → score) seguram
 // a abertura do próximo radar. Uma página da CNPJá são 100 empresas: com a
@@ -172,6 +173,7 @@ function normalizarPauta(b, { parcial = false } = {}) {
   }
   if (!parcial || 'crm_auto' in b) out.crm_auto = !!b.crm_auto;
   if (!parcial || 'crm_queue_id' in b) out.crm_queue_id = String(b.crm_queue_id || '').trim() || null;
+  if (!parcial || 'tags' in b) out.tags = normalizarTags(b.tags);
   if (!parcial || 'expandir' in b) out.expandir = !!b.expandir;
   if (!parcial || 'expandir_max' in b) {
     const n = parseInt(b.expandir_max, 10);
@@ -209,6 +211,7 @@ function montarRadar(p, reg) {
     nome: nome.slice(0, 200), tipo: p.tipo, criterios: crit,
     lista: p.tipo === 'lookalike' ? p.lista : null,
     corte_score: p.corte_score ?? 60, crm_auto: !!p.crm_auto, crm_queue_id: p.crm_queue_id || null,
+    tags: Array.isArray(p.tags) ? p.tags : [],
   };
 }
 
@@ -324,10 +327,10 @@ async function abrirRegiao(db, p, reg) {
   const r = montarRadar(p, reg);
   const { rows: [b] } = await db.query(
     `INSERT INTO buscas (nome, tipo, status, ritmo, criterios, corte_score, crm_auto, crm_queue_id, lista,
-                         criador_id, estrategia_pauta_id, ultima_ativ)
-     VALUES ($1,$2,'Ativa',120,$3::jsonb,$4,$5,$6,$7,$8,$9,now()) RETURNING id, nome`,
+                         criador_id, estrategia_pauta_id, tags, ultima_ativ)
+     VALUES ($1,$2,'Ativa',120,$3::jsonb,$4,$5,$6,$7,$8,$9,$10::text[],now()) RETURNING id, nome`,
     [r.nome, r.tipo, JSON.stringify(r.criterios), r.corte_score, r.crm_auto, r.crm_queue_id, r.lista,
-     p.criado_por || null, p.id]);
+     p.criado_por || null, p.id, r.tags]);
   await db.query(
     `INSERT INTO estrategia_slots (pauta_id, regiao_chave, regiao_rotulo, busca_id) VALUES ($1,$2,$3,$4)`,
     [p.id, reg.chave, reg.rotulo, b.id]);
