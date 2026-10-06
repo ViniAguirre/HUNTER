@@ -50,6 +50,9 @@ module.exports = async function crm(job, pool, queues) {
   // Id do card criado no CRM, quando a API devolve — vai junto no evento do
   // Tracking Hub e fecha a ponte antes mesmo do CRM ecoar o ref de volta.
   let crmLeadId = null;
+  // O que o GK devolveu (ticket e se a fila pegou) — vai no retorno do job, que
+  // é o que aparece em Monitoramento.
+  let resultadoGk = null;
 
   if (ig.provedor === 'gk') {
     const backend = ig.config?.backend;
@@ -83,7 +86,9 @@ module.exports = async function crm(job, pool, queues) {
 
     const contactId = await gk.upsertContato(backend, token, contato);
     crmLeadId = contactId != null ? String(contactId) : null;
-    await gk.abrirTicket(backend, token, { contactId, queueId, status: ig.config?.status || 'pending' });
+    const tk = await gk.abrirTicket(backend, token,
+      { contactId, queueId, status: ig.config?.status || 'pending', number: contato.number });
+    resultadoGk = { contactId, ticketId: tk.ticketId, fila_aplicada: tk.filaAplicada, ...(tk.motivo ? { motivo: tk.motivo } : {}) };
   } else {
     // webhook genérico
     const url = ig.key_cifrada;
@@ -136,5 +141,5 @@ module.exports = async function crm(job, pool, queues) {
     properties: { radar_id: lead.busca_id != null ? String(lead.busca_id) : '', crm_lead_id: crmLeadId },
   });
 
-  return { ok: true, lead_id, provedor: ig.provedor };
+  return { ok: true, lead_id, provedor: ig.provedor, ...(resultadoGk ? { gk: resultadoGk } : {}) };
 };
