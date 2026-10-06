@@ -937,13 +937,29 @@ app.use(cookieParser());
 // healthcheck
 // commit e hora da build vêm carimbados na imagem (Dockerfile + workflow).
 // Servem pra responder, sem adivinhação, se o serviço no ar já é a versão nova.
+// `versao` = release do GitHub (git describe): "v3.1.0" no commit da tag,
+// "v3.1.0-2-gabc1234" quando vieram commits depois dela. Vazia sem release.
 const BUILD = {
   commit: (process.env.HUNTER_GIT_SHA || '').slice(0, 7) || 'desconhecida',
   em: process.env.HUNTER_BUILD_TIME || null,
+  versao: (process.env.HUNTER_VERSION || '').trim() || null,
 };
+// Notas da release, gravadas pelo workflow em public/release.json. Lidas uma
+// vez: a imagem não muda depois de buildada. Arquivo ausente (build local ou
+// sem release) = sem notas, e a tela simplesmente não oferece o "Novidades".
+const RELEASE = (() => {
+  try {
+    const r = JSON.parse(fs.readFileSync(path.join(PUBLIC, 'release.json'), 'utf8'));
+    if (!r || !r.tag) return null;
+    return { tag: String(r.tag), nome: String(r.nome || r.tag), notas: String(r.notas || ''),
+             publicada_em: r.publicada_em || null };
+  } catch (_) { return null; }
+})();
 app.get('/api/health', (req, res) =>
-  res.json({ ok: true, versao: 'fase3', build: BUILD, ts: new Date().toISOString() })
+  res.json({ ok: true, versao: 'fase3', build: { ...BUILD, tem_notas: !!RELEASE }, ts: new Date().toISOString() })
 );
+// Notas da release no ar (o /api/health é público; as notas ficam atrás do login).
+app.get('/api/novidades', requireAuth, (req, res) => res.json(RELEASE || {}));
 
 // ── API: auth ─────────────────────────────────────────────────────────────────
 

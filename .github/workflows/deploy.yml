@@ -3,7 +3,16 @@ name: build-and-deploy
 on:
   push:
     branches: [ main ]
+    # Release publicada no GitHub = tag vX.Y.Z → builda de novo com o nome da
+    # versão e as notas da release dentro da imagem.
+    tags: [ 'v*' ]
   workflow_dispatch:
+
+# Uma build por vez: um merge e uma release disparados juntos não podem
+# terminar fora de ordem e deixar a imagem mais velha como "latest".
+concurrency:
+  group: build-and-deploy
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -15,6 +24,41 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Histórico e tags completos: o git describe precisa deles pra achar
+          # a última release.
+          fetch-depth: 0
+
+      # Versão = última release (tag vX.Y.Z) + quantos merges entraram na main
+      # depois dela (--first-parent: cada PR conta 1, não os commits de dentro
+      # dele). No commit da própria tag sai "v3.1.0"; dois PRs depois, sai
+      # "v3.1.0-2-gabc1234". As notas da release vão pra public/release.json,
+      # que a tela mostra ao clicar na versão. Sem release ainda: tudo vazio e
+      # o rodapé continua mostrando o commit, como antes.
+      - name: Versão e notas da release
+        id: versao
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSAO=$(git describe --tags --first-parent --match 'v[0-9]*' --abbrev=7 2>/dev/null || true)
+          BASE=$(git describe --tags --first-parent --match 'v[0-9]*' --abbrev=0 2>/dev/null || true)
+          echo "versao=$VERSAO" >> "$GITHUB_OUTPUT"
+          echo "Versão: ${VERSAO:-sem release}"
+          # Imagens a publicar: sempre "latest"; numa release, também uma com o
+          # nome da versão (hunter:v3.1.0), pra dar pra voltar a ela no Portainer.
+          {
+            echo "tags<<FIM"
+            echo "ghcr.io/viniaguirre/hunter:latest"
+            if [ "${{ github.ref_type }}" = "tag" ]; then echo "ghcr.io/viniaguirre/hunter:${{ github.ref_name }}"; fi
+            echo "FIM"
+          } >> "$GITHUB_OUTPUT"
+          if [ -n "$BASE" ]; then
+            gh api "repos/${{ github.repository }}/releases/tags/$BASE" \
+              --jq '{tag: .tag_name, nome: .name, notas: .body, publicada_em: .published_at, url: .html_url}' \
+              > public/release.json \
+              && echo "Notas da release $BASE incluídas." \
+              || { rm -f public/release.json; echo "Tag $BASE sem release publicada — segue sem notas."; }
+          fi
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
@@ -31,11 +75,13 @@ jobs:
         with:
           context: .
           push: true
-          tags: ghcr.io/viniaguirre/hunter:latest
-          # Carimba o commit na imagem pra /api/health dizer qual versão está no
-          # ar — assim dá pra confirmar se o redeploy pegou a build nova.
+          # "latest" sempre; numa release, também a imagem com o nome da versão.
+          tags: ${{ steps.versao.outputs.tags }}
+          # Carimba commit, versão e hora na imagem pra /api/health dizer qual
+          # versão está no ar — assim dá pra confirmar se o redeploy pegou.
           build-args: |
             GIT_SHA=${{ github.sha }}
+            APP_VERSION=${{ steps.versao.outputs.versao }}
             BUILD_TIME=${{ github.event.head_commit.timestamp }}
 
       - name: Avisar o Portainer pra atualizar

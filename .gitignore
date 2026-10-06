@@ -1,3 +1,5 @@
 node_modules/
 *.tgz
 project/
+# Gerado pelo workflow a cada build (notas da release do GitHub).
+public/release.json
