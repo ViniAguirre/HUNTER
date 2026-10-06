@@ -14,8 +14,11 @@ COPY public ./public
 # como build-args; fora dele ficam vazios e o /api/health diz "desconhecida".
 ARG GIT_SHA=""
 ARG BUILD_TIME=""
+# Release (tag vX.Y.Z) de que a build saiu — vazia enquanto não houver release.
+ARG APP_VERSION=""
 ENV HUNTER_GIT_SHA=$GIT_SHA
 ENV HUNTER_BUILD_TIME=$BUILD_TIME
+ENV HUNTER_VERSION=$APP_VERSION
 
 EXPOSE 3000
 CMD ["node", "server.js"]

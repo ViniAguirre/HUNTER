@@ -395,8 +395,76 @@ function TrocarSenhaModal({ onClose }) {
 // Versão no ar. Sem isso, "o redeploy pegou a build nova?" só dava pra
 // responder no chute — o carimbo vem da própria imagem (/api/health), então o
 // que aparece aqui é exatamente o commit que está rodando neste servidor.
+// "v3.1.0" (commit da própria release) ou "v3.1.0-2-gabc1234" (dois merges
+// depois dela) → { tag, depois }. Fora desse formato, mostra como veio.
+function lerVersao(v) {
+  const m = /^(v\d+(?:\.\d+)*)(?:-(\d+)-g[0-9a-f]+)?$/.exec(String(v || '').trim());
+  return m ? { tag: m[1], depois: m[2] ? parseInt(m[2], 10) : 0 } : null;
+}
+
+// Notas da release em texto simples: o corpo da release do GitHub vem em
+// markdown, e o gerado automaticamente traz "by @fulano in <link do PR>" e
+// "Full Changelog" — ruído pra quem usa o Hunter. Renderiza como elementos
+// React (nunca HTML cru): título, item de lista ou parágrafo.
+function NotasRelease({ texto }) {
+  const linhas = String(texto || '').replace(/\r/g, '').split('\n')
+    .filter(l => !/^\s*\**\s*full changelog/i.test(l))
+    .map(l => l.replace(/\s+by @[\w-]+ in https?:\/\/\S+/i, '').replace(/\*\*(.+?)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1'));
+  const out = [];
+  linhas.forEach((l, i) => {
+    const t = l.trim();
+    if (!t) return;
+    const h = /^#{1,4}\s+(.*)$/.exec(t);
+    const li = /^[-*]\s+(.*)$/.exec(t);
+    if (h) out.push(<div key={i} style={{ fontSize:13, fontWeight:600, margin:'14px 0 6px' }}>{h[1]}</div>);
+    else if (li) out.push(<div key={i} style={{ display:'flex', gap:8, fontSize:12.5, lineHeight:1.5, margin:'3px 0', color:'var(--dim)' }}>
+      <span style={{ color:C.gold }}>•</span><span>{li[1]}</span></div>);
+    else out.push(<p key={i} style={{ fontSize:12.5, lineHeight:1.55, margin:'6px 0', color:'var(--dim)' }}>{t}</p>);
+  });
+  return out.length ? <div>{out}</div> : <div style={{ fontSize:12.5, color:'var(--faint)' }}>Esta versão não tem notas.</div>;
+}
+
+function NovidadesModal({ versao, depois, onClose }) {
+  const [r, setR] = useState(null);
+  useEffect(() => {
+    fetch('/api/novidades', { credentials:'same-origin' }).then(x => x.ok ? x.json() : {})
+      .then(setR).catch(() => setR({}));
+    const esc = e => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', esc);
+    return () => window.removeEventListener('keydown', esc);
+  }, []);
+  return (
+    <div onClick={onClose} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,.55)', zIndex:300,
+      display:'flex', alignItems:'center', justifyContent:'center', padding:16 }}>
+      <div onClick={e => e.stopPropagation()} role="dialog" aria-label={`Novidades da ${versao}`}
+        style={{ width:'min(560px, 100%)', maxHeight:'80vh', overflowY:'auto', background:'var(--panel)',
+          border:'1px solid var(--border)', borderRadius:14, padding:'20px 22px', color:'var(--text)' }}>
+        <div style={{ display:'flex', alignItems:'flex-start', gap:12 }}>
+          <div style={{ flex:1 }}>
+            <div style={{ fontSize:16, fontWeight:600 }}>Novidades da {versao}</div>
+            {r?.nome && r.nome !== versao && <div style={{ fontSize:13, color:'var(--dim)', marginTop:3 }}>{r.nome}</div>}
+            {r?.publicada_em && <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:3 }}>
+              Lançada em {new Date(r.publicada_em).toLocaleDateString('pt-BR')}</div>}
+          </div>
+          <button onClick={onClose} aria-label="Fechar" style={{ background:'none', border:'none', color:'var(--dim)',
+            fontSize:20, cursor:'pointer', lineHeight:1 }}>×</button>
+        </div>
+        {depois > 0 && (
+          <div style={{ fontSize:12, color:C.amber, marginTop:12, lineHeight:1.45 }}>
+            No ar há {depois} {depois === 1 ? 'atualização feita' : 'atualizações feitas'} depois desta versão, ainda sem nova release.
+          </div>
+        )}
+        <div style={{ marginTop:10 }}>
+          {r === null ? <div style={{ fontSize:12.5, color:'var(--faint)' }}>Carregando…</div> : <NotasRelease texto={r.notas}/>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function VersaoBuild() {
   const [b, setB] = useState(null);
+  const [aberto, setAberto] = useState(false);
   useEffect(() => {
     fetch('/api/health', { credentials:'same-origin' })
       .then(r => r.json())
@@ -405,12 +473,33 @@ function VersaoBuild() {
   }, []);
   if (!b || !b.commit) return null;
   const quando = b.em ? new Date(b.em).toLocaleString('pt-BR') : null;
+  const dia = b.em ? new Date(b.em).toLocaleDateString('pt-BR') : null;
+  const v = lerVersao(b.versao);
+  // Sem release ainda: o rodapé de sempre, com o commit.
+  if (!v) {
+    return (
+      <div className="h-side-label" title={quando ? 'Build de ' + quando : 'Versão no ar'}
+        style={{ fontSize:10, color:'var(--faint)', marginTop:10, whiteSpace:'nowrap',
+          overflow:'hidden', textOverflow:'ellipsis' }}>
+        versão {b.commit}{quando ? ' · ' + quando : ''}
+      </div>
+    );
+  }
+  const rotulo = v.tag + (v.depois ? ` +${v.depois}` : '');
+  const dica = `${v.tag}${v.depois ? ` + ${v.depois} ${v.depois === 1 ? 'atualização' : 'atualizações'} depois da release` : ''}`
+    + ` · commit ${b.commit}${quando ? ' · build de ' + quando : ''}${b.tem_notas ? ' — clique para ver as novidades' : ''}`;
   return (
-    <div className="h-side-label" title={quando ? 'Build de ' + quando : 'Versão no ar'}
-      style={{ fontSize:10, color:'var(--faint)', marginTop:10, whiteSpace:'nowrap',
-        overflow:'hidden', textOverflow:'ellipsis' }}>
-      versão {b.commit}{quando ? ' · ' + quando : ''}
-    </div>
+    <>
+      <button type="button" className="h-side-label" title={dica} disabled={!b.tem_notas}
+        onClick={() => setAberto(true)}
+        style={{ display:'block', width:'100%', textAlign:'left', background:'none', border:'none', padding:0,
+          fontFamily:'inherit', fontSize:10, color:'var(--faint)', marginTop:10, whiteSpace:'nowrap',
+          overflow:'hidden', textOverflow:'ellipsis', cursor: b.tem_notas ? 'pointer' : 'default' }}>
+        <span style={{ color: b.tem_notas ? C.gold : 'var(--dim)', fontWeight:600 }}>{rotulo}</span>
+        {dia ? ' · ' + dia : ''}{b.tem_notas ? ' · novidades' : ''}
+      </button>
+      {aberto && <NovidadesModal versao={v.tag} depois={v.depois} onClose={() => setAberto(false)}/>}
+    </>
   );
 }
 
