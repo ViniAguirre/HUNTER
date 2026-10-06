@@ -2241,42 +2241,86 @@ function aberturaInicial(p) {
 // (criar/editar/excluir as até 5) vive na tela Propostas. `value` = texto da
 // variação escolhida; `onChange(texto)` sobe pro NovaBusca.
 // Tags do radar: etiquetas livres que vão junto em cada lead enviado ao CRM,
-// pra triagem lá. Enter ou vírgula adiciona; as já usadas aparecem como
-// sugestão, pra o time escrever sempre igual (a regra do CRM casa por texto).
+// pra triagem lá. Enter ou vírgula adiciona. Quando o CRM manda a lista das
+// tags que as regras dele reconhecem, elas aparecem primeiro e a tela avisa
+// quando a tag digitada não aciona nenhuma regra (vai só como etiqueta).
 const MAX_TAGS_RADAR = 10;
+// Mesma comparação do CRM: tag inteira, sem maiúscula nem acento.
+const chaveTag = t => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+// Distância de edição curta (Levenshtein), só pra sugerir a tag certa quando
+// a digitada é quase igual a uma do CRM ("fisioterapeutas" → "fisioterapeuta").
+function distanciaTag(a, b) {
+  if (Math.abs(a.length - b.length) > 2) return 99;
+  let ant = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(ant[j] + 1, cur[j - 1] + 1, ant[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    ant = cur;
+  }
+  return ant[b.length];
+}
+function sugestaoCrm(tag, crm) {
+  const k = chaveTag(tag);
+  if (k.length < 3) return null;
+  let melhor = null, dist = 99;
+  for (const c of crm) {
+    const d = distanciaTag(k, chaveTag(c));
+    if (d < dist) { dist = d; melhor = c; }
+  }
+  return dist <= 2 ? melhor : null;
+}
+
 function TagsInput({ value, onChange, rotuloId }) {
   const [texto, setTexto] = useState('');
-  const [sugestoes, setSugestoes] = useState([]);
+  const [usadas, setUsadas] = useState([]);
+  const [crm, setCrm] = useState([]);
   useEffect(() => {
-    fetch('/api/tags', { credentials:'same-origin' }).then(r => r.ok ? r.json() : [])
-      .then(d => setSugestoes(Array.isArray(d) ? d.map(x => x.tag) : [])).catch(() => {});
+    fetch('/api/tags', { credentials:'same-origin' }).then(r => r.ok ? r.json() : {})
+      .then(d => {
+        setUsadas(Array.isArray(d?.usadas) ? d.usadas.map(x => x.tag) : []);
+        setCrm(Array.isArray(d?.crm) ? d.crm : []);
+      }).catch(() => {});
   }, []);
-  const chave = t => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
-  const tem = t => value.some(v => chave(v) === chave(t));
+  const crmChaves = new Set(crm.map(chaveTag));
+  const temCrm = crm.length > 0;
+  const reconhecida = t => crmChaves.has(chaveTag(t));
+  const tem = t => value.some(v => chaveTag(v) === chaveTag(t));
   const adicionar = bruto => {
     const novas = [];
     for (const parte of String(bruto).split(',')) {
       const t = parte.replace(/\s+/g, ' ').trim().slice(0, 40).trim();
-      if (t && !tem(t) && !novas.some(n => chave(n) === chave(t))) novas.push(t);
+      if (t && !tem(t) && !novas.some(n => chaveTag(n) === chaveTag(t))) novas.push(t);
     }
     if (novas.length) onChange([...value, ...novas].slice(0, MAX_TAGS_RADAR));
     setTexto('');
   };
   const remover = t => onChange(value.filter(v => v !== t));
+  const trocar = (de, para) => onChange(value.map(v => v === de ? para : v).filter((v, i, a) => a.findIndex(x => chaveTag(x) === chaveTag(v)) === i));
   const cheio = value.length >= MAX_TAGS_RADAR;
-  const livres = sugestoes.filter(t => !tem(t)).slice(0, 8);
+  const crmLivres = crm.filter(t => !tem(t));
+  const usadasLivres = usadas.filter(t => !tem(t) && !reconhecida(t)).slice(0, 8);
+  const soEtiqueta = temCrm ? value.filter(t => !reconhecida(t)) : [];
+  const botaoSug = { padding:'3px 9px', borderRadius:7, fontSize:11.5, background:'transparent', cursor:'pointer', fontFamily:'inherit' };
   return (
     <div>
       <div style={{ display:'flex', flexWrap:'wrap', alignItems:'center', gap:6, minHeight:40, padding:'5px 8px',
         borderRadius:9, border:'1px solid var(--border)', background:'var(--panel2)' }}>
-        {value.map(t => (
-          <span key={t} style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'4px 9px', borderRadius:7,
-            fontSize:12, border:`1px solid ${C.cyan}`, color:C.cyan }}>
-            {t}
-            <button type="button" onClick={() => remover(t)} aria-label={`Tirar a tag ${t}`}
-              style={{ background:'none', border:'none', padding:0, color:'inherit', cursor:'pointer', fontSize:13, lineHeight:1 }}>×</button>
-          </span>
-        ))}
+        {value.map(t => {
+          const ok = temCrm && reconhecida(t);
+          return (
+            <span key={t} title={!temCrm ? 'Vai como etiqueta pro CRM' : ok ? 'Reconhecida pelo CRM: aciona uma regra do fluxo de entrada' : 'Não aciona nenhuma regra do CRM: vai só como etiqueta'}
+              style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'4px 9px', borderRadius:7, fontSize:12,
+                border:`1px ${temCrm && !ok ? 'dashed' : 'solid'} ${temCrm && !ok ? 'var(--dim)' : C.cyan}`,
+                color: temCrm && !ok ? 'var(--dim)' : C.cyan }}>
+              {ok && <span aria-hidden="true">✓</span>}{t}
+              <button type="button" onClick={() => remover(t)} aria-label={`Tirar a tag ${t}`}
+                style={{ background:'none', border:'none', padding:0, color:'inherit', cursor:'pointer', fontSize:13, lineHeight:1 }}>×</button>
+            </span>
+          );
+        })}
         {!cheio && (
           <input id={rotuloId} value={texto} onChange={e => {
               const v = e.target.value;
@@ -2287,23 +2331,50 @@ function TagsInput({ value, onChange, rotuloId }) {
               else if (e.key === 'Backspace' && !texto && value.length) remover(value[value.length - 1]);
             }}
             onBlur={() => texto.trim() && adicionar(texto)}
-            placeholder={value.length ? 'Mais uma…' : 'Ex: Campanha Outubro, VIP, Região Sul — Enter para adicionar'}
+            placeholder={value.length ? 'Mais uma…' : (temCrm ? 'Escolha abaixo ou digite — Enter para adicionar' : 'Ex: Campanha Outubro, VIP, Região Sul — Enter para adicionar')}
             style={{ flex:1, minWidth:160, height:28, border:'none', outline:'none', background:'transparent',
               color:'var(--text)', fontSize:13, fontFamily:'inherit' }}/>
         )}
       </div>
-      {livres.length > 0 && !cheio && (
+
+      {soEtiqueta.length > 0 && (
+        <div style={{ marginTop:8, display:'flex', flexDirection:'column', gap:5 }}>
+          {soEtiqueta.map(t => {
+            const sug = sugestaoCrm(t, crm);
+            return (
+              <div key={t} style={{ fontSize:11.5, color:C.amber, lineHeight:1.4 }}>
+                "{t}" não aciona nenhuma regra do CRM — vai só como etiqueta.
+                {sug && <> Você quis dizer{' '}
+                  <button type="button" onClick={() => trocar(t, sug)}
+                    style={{ ...botaoSug, padding:'1px 7px', border:`1px solid ${C.cyan}`, color:C.cyan }}>{sug}</button>?</>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {temCrm && crmLivres.length > 0 && !cheio && (
+        <div style={{ display:'flex', flexWrap:'wrap', alignItems:'center', gap:6, marginTop:8 }}>
+          <span style={{ fontSize:11, color:'var(--faint)' }}>Reconhecidas pelo CRM:</span>
+          {crmLivres.map(t => (
+            <button type="button" key={t} onClick={() => adicionar(t)} title="Aciona uma regra do fluxo de entrada do CRM"
+              style={{ ...botaoSug, border:`1px solid ${C.cyan}`, color:C.cyan }}>+ {t}</button>
+          ))}
+        </div>
+      )}
+      {usadasLivres.length > 0 && !cheio && (
         <div style={{ display:'flex', flexWrap:'wrap', alignItems:'center', gap:6, marginTop:8 }}>
           <span style={{ fontSize:11, color:'var(--faint)' }}>Já usadas:</span>
-          {livres.map(t => (
+          {usadasLivres.map(t => (
             <button type="button" key={t} onClick={() => adicionar(t)}
-              style={{ padding:'3px 9px', borderRadius:7, fontSize:11.5, border:'1px dashed var(--border)',
-                background:'transparent', color:'var(--dim)', cursor:'pointer', fontFamily:'inherit' }}>+ {t}</button>
+              style={{ ...botaoSug, border:'1px dashed var(--border)', color:'var(--dim)' }}>+ {t}</button>
           ))}
         </div>
       )}
       <div style={{ fontSize:11, color:'var(--faint)', marginTop:7, lineHeight:1.4 }}>
-        Vão junto em cada lead enviado ao CRM ({`até ${MAX_TAGS_RADAR}`}), pra triagem lá: fila, automação, vendedor.
+        {temCrm
+          ? <>Vão junto em cada lead enviado ao CRM (até {MAX_TAGS_RADAR}). As marcadas com ✓ acionam uma regra do fluxo de entrada; as outras vão só como etiqueta.</>
+          : <>Vão junto em cada lead enviado ao CRM (até {MAX_TAGS_RADAR}), pra triagem lá: fila, automação, vendedor.</>}
         {cheio && ' Limite atingido.'}
       </div>
     </div>
@@ -5457,6 +5528,29 @@ function Config() {
               background:'transparent', color:'var(--text)', fontSize:12.5, fontFamily:'inherit', cursor:'pointer', whiteSpace:'nowrap' }}>
             {rotacionando ? '…' : cfg.webhook_entrada_secret ? 'Rotacionar' : 'Gerar'}
           </button>
+        </div>
+
+        {/* Lista que o CRM manda (POST /api/webhooks/crm/tags): só leitura aqui —
+            quem decide as tags é a regra do fluxo de entrada do CRM. */}
+        <div style={{ marginTop:18, paddingTop:14, borderTop:'1px solid var(--border)' }}>
+          <div style={{ fontSize:12, color:'var(--dim)', marginBottom:7 }}>
+            Tags reconhecidas pelo CRM <span style={{ color:'var(--faint)' }}>
+              (o CRM manda a lista em <code>/api/webhooks/crm/tags</code>, com o mesmo segredo)</span>
+          </div>
+          {Array.isArray(cfg.crm_tags_regras) && cfg.crm_tags_regras.length ? (
+            <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
+              {cfg.crm_tags_regras.map(t => (
+                <span key={t} style={{ padding:'3px 9px', borderRadius:7, fontSize:11.5, border:`1px solid ${C.cyan}`, color:C.cyan }}>{t}</span>
+              ))}
+            </div>
+          ) : (
+            <div style={{ fontSize:12, color:'var(--faint)' }}>
+              {cfg.crm_tags_regras_em ? 'O CRM informou que nenhuma regra usa tag.' : 'O CRM ainda não mandou a lista.'}
+            </div>
+          )}
+          {cfg.crm_tags_regras_em && (
+            <div style={{ fontSize:11, color:'var(--faint)', marginTop:7 }}>Atualizada {timeAgo(cfg.crm_tags_regras_em)}.</div>
+          )}
         </div>
 
         <div style={{ display:'flex', alignItems:'center', gap:10, marginTop:16, padding:'12px 14px',

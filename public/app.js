@@ -4908,35 +4908,86 @@ function aberturaInicial(p) {
 // (criar/editar/excluir as até 5) vive na tela Propostas. `value` = texto da
 // variação escolhida; `onChange(texto)` sobe pro NovaBusca.
 // Tags do radar: etiquetas livres que vão junto em cada lead enviado ao CRM,
-// pra triagem lá. Enter ou vírgula adiciona; as já usadas aparecem como
-// sugestão, pra o time escrever sempre igual (a regra do CRM casa por texto).
+// pra triagem lá. Enter ou vírgula adiciona. Quando o CRM manda a lista das
+// tags que as regras dele reconhecem, elas aparecem primeiro e a tela avisa
+// quando a tag digitada não aciona nenhuma regra (vai só como etiqueta).
 const MAX_TAGS_RADAR = 10;
+// Mesma comparação do CRM: tag inteira, sem maiúscula nem acento.
+const chaveTag = t => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
+
+// Distância de edição curta (Levenshtein), só pra sugerir a tag certa quando
+// a digitada é quase igual a uma do CRM ("fisioterapeutas" → "fisioterapeuta").
+function distanciaTag(a, b) {
+  if (Math.abs(a.length - b.length) > 2) return 99;
+  let ant = Array.from({
+    length: b.length + 1
+  }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(ant[j] + 1, cur[j - 1] + 1, ant[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    ant = cur;
+  }
+  return ant[b.length];
+}
+function sugestaoCrm(tag, crm) {
+  const k = chaveTag(tag);
+  if (k.length < 3) return null;
+  let melhor = null,
+    dist = 99;
+  for (const c of crm) {
+    const d = distanciaTag(k, chaveTag(c));
+    if (d < dist) {
+      dist = d;
+      melhor = c;
+    }
+  }
+  return dist <= 2 ? melhor : null;
+}
 function TagsInput({
   value,
   onChange,
   rotuloId
 }) {
   const [texto, setTexto] = useState('');
-  const [sugestoes, setSugestoes] = useState([]);
+  const [usadas, setUsadas] = useState([]);
+  const [crm, setCrm] = useState([]);
   useEffect(() => {
     fetch('/api/tags', {
       credentials: 'same-origin'
-    }).then(r => r.ok ? r.json() : []).then(d => setSugestoes(Array.isArray(d) ? d.map(x => x.tag) : [])).catch(() => {});
+    }).then(r => r.ok ? r.json() : {}).then(d => {
+      setUsadas(Array.isArray(d?.usadas) ? d.usadas.map(x => x.tag) : []);
+      setCrm(Array.isArray(d?.crm) ? d.crm : []);
+    }).catch(() => {});
   }, []);
-  const chave = t => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
-  const tem = t => value.some(v => chave(v) === chave(t));
+  const crmChaves = new Set(crm.map(chaveTag));
+  const temCrm = crm.length > 0;
+  const reconhecida = t => crmChaves.has(chaveTag(t));
+  const tem = t => value.some(v => chaveTag(v) === chaveTag(t));
   const adicionar = bruto => {
     const novas = [];
     for (const parte of String(bruto).split(',')) {
       const t = parte.replace(/\s+/g, ' ').trim().slice(0, 40).trim();
-      if (t && !tem(t) && !novas.some(n => chave(n) === chave(t))) novas.push(t);
+      if (t && !tem(t) && !novas.some(n => chaveTag(n) === chaveTag(t))) novas.push(t);
     }
     if (novas.length) onChange([...value, ...novas].slice(0, MAX_TAGS_RADAR));
     setTexto('');
   };
   const remover = t => onChange(value.filter(v => v !== t));
+  const trocar = (de, para) => onChange(value.map(v => v === de ? para : v).filter((v, i, a) => a.findIndex(x => chaveTag(x) === chaveTag(v)) === i));
   const cheio = value.length >= MAX_TAGS_RADAR;
-  const livres = sugestoes.filter(t => !tem(t)).slice(0, 8);
+  const crmLivres = crm.filter(t => !tem(t));
+  const usadasLivres = usadas.filter(t => !tem(t) && !reconhecida(t)).slice(0, 8);
+  const soEtiqueta = temCrm ? value.filter(t => !reconhecida(t)) : [];
+  const botaoSug = {
+    padding: '3px 9px',
+    borderRadius: 7,
+    fontSize: 11.5,
+    background: 'transparent',
+    cursor: 'pointer',
+    fontFamily: 'inherit'
+  };
   return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
@@ -4949,32 +5000,38 @@ function TagsInput({
       border: '1px solid var(--border)',
       background: 'var(--panel2)'
     }
-  }, value.map(t => /*#__PURE__*/React.createElement("span", {
-    key: t,
-    style: {
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: 6,
-      padding: '4px 9px',
-      borderRadius: 7,
-      fontSize: 12,
-      border: `1px solid ${C.cyan}`,
-      color: C.cyan
-    }
-  }, t, /*#__PURE__*/React.createElement("button", {
-    type: "button",
-    onClick: () => remover(t),
-    "aria-label": `Tirar a tag ${t}`,
-    style: {
-      background: 'none',
-      border: 'none',
-      padding: 0,
-      color: 'inherit',
-      cursor: 'pointer',
-      fontSize: 13,
-      lineHeight: 1
-    }
-  }, "\xD7"))), !cheio && /*#__PURE__*/React.createElement("input", {
+  }, value.map(t => {
+    const ok = temCrm && reconhecida(t);
+    return /*#__PURE__*/React.createElement("span", {
+      key: t,
+      title: !temCrm ? 'Vai como etiqueta pro CRM' : ok ? 'Reconhecida pelo CRM: aciona uma regra do fluxo de entrada' : 'Não aciona nenhuma regra do CRM: vai só como etiqueta',
+      style: {
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '4px 9px',
+        borderRadius: 7,
+        fontSize: 12,
+        border: `1px ${temCrm && !ok ? 'dashed' : 'solid'} ${temCrm && !ok ? 'var(--dim)' : C.cyan}`,
+        color: temCrm && !ok ? 'var(--dim)' : C.cyan
+      }
+    }, ok && /*#__PURE__*/React.createElement("span", {
+      "aria-hidden": "true"
+    }, "\u2713"), t, /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      onClick: () => remover(t),
+      "aria-label": `Tirar a tag ${t}`,
+      style: {
+        background: 'none',
+        border: 'none',
+        padding: 0,
+        color: 'inherit',
+        cursor: 'pointer',
+        fontSize: 13,
+        lineHeight: 1
+      }
+    }, "\xD7"));
+  }), !cheio && /*#__PURE__*/React.createElement("input", {
     id: rotuloId,
     value: texto,
     onChange: e => {
@@ -4988,7 +5045,7 @@ function TagsInput({
       } else if (e.key === 'Backspace' && !texto && value.length) remover(value[value.length - 1]);
     },
     onBlur: () => texto.trim() && adicionar(texto),
-    placeholder: value.length ? 'Mais uma…' : 'Ex: Campanha Outubro, VIP, Região Sul — Enter para adicionar',
+    placeholder: value.length ? 'Mais uma…' : temCrm ? 'Escolha abaixo ou digite — Enter para adicionar' : 'Ex: Campanha Outubro, VIP, Região Sul — Enter para adicionar',
     style: {
       flex: 1,
       minWidth: 160,
@@ -5000,7 +5057,33 @@ function TagsInput({
       fontSize: 13,
       fontFamily: 'inherit'
     }
-  })), livres.length > 0 && !cheio && /*#__PURE__*/React.createElement("div", {
+  })), soEtiqueta.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 5
+    }
+  }, soEtiqueta.map(t => {
+    const sug = sugestaoCrm(t, crm);
+    return /*#__PURE__*/React.createElement("div", {
+      key: t,
+      style: {
+        fontSize: 11.5,
+        color: C.amber,
+        lineHeight: 1.4
+      }
+    }, "\"", t, "\" n\xE3o aciona nenhuma regra do CRM \u2014 vai s\xF3 como etiqueta.", sug && /*#__PURE__*/React.createElement(React.Fragment, null, " Voc\xEA quis dizer", ' ', /*#__PURE__*/React.createElement("button", {
+      type: "button",
+      onClick: () => trocar(t, sug),
+      style: {
+        ...botaoSug,
+        padding: '1px 7px',
+        border: `1px solid ${C.cyan}`,
+        color: C.cyan
+      }
+    }, sug), "?"));
+  })), temCrm && crmLivres.length > 0 && !cheio && /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       flexWrap: 'wrap',
@@ -5013,19 +5096,37 @@ function TagsInput({
       fontSize: 11,
       color: 'var(--faint)'
     }
-  }, "J\xE1 usadas:"), livres.map(t => /*#__PURE__*/React.createElement("button", {
+  }, "Reconhecidas pelo CRM:"), crmLivres.map(t => /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    key: t,
+    onClick: () => adicionar(t),
+    title: "Aciona uma regra do fluxo de entrada do CRM",
+    style: {
+      ...botaoSug,
+      border: `1px solid ${C.cyan}`,
+      color: C.cyan
+    }
+  }, "+ ", t))), usadasLivres.length > 0 && !cheio && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      alignItems: 'center',
+      gap: 6,
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)'
+    }
+  }, "J\xE1 usadas:"), usadasLivres.map(t => /*#__PURE__*/React.createElement("button", {
     type: "button",
     key: t,
     onClick: () => adicionar(t),
     style: {
-      padding: '3px 9px',
-      borderRadius: 7,
-      fontSize: 11.5,
+      ...botaoSug,
       border: '1px dashed var(--border)',
-      background: 'transparent',
-      color: 'var(--dim)',
-      cursor: 'pointer',
-      fontFamily: 'inherit'
+      color: 'var(--dim)'
     }
   }, "+ ", t))), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -5034,7 +5135,7 @@ function TagsInput({
       marginTop: 7,
       lineHeight: 1.4
     }
-  }, "V\xE3o junto em cada lead enviado ao CRM (", `até ${MAX_TAGS_RADAR}`, "), pra triagem l\xE1: fila, automa\xE7\xE3o, vendedor.", cheio && ' Limite atingido.'));
+  }, temCrm ? /*#__PURE__*/React.createElement(React.Fragment, null, "V\xE3o junto em cada lead enviado ao CRM (at\xE9 ", MAX_TAGS_RADAR, "). As marcadas com \u2713 acionam uma regra do fluxo de entrada; as outras v\xE3o s\xF3 como etiqueta.") : /*#__PURE__*/React.createElement(React.Fragment, null, "V\xE3o junto em cada lead enviado ao CRM (at\xE9 ", MAX_TAGS_RADAR, "), pra triagem l\xE1: fila, automa\xE7\xE3o, vendedor."), cheio && ' Limite atingido.'));
 }
 function PropostaDropdown({
   value,
@@ -11648,6 +11749,48 @@ function Config() {
       whiteSpace: 'nowrap'
     }
   }, rotacionando ? '…' : cfg.webhook_entrada_secret ? 'Rotacionar' : 'Gerar')), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 18,
+      paddingTop: 14,
+      borderTop: '1px solid var(--border)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 7
+    }
+  }, "Tags reconhecidas pelo CRM ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, "(o CRM manda a lista em ", /*#__PURE__*/React.createElement("code", null, "/api/webhooks/crm/tags"), ", com o mesmo segredo)")), Array.isArray(cfg.crm_tags_regras) && cfg.crm_tags_regras.length ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: 6
+    }
+  }, cfg.crm_tags_regras.map(t => /*#__PURE__*/React.createElement("span", {
+    key: t,
+    style: {
+      padding: '3px 9px',
+      borderRadius: 7,
+      fontSize: 11.5,
+      border: `1px solid ${C.cyan}`,
+      color: C.cyan
+    }
+  }, t))) : /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--faint)'
+    }
+  }, cfg.crm_tags_regras_em ? 'O CRM informou que nenhuma regra usa tag.' : 'O CRM ainda não mandou a lista.'), cfg.crm_tags_regras_em && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)',
+      marginTop: 7
+    }
+  }, "Atualizada ", timeAgo(cfg.crm_tags_regras_em), ".")), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
