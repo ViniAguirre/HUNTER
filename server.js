@@ -14,7 +14,7 @@ const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
 const { Pool } = require('pg');
 const { TENANT_ID, TENANT_LEGADO, ligarTenantNoPool, exigirRlsEnforcavel, tenantizarTabela, migrarSingletonParaTenant } = require('./tenant');
-const { normalizarTags } = require('./tags');
+const { normalizarTags, normalizarListaCrm } = require('./tags');
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'troque-este-segredo';
@@ -439,6 +439,11 @@ async function init() {
     ALTER TABLE config ADD COLUMN IF NOT EXISTS crm_conversao_tags     TEXT[] NOT NULL DEFAULT '{fechado,ganho,comprou,cliente,qualificado,won,closed}';
     ALTER TABLE config ADD COLUMN IF NOT EXISTS crm_lookalike_auto     BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE config ADD COLUMN IF NOT EXISTS webhook_entrada_secret TEXT;
+    -- Tags que as regras do fluxo de entrada do CRM reconhecem. O CRM manda a
+    -- lista inteira a cada mudança (POST /api/webhooks/crm/tags); a tela de
+    -- radar oferece essas e avisa quando a tag digitada não aciona regra.
+    ALTER TABLE config ADD COLUMN IF NOT EXISTS crm_tags_regras    TEXT[] NOT NULL DEFAULT '{}';
+    ALTER TABLE config ADD COLUMN IF NOT EXISTS crm_tags_regras_em TIMESTAMPTZ;
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS lista TEXT;
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS crm_queue_id TEXT;
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS descoberta_token TEXT;
@@ -1538,14 +1543,19 @@ app.post('/api/buscas', requireAuth, requireEditor, async (req, res) => {
 
 // Tags já usadas (radares + pautas), as mais usadas primeiro — a tela sugere
 // essas pra o time escrever sempre igual e a regra de triagem do CRM pegar.
+// Junto vão as tags que o CRM reconhece (as que acionam regra no fluxo de
+// entrada dele), pra a tela oferecer essas primeiro e avisar das outras.
 app.get('/api/tags', requireAuth, async (req, res) => {
   try {
-    const { rows } = await pool.query(`
-      SELECT tag, COUNT(*)::int AS usos FROM (
-        SELECT unnest(tags) AS tag FROM buscas
-        UNION ALL SELECT unnest(tags) FROM estrategia_pautas
-      ) t GROUP BY tag ORDER BY usos DESC, tag LIMIT 50`);
-    res.json(rows);
+    const [{ rows }, { rows: [cfg] }] = await Promise.all([
+      pool.query(`
+        SELECT tag, COUNT(*)::int AS usos FROM (
+          SELECT unnest(tags) AS tag FROM buscas
+          UNION ALL SELECT unnest(tags) FROM estrategia_pautas
+        ) t GROUP BY tag ORDER BY usos DESC, tag LIMIT 50`),
+      pool.query(`SELECT crm_tags_regras, crm_tags_regras_em FROM config`),
+    ]);
+    res.json({ usadas: rows, crm: cfg?.crm_tags_regras || [], crm_atualizado_em: cfg?.crm_tags_regras_em || null });
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
@@ -2862,6 +2872,28 @@ const webhookLimiter = rateLimit({ windowMs: 60_000, max: 120 });
 // em tempos). Com o "controle pelo CRM" ligado na Estratégia, o piloto só abre
 // radar novo quando esse número cai para o gatilho ou menos. Mesmo token do
 // webhook de conversão (x-hunter-token).
+// Tags das regras do CRM → Hunter. O CRM manda a LISTA INTEIRA das tags que
+// as regras do fluxo de entrada dele reconhecem, sempre que uma regra é
+// criada, alterada ou removida. Substitui a anterior (lista vazia = nenhuma
+// regra). Mesmo token dos outros avisos do CRM (x-hunter-token).
+app.post('/api/webhooks/crm/tags', webhookLimiter, async (req, res) => {
+  try {
+    const { rows: [cfg] } = await pool.query(`SELECT webhook_entrada_secret FROM config`);
+    const secret = cfg?.webhook_entrada_secret;
+    if (!secret) return res.status(503).json({ erro: 'webhook de entrada não configurado' });
+    const token = req.get('x-hunter-token') || req.query.token;
+    if (token !== secret) return res.status(401).json({ erro: 'token inválido' });
+
+    const b = req.body || {};
+    if (!Array.isArray(b.tags)) {
+      return res.status(400).json({ erro: 'envie "tags": a lista completa de tags que as regras do CRM reconhecem (pode ser vazia)' });
+    }
+    const { tags, ignoradas } = normalizarListaCrm(b.tags);
+    await pool.query(`UPDATE config SET crm_tags_regras=$1::text[], crm_tags_regras_em=now()`, [tags]);
+    res.json({ ok: true, total: tags.length, tags, ...(ignoradas.length ? { ignoradas } : {}) });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
 app.post('/api/webhooks/crm/fila', webhookLimiter, async (req, res) => {
   try {
     const { rows: [cfg] } = await pool.query(`SELECT webhook_entrada_secret FROM config`);
