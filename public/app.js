@@ -5395,7 +5395,7 @@ function NotaJevLista({
       fontSize: 11.5,
       color: 'var(--faint)'
     }
-  }, "Cliente ideal:"), /*#__PURE__*/React.createElement("select", {
+  }, "Sua oferta:"), /*#__PURE__*/React.createElement("select", {
     value: propostaId,
     onChange: e => setPropostaId(e.target.value),
     style: {
@@ -5458,7 +5458,7 @@ function NotaJevLista({
     style: {
       marginTop: 6
     }
-  }, res.suspeitas_lista.length, " suspeita", res.suspeitas_lista.length === 1 ? '' : 's', ": empresas que o Jev considera longe do cliente ideal e que puxam o perfil da lista para fora.", res.nota_sem_suspeitas != null && /*#__PURE__*/React.createElement(React.Fragment, null, " Sem elas a nota iria para ", /*#__PURE__*/React.createElement("b", null, res.nota_sem_suspeitas), "."), ' ', "Retirar s\xF3 tira a empresa do perfil; ela continua sendo cliente e nunca vira lead."), /*#__PURE__*/React.createElement("div", {
+  }, res.suspeitas_lista.length, " suspeita", res.suspeitas_lista.length === 1 ? '' : 's', ": empresas que o Jev considera compradoras improv\xE1veis ou at\xEDpicas da sua oferta e que puxam o perfil da lista para fora.", res.nota_sem_suspeitas != null && /*#__PURE__*/React.createElement(React.Fragment, null, " Sem elas a nota iria para ", /*#__PURE__*/React.createElement("b", null, res.nota_sem_suspeitas), "."), ' ', "Retirar s\xF3 tira a empresa do perfil; ela continua sendo cliente e nunca vira lead."), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       flexDirection: 'column',
@@ -5485,7 +5485,7 @@ function NotaJevLista({
     style: {
       color: 'var(--faint)'
     }
-  }, "\xB7 ", x.norm < 0.25 ? 'sem relação' : 'pouca relação')), /*#__PURE__*/React.createElement("button", {
+  }, "\xB7 ", x.norm < 0.25 ? 'comprador improvável' : 'comprador possível, não típico')), /*#__PURE__*/React.createElement("button", {
     type: "button",
     style: btn,
     onClick: () => alternar(x)
@@ -5493,7 +5493,7 @@ function NotaJevLista({
     style: {
       marginTop: 6
     }
-  }, "Nenhuma suspeita: todas as empresas avaliadas parecem com o cliente ideal."))));
+  }, "Nenhuma suspeita: todas as empresas avaliadas s\xE3o compradoras t\xEDpicas da sua oferta."))));
 }
 function Semelhantes() {
   const [listas, setListas] = useState(null);
@@ -9697,7 +9697,7 @@ function NovaBusca({
           border: `1px solid ${l.jev_faixa === 'arriscada' ? '#F87171' : '#F59E0B'}`,
           color: 'var(--text)'
         }
-      }, "Aten\xE7\xE3o: a nota de seguran\xE7a do Jev para esta lista \xE9 ", /*#__PURE__*/React.createElement("b", null, l.jev_nota), l.jev_faixa === 'arriscada' ? ' (arriscada)' : ' (atenção)', ". H\xE1 empresas na lista longe do cliente ideal, e o radar vai procurar semelhantes a elas tamb\xE9m. Revise as suspeitas no menu ", /*#__PURE__*/React.createElement("b", null, "Semelhantes"), " antes de criar o radar."));
+      }, "Aten\xE7\xE3o: a nota de seguran\xE7a do Jev para esta lista \xE9 ", /*#__PURE__*/React.createElement("b", null, l.jev_nota), l.jev_faixa === 'arriscada' ? ' (arriscada)' : ' (atenção)', ". H\xE1 empresas na lista que dificilmente comprariam a sua oferta, e o radar vai procurar semelhantes a elas tamb\xE9m. Revise as suspeitas no menu ", /*#__PURE__*/React.createElement("b", null, "Semelhantes"), " antes de criar o radar."));
     })(), /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 11.5,

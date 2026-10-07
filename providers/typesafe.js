@@ -124,17 +124,17 @@ async function avaliarSites(apiKey, empresa, candidatos, opts = {}) {
 }
 
 // ── Nota de segurança da lista de semelhantes ────────────────────────────────
-// Cada empresa da lista é julgada contra o cliente ideal (texto da proposta de
-// valor) numa escala de 4 níveis. A nota da lista é calculada no CÓDIGO a partir
+// Cada empresa da lista é julgada como COMPRADORA da oferta (texto da proposta
+// de valor) numa escala de 4 níveis. A nota da lista é calculada no CÓDIGO a partir
 // dessas respostas, para ser explicável: aderência média, quem puxa o perfil
 // para fora e o tamanho da lista.
 const NIVEIS_ADERENCIA = [
-  { what: 'Unrelated: sells or does something the ideal customer description does not cover',
-    examples: ['A law firm in a list meant for auto repair shops'] },
-  { what: 'Loosely related: same broad sector, but a different kind of business from the ideal customer',
-    examples: ['A car dealership in a list meant for tire and brake repair shops'] },
-  { what: 'Related: a similar kind of business, with some differences in what it sells, its size or how it operates' },
-  { what: 'Strong match: exactly the kind of business the ideal customer description targets' },
+  { what: 'Unlikely buyer: the business has no plausible use or need for the offer',
+    examples: ['A one-person online consultancy for an offer of industrial forklifts'] },
+  { what: 'Possible buyer: could use the offer, but it is not a typical customer for it' },
+  { what: 'Likely buyer: a typical customer that commonly needs this kind of offer' },
+  { what: 'Ideal buyer: exactly the kind of business the offer is built for',
+    examples: ['A restaurant for an offer of commercial kitchen equipment'] },
 ];
 const LOTE_LISTA = 25;   // empresas por chamada ao Jev
 
@@ -166,12 +166,19 @@ async function avaliarAderencia(apiKey, icpTexto, empresas, opts = {}) {
         type: 'score',
         instructions: {
           company: empresaParaJev(e),
-          question: 'How well does `company` match the ideal customer described in `ideal_customer`?',
+          question: 'How likely is `company` to buy what the seller offers in `offer`?',
         },
         criteria: NIVEIS_ADERENCIA,
       };
     });
-    const data = await systemOne(apiKey, { ideal_customer: corta(icpTexto, 2000) }, questions, opts);
+    const data = await systemOne(apiKey, {
+      // A proposta de valor descreve o que o CLIENTE DO HUNTER vende, não quem
+      // compra. Perguntar "a empresa bate com a descrição?" comparava o comprador
+      // com o vendedor (um escritório "não é" uma empresa de purificadores, mas
+      // compra purificador). A pergunta certa é se ela compraria a oferta.
+      offer: { seller_value_proposition: corta(icpTexto, 2000),
+        note: 'This text describes what the seller sells and may mention who it targets. Judge `company` as a potential BUYER, not as a competitor or a similar seller.' },
+    }, questions, opts);
     modelo = data.model || modelo;
     tokens += data.usage?.input_tokens || 0;
     lote.forEach((e, j) => {
