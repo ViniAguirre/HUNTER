@@ -5234,6 +5234,20 @@ function PropostaDropdown({
 // A lista é a matéria-prima do radar "Semelhantes": o Hunter lê a firmografia
 // dessas empresas e destila o perfil de quem compra. Aqui ela vira um item
 // reaproveitável — sobe uma vez, usa em quantos radares quiser.
+// Confiança do perfil de uma lista: o tamanho (régua antiga) E, quando houver,
+// a nota de segurança do Jev. Vale a PIOR das duas — uma lista grande mas
+// misturada não é confiável, e uma lista coesa mas curta também não.
+const NIVEIS_CONF = [['baixa', '#F59E0B'], ['média', C.gold], ['alta', '#4ADE80']];
+function confiancaLista(l) {
+  const porTamanho = l.n < 6 ? 0 : l.n < 15 ? 1 : 2;
+  const temJev = l.jev_nota != null && l.jev_status !== 'processando';
+  const porJev = !temJev ? 2 : l.jev_faixa === 'segura' ? 2 : l.jev_faixa === 'atencao' ? 1 : 0;
+  const nivel = Math.min(porTamanho, porJev);
+  const [rot, cor] = NIVEIS_CONF[nivel];
+  const motivo = temJev ? `${l.n} empresa${l.n === 1 ? '' : 's'} e nota Jev ${l.jev_nota}` : `${l.n} empresa${l.n === 1 ? '' : 's'}; sem nota Jev`;
+  return [rot, cor, motivo];
+}
+
 // Nota de segurança da lista (Jev): compara cada empresa da lista com o cliente
 // ideal de uma proposta de valor. Só aparece com a integração Decisões ativa.
 const FAIXA_JEV = {
@@ -6045,7 +6059,7 @@ function Semelhantes() {
       gap: 10
     }
   }, arr.map(l => {
-    const [rot, cor] = conf(l.n);
+    const [rot, cor, motivo] = confiancaLista(l);
     return /*#__PURE__*/React.createElement("div", {
       key: l.nome,
       style: {
@@ -6139,7 +6153,8 @@ function Semelhantes() {
     }, l.n, " empresa", l.n === 1 ? '' : 's', " \xB7 confian\xE7a ", /*#__PURE__*/React.createElement("span", {
       style: {
         color: cor
-      }
+      },
+      title: motivo
     }, rot), l.automatica && ' · alimentada pelo CRM automaticamente', l.excluidas > 0 && ` · ${l.excluidas} fora do perfil`), jevAtivo && /*#__PURE__*/React.createElement(NotaJevLista, {
       l: l,
       propostas: propostas,
@@ -9783,7 +9798,7 @@ function NovaBusca({
     }, l.rotulo, " \u2014 ", l.n, " empresa", l.n === 1 ? '' : 's', l.automatica ? ' (do CRM)' : ''))), (() => {
       const l = listas.find(x => x.nome === listaSel);
       if (!l) return null;
-      const [rot, cor] = l.n < 6 ? ['baixa', '#F59E0B'] : l.n < 15 ? ['média', C.gold] : ['alta', '#4ADE80'];
+      const [rot, cor, motivo] = confiancaLista(l);
       return /*#__PURE__*/React.createElement("div", {
         style: {
           fontSize: 11.5,
@@ -9795,7 +9810,7 @@ function NovaBusca({
         style: {
           color: cor
         }
-      }, rot), " (", l.n, " empresas).", l.automatica && ' Esta lista cresce sozinha a cada conversão recebida do CRM, e o radar refaz o perfil junto.', l.jev_nota != null && l.jev_faixa !== 'segura' && /*#__PURE__*/React.createElement("div", {
+      }, rot), " (", motivo, ").", l.automatica && ' Esta lista cresce sozinha a cada conversão recebida do CRM, e o radar refaz o perfil junto.', l.jev_nota != null && l.jev_faixa !== 'segura' && /*#__PURE__*/React.createElement("div", {
         style: {
           marginTop: 6,
           padding: '7px 10px',
