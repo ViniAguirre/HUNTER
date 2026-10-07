@@ -33,16 +33,15 @@ usuário escolhe a proposta de valor que descreve o cliente ideal e o worker
 
 1. lê até 120 empresas positivas da lista (o cadastro global costuma já ter a
    firmografia; o que faltar é consultado na CNPJá como no perfilamento);
-2. manda ao Jev, uma chamada por empresa (8 em paralelo), uma pergunta `score`: "quanto esta
-   empresa provavelmente compraria a oferta?", em 4 níveis (comprador
-   improvável, possível, provável, ideal). A proposta de valor descreve o que o
-   cliente do Hunter VENDE; a primeira versão perguntava se a empresa "batia
-   com a descrição" e comparava o comprador com o vendedor (um escritório não é
-   uma empresa de purificadores, mas compra purificador);
-   junto com a oferta vão os campos "Cliente ideal (ICP)", "Dores que você
-   resolve" e "Desqualificadores" do fichamento comercial (tela Agente SWOT),
-   que dizem quem compra (B2B de nicho, qualquer empresa com funcionários, só
-   um segmento…). Preencher o fichamento deixa a nota mais certeira;
+2. manda ao Jev, uma chamada por empresa (8 em paralelo), uma pergunta `score`:
+   "este cliente representa o cliente ideal?", em 4 níveis (cliente atípico,
+   ocasional, representativo, cliente núcleo). Toda empresa da lista JÁ
+   COMPROU (regra da lista), então a pergunta não é "compraria?", e sim "é um
+   bom modelo?": uma livraria que comprou purificador é cliente de verdade, mas
+   como modelo leva o radar a procurar livrarias. Vão no state a empresa, a
+   oferta e o fichamento comercial (Cliente ideal, Dores, Desqualificadores),
+   que é a referência principal. O nome da empresa é sinalizado como pista do
+   negócio real (o código da Receita costuma ser genérico);
 3. calcula no código (`typesafe.notaDaLista`) a nota 0–100: aderência média ×
    fator de tamanho (0,8 abaixo de 6 empresas, 0,9 abaixo de 15). Faixas:
    segura (≥ 75), atenção (≥ 55), arriscada;
