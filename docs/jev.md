@@ -83,6 +83,19 @@ Se "fora do perfil" se concentra nos níveis baixos e "convertido" nos altos, o
 Jev separa bem: aí vale ele entrar na nota (item 2) e decidir a zona cinzenta
 (item 3). Até lá, nenhum lead muda.
 
+## Nota da lista = coesão (desde 2026-10-07)
+
+A nota passou a ser a fatia do segmento principal da lista (× fator de
+tamanho), e as suspeitas são os clientes fora desse segmento. Motivo, medido
+num diagnóstico na Planeta Água: o Jev classificou 53 de 54 revendas de filtro
+como "especializado no produto" (choice, acerta), mas deu aderência de ~0,4/3
+para as mesmas empresas contra o "Cliente ideal" do fichamento, em todas as
+quatro formulações testadas (score, noul, com e sem desqualificadores). Julgar
+um texto longo em português é onde a TypeSafe avisa que a precisão cai. A
+aderência continua calculada e gravada (`aderencia_media`), mas não decide a
+nota. Para um radar Semelhantes, coesão é o que importa: ele procura a média da
+lista, e lista misturada gera uma média que não é nenhum dos segmentos.
+
 ## Raio-X da lista
 
 Na mesma chamada da nota, o Jev classifica cada cliente num segmento

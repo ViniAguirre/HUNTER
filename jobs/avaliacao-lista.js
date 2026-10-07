@@ -68,14 +68,16 @@ module.exports = async function avaliacaoLista(job, pool) {
     confianca: x.confianca == null ? null : Math.round(x.confianca * 100) / 100,
     segmento: x.segmento || null,
   }));
+  const { suspeitas_cnpjs, ...resumoNota } = nota;
   const resultado = {
-    ...nota,
+    ...resumoNota,
     sem_dados: semDados,
     total_lista: sementes.length,
     tokens: r.tokens,
     falhas_jev: r.falhas || 0,
     raio_x: typesafe.raioX(itens),
-    suspeitas_lista: itens.filter(x => x.norm != null && x.norm < 0.5).sort((a, b) => a.norm - b.norm),
+    suspeitas_lista: itens.filter(x => nota.suspeitas_cnpjs.includes(x.cnpj))
+      .map(x => ({ ...x, segmento_rotulo: typesafe.ROTULOS_SEGMENTO[x.segmento] || x.segmento || null })),
     itens,
   };
   await pool.query(

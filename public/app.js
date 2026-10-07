@@ -5483,7 +5483,11 @@ function NotaJevLista({
     style: {
       color: (FAIXA_JEV[av.faixa] || [])[1]
     }
-  }, av.nota), " (", (FAIXA_JEV[av.faixa] || [])[0], ")", av.proposta_rotulo ? /*#__PURE__*/React.createElement(React.Fragment, null, " contra \"", av.proposta_rotulo, "\"") : null, " \xB7 ader\xEAncia m\xE9dia ", res.aderencia_media, "% \xB7", ' ', res.avaliadas, " avaliada", res.avaliadas === 1 ? '' : 's', res.sem_dados ? ` · ${res.sem_dados} sem cadastro` : '', res.fator_tamanho < 1 ? ` · lista curta (×${res.fator_tamanho})` : ''), res.raio_x?.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, av.nota), " (", (FAIXA_JEV[av.faixa] || [])[0], ")", res.base === 'coesao' ? /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 segmento principal: ", /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: 'var(--text)'
+    }
+  }, res.segmento_principal_rotulo), " (", res.pct_principal, "%) \xB7 ", res.segmentos, " segmento", res.segmentos === 1 ? '' : 's', " \xB7") : /*#__PURE__*/React.createElement(React.Fragment, null, av.proposta_rotulo ? /*#__PURE__*/React.createElement(React.Fragment, null, " contra \"", av.proposta_rotulo, "\"") : null, " \xB7 ader\xEAncia m\xE9dia ", res.aderencia_media, "% \xB7"), ' ', res.avaliadas, " avaliada", res.avaliadas === 1 ? '' : 's', res.sem_dados ? ` · ${res.sem_dados} sem cadastro` : '', res.fator_tamanho < 1 ? ` · lista curta (×${res.fator_tamanho})` : ''), res.raio_x?.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 10,
       marginBottom: 4
@@ -5517,11 +5521,7 @@ function NotaJevLista({
     style: {
       color: 'var(--text)'
     }
-  }, g.rotulo), " \xB7 ", g.n, " (", g.pct, "%)", g.aderencia_media != null && /*#__PURE__*/React.createElement("span", {
-    style: {
-      color: 'var(--faint)'
-    }
-  }, " \xB7 representa o cliente ideal: ", g.aderencia_media, "%")), g.n >= 3 && /*#__PURE__*/React.createElement("button", {
+  }, g.rotulo), " \xB7 ", g.n, " (", g.pct, "%)"), g.n >= 3 && /*#__PURE__*/React.createElement("button", {
     type: "button",
     style: btn,
     disabled: criandoSeg === g.segmento,
@@ -5559,12 +5559,12 @@ function NotaJevLista({
     style: {
       marginTop: 6
     }
-  }, res.suspeitas_lista.length, " suspeita", res.suspeitas_lista.length === 1 ? '' : 's', ": empresas que o Jev considera clientes at\xEDpicos: compraram, mas n\xE3o se parecem com o seu cliente ideal. Como modelo, levam o radar a procurar empresas parecidas com elas.", res.nota_sem_suspeitas != null && /*#__PURE__*/React.createElement(React.Fragment, null, " Sem elas a nota iria para ", /*#__PURE__*/React.createElement("b", null, res.nota_sem_suspeitas), "."), ' ', "Retirar s\xF3 tira a empresa do perfil; ela continua sendo cliente e nunca vira lead.", res.suspeitas_lista.length > res.avaliadas / 2 && /*#__PURE__*/React.createElement("div", {
+  }, res.suspeitas_lista.length, " suspeita", res.suspeitas_lista.length === 1 ? '' : 's', ": ", res.base === 'coesao' ? /*#__PURE__*/React.createElement(React.Fragment, null, "clientes fora do segmento principal (", res.segmento_principal_rotulo, "). O radar procura empresas parecidas com a m\xE9dia da lista; misturar segmentos dilui essa m\xE9dia.") : /*#__PURE__*/React.createElement(React.Fragment, null, "empresas que o Jev considera clientes at\xEDpicos: compraram, mas n\xE3o se parecem com o seu cliente ideal."), res.nota_sem_suspeitas != null && /*#__PURE__*/React.createElement(React.Fragment, null, " Sem elas a nota iria para ", /*#__PURE__*/React.createElement("b", null, res.nota_sem_suspeitas), "."), ' ', "Retirar s\xF3 tira a empresa do perfil; ela continua sendo cliente e nunca vira lead.", res.suspeitas_lista.length > res.avaliadas / 2 && /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 6,
       color: 'var(--text)'
     }
-  }, "Mais da metade da lista n\xE3o se parece com o cliente ideal do seu fichamento. Ou o fichamento est\xE1 mais estreito que a sua clientela real (revise o \"Cliente ideal\" em ", /*#__PURE__*/React.createElement("b", null, "Agente SWOT"), "), ou a lista mistura perfis diferentes e rende mais separada por segmento.")), /*#__PURE__*/React.createElement("div", {
+  }, "A lista mistura perfis diferentes. Use o raio-X acima para criar uma lista por segmento e um radar Semelhantes para cada uma.")), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       flexDirection: 'column',
@@ -5591,7 +5591,7 @@ function NotaJevLista({
     style: {
       color: 'var(--faint)'
     }
-  }, "\xB7 ", x.norm < 0.25 ? 'cliente atípico' : 'cliente ocasional')), /*#__PURE__*/React.createElement("button", {
+  }, "\xB7 ", res.base === 'coesao' ? x.segmento_rotulo || 'outro segmento' : x.norm < 0.25 ? 'cliente atípico' : 'cliente ocasional')), /*#__PURE__*/React.createElement("button", {
     type: "button",
     style: btn,
     onClick: () => alternar(x)
@@ -5599,7 +5599,7 @@ function NotaJevLista({
     style: {
       marginTop: 6
     }
-  }, "Nenhuma suspeita: todas as empresas avaliadas representam bem o seu cliente ideal."))));
+  }, "Nenhuma suspeita: todas as empresas avaliadas s\xE3o do mesmo segmento."))));
 }
 function Semelhantes() {
   const [listas, setListas] = useState(null);
@@ -9803,7 +9803,7 @@ function NovaBusca({
           border: `1px solid ${l.jev_faixa === 'arriscada' ? '#F87171' : '#F59E0B'}`,
           color: 'var(--text)'
         }
-      }, "Aten\xE7\xE3o: a nota de seguran\xE7a do Jev para esta lista \xE9 ", /*#__PURE__*/React.createElement("b", null, l.jev_nota), l.jev_faixa === 'arriscada' ? ' (arriscada)' : ' (atenção)', ". H\xE1 na lista clientes at\xEDpicos, que n\xE3o representam o seu cliente ideal, e o radar vai procurar semelhantes a eles tamb\xE9m. Revise as suspeitas no menu ", /*#__PURE__*/React.createElement("b", null, "Semelhantes"), " antes de criar o radar."));
+      }, "Aten\xE7\xE3o: a nota de seguran\xE7a do Jev para esta lista \xE9 ", /*#__PURE__*/React.createElement("b", null, l.jev_nota), l.jev_faixa === 'arriscada' ? ' (arriscada)' : ' (atenção)', ". A lista mistura clientes de perfis diferentes, e o radar procura a m\xE9dia de todos. Use o raio-X no menu ", /*#__PURE__*/React.createElement("b", null, "Semelhantes"), " para separar por segmento antes de criar o radar."));
     })(), /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 11.5,
