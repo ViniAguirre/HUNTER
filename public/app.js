@@ -7200,6 +7200,14 @@ function DistribuicaoCrm({
   const [carregando, setCarregando] = useState(true);
   const [token, setToken] = useState('');
   const [editandoToken, setEditandoToken] = useState(false);
+  const [filas, setFilas] = useState([]); // Setores do CRM, pra fila de cada conexão
+  useEffect(() => {
+    fetch('/api/crm/filas', {
+      credentials: 'same-origin'
+    }).then(r => r.ok ? r.json() : {
+      filas: []
+    }).then(x => setFilas(Array.isArray(x.filas) ? x.filas : [])).catch(() => {});
+  }, []);
   const carregar = () => {
     setCarregando(true);
     return fetch('/api/estrategia/conexoes', {
@@ -7229,12 +7237,14 @@ function DistribuicaoCrm({
         id,
         nome,
         ativo,
-        peso
+        peso,
+        fila
       }) => ({
         id,
         nome,
         ativo,
-        peso
+        peso,
+        fila
       }))
     });
   };
@@ -7302,7 +7312,7 @@ function DistribuicaoCrm({
       color: 'var(--dim)',
       lineHeight: 1.5
     }
-  }, "Cada lead enviado ao CRM abre o atendimento em uma das conex\xF5es (n\xFAmeros de WhatsApp) marcadas abaixo. O lead fica com a conex\xE3o sorteada: se o envio precisar ser repetido, vai para a mesma.")), /*#__PURE__*/React.createElement(Interruptor, {
+  }, "Cada lead enviado ao CRM abre o atendimento em uma das conex\xF5es (n\xFAmeros de WhatsApp) marcadas abaixo. O lead fica com a conex\xE3o sorteada: se o envio precisar ser repetido, vai para a mesma. Cada conex\xE3o pode ter a pr\xF3pria fila; sem fila escolhida aqui, vale a fila do radar.")), /*#__PURE__*/React.createElement(Interruptor, {
     ligado: plano.distrib_ativo,
     disabled: salvando,
     rotulo: "Ligar distribui\xE7\xE3o entre conex\xF5es",
@@ -7450,7 +7460,34 @@ function DistribuicaoCrm({
       style: {
         color: c.sumiu ? C.red : stCor
       }
-    }, "\u25CF ", c.sumiu ? 'não existe mais no CRM' : stTxt), c.numero && /*#__PURE__*/React.createElement("span", null, "\xB7 ", c.numero), /*#__PURE__*/React.createElement("span", null, "\xB7 ", c.enviados_30d, " lead(s) em 30 dias"))), ponderada && c.ativo && /*#__PURE__*/React.createElement("label", {
+    }, "\u25CF ", c.sumiu ? 'não existe mais no CRM' : stTxt), c.numero && /*#__PURE__*/React.createElement("span", null, "\xB7 ", c.numero), /*#__PURE__*/React.createElement("span", null, "\xB7 ", c.enviados_30d, " lead(s) em 30 dias"))), c.ativo && filas.length > 0 && /*#__PURE__*/React.createElement("label", {
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 6,
+        fontSize: 12,
+        color: 'var(--dim)'
+      }
+    }, "Fila", /*#__PURE__*/React.createElement("select", {
+      value: c.fila || '',
+      disabled: salvando,
+      "aria-label": `Fila dos leads da conexão ${c.nome}`,
+      onChange: e => alterar(c.id, {
+        fila: e.target.value || null
+      }),
+      style: {
+        ...inputSt,
+        maxWidth: 190,
+        cursor: 'pointer'
+      }
+    }, /*#__PURE__*/React.createElement("option", {
+      value: ""
+    }, "A do radar"), filas.map(f => /*#__PURE__*/React.createElement("option", {
+      key: f.id,
+      value: String(f.id)
+    }, f.queue)), c.fila && !filas.some(f => String(f.id) === String(c.fila)) && /*#__PURE__*/React.createElement("option", {
+      value: c.fila
+    }, "Fila ", c.fila, " (n\xE3o existe mais)"))), ponderada && c.ativo && /*#__PURE__*/React.createElement("label", {
       style: {
         display: 'flex',
         alignItems: 'center',
