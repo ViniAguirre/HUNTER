@@ -25,15 +25,45 @@ const EP_CONTATO_ALT = '/contacts';
 // continua como tentativa de reserva porque é assim que o n8n que entrega
 // contatos hoje está configurado, e uma instalação pode comparar o header
 // inteiro. Só é usado depois que o Bearer volta 401/403.
+//
+// `token` pode ser a string do token OU { token, whatsappId }: é o Token da
+// Empresa apontando pra uma conexão. A doc (FAQ) diz que esse token não carrega
+// a conexão e exige whatsappId na query ou no corpo — vai na query, que vale
+// pra todas as rotas, inclusive GET com corpo.
+function comConexao(token, whatsappId) {
+  return whatsappId != null && whatsappId !== '' ? { token, whatsappId: String(whatsappId) } : token;
+}
 function client(backend, token, esquema = 'bearer') {
+  const t = token && typeof token === 'object' ? token : { token };
   return axios.create({
     baseURL: String(backend || '').replace(/\/+$/, ''),
     headers: {
-      Authorization: esquema === 'raw' ? String(token || '') : `Bearer ${token}`,
+      Authorization: esquema === 'raw' ? String(t.token || '') : `Bearer ${t.token}`,
       'Content-Type': 'application/json',
     },
+    ...(t.whatsappId ? { params: { whatsappId: t.whatsappId } } : {}),
     timeout: 15000,
   });
+}
+
+// Todas as conexões (números de WhatsApp) da empresa dona do token. Doc:
+// POST /api/whatsapp-status — "traz todas as conexões da empresa, não só a da
+// chamada". Cada fork embrulha a lista de um jeito; aceita os formatos comuns.
+async function listarConexoes(backend, token) {
+  try {
+    const { data } = await comAuth(backend, token, (c) => c.post('/api/whatsapp-status', {}), ['bearer', 'raw']);
+    const lista = Array.isArray(data) ? data
+      : Array.isArray(data?.whatsapps) ? data.whatsapps
+      : Array.isArray(data?.connections) ? data.connections
+      : Array.isArray(data?.data) ? data.data : [];
+    return lista.filter(w => w && w.id != null).map(w => ({
+      id: String(w.id),
+      nome: w.name || w.nome || `Conexão ${w.id}`,
+      status: w.status || null,
+      canal: w.channel || w.canal || w.type || null,
+      numero: w.number || w.numero || null,
+    }));
+  } catch (err) { throw traduzErro(err, 'Listar conexões'); }
 }
 
 // Executa a chamada tentando os dois formatos de Authorization, na ordem dada.
@@ -262,21 +292,25 @@ function extrairTicket(data) {
           : alvo.data && typeof alvo.data === 'object' && !Array.isArray(alvo.data) ? alvo.data
           : alvo;
   const id = t.ticketId ?? t.id;
-  return id != null ? { id, status: t.status, queueId: t.queueId ?? t.queue?.id ?? null, contactId: t.contactId } : null;
+  return id != null ? { id, status: t.status, queueId: t.queueId ?? t.queue?.id ?? null, contactId: t.contactId,
+                        whatsappId: t.whatsappId ?? t.whatsapp?.id ?? null } : null;
 }
 
 // Quando o createTicketAPI não devolve o ticket (doc: "se o contato já tiver
 // ticket nesta conexão, nada acontece"), acha o ticket pelos tickets do
 // contato. Devolve o ticket ainda aberto mais recente (Aguardando primeiro); quem
 // chama decide se mexe — um em atendimento é de alguém e fica como está.
-async function acharTicketPendente(backend, token, { contactId, number }) {
+async function acharTicketPendente(backend, token, { contactId, number, whatsappId }) {
   if (!number) return null;
   try {
     const { data } = await comAuth(backend, token, (c) =>
       c.request({ method: 'GET', url: '/api/contacts/alltickets', data: { number } }), ['bearer', 'raw']);
     const lista = Array.isArray(data) ? data : (data?.tickets || data?.data || []);
     const candidatos = lista.map(extrairTicket).filter(t => t && t.status !== 'closed'
-      && (t.contactId == null || String(t.contactId) === String(contactId)));
+      && (t.contactId == null || String(t.contactId) === String(contactId))
+      // A lista traz os tickets do contato em TODAS as conexões; com a
+      // distribuição, só serve o da conexão sorteada.
+      && (whatsappId == null || t.whatsappId == null || String(t.whatsappId) === String(whatsappId)));
     candidatos.sort((a, b) => (a.status === 'pending' ? 0 : 1) - (b.status === 'pending' ? 0 : 1)
       || Number(b.id) - Number(a.id));
     return candidatos[0] || null;
@@ -287,7 +321,7 @@ async function acharTicketPendente(backend, token, { contactId, number }) {
 // abre "em Aguardando, sem Setor" — o queueId mandado ali é ignorado, e o lead
 // caía sem fila. Por isso a fila é aplicada depois, no updateAPI, com o id do
 // ticket. Ticket já em atendimento (open) não é mexido: tem alguém nele.
-async function abrirTicket(backend, token, { contactId, queueId, status, number }) {
+async function abrirTicket(backend, token, { contactId, queueId, status, number, whatsappId }) {
   let data;
   try {
     ({ data } = await comAuth(backend, token, (c) =>
@@ -297,7 +331,7 @@ async function abrirTicket(backend, token, { contactId, queueId, status, number 
       ['bearer', 'raw']));
   } catch (err) { throw traduzErro(err, 'Abrir ticket'); }
 
-  const ticket = extrairTicket(data) || await acharTicketPendente(backend, token, { contactId, number });
+  const ticket = extrairTicket(data) || await acharTicketPendente(backend, token, { contactId, number, whatsappId });
   if (!ticket) {
     // Sem id não há como pôr na fila. O contato e o ticket existem, então não
     // vale falhar o job (o retry não mudaria nada) — mas fica registrado.
@@ -466,5 +500,5 @@ function montarContato(empresa, lead, extras = {}) {
   return contato;
 }
 
-module.exports = { listarEmpresas, listarFilas, upsertContato, criarContato, buscarContato, mesclarContato,
+module.exports = { listarEmpresas, listarFilas, listarConexoes, comConexao, upsertContato, criarContato, buscarContato, mesclarContato,
   abrirTicket, montarContato, montarBriefing, enviarNotaInterna, checarRotaContato, normalizarNumero, EP_CONTATO, EP_CONTATO_ALT };

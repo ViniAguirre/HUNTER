@@ -673,6 +673,17 @@ async function init() {
     ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_fila_gatilho   INTEGER NOT NULL DEFAULT 5;
     ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_fila_pendentes INTEGER;
     ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_fila_em        TIMESTAMPTZ;
+    -- Distribuição dos leads entre as conexões (números de WhatsApp) do CRM GK.
+    -- distrib_conexoes: [{id, nome, ativo, peso}]; distrib_pos: ponteiro do
+    -- rodízio; distrib_token: Token da Empresa do CRM (nunca volta pra tela).
+    ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS distrib_ativo    BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS distrib_modo     TEXT NOT NULL DEFAULT 'rodizio';
+    ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS distrib_conexoes JSONB NOT NULL DEFAULT '[]';
+    ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS distrib_pos      BIGINT NOT NULL DEFAULT 0;
+    ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS distrib_token    TEXT;
+    -- Conexão do CRM que recebeu o lead (distribuição).
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS crm_conexao_id   TEXT;
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS crm_conexao_nome TEXT;
     -- Expansão automática: acabadas as regiões, o piloto escolhe a próxima.
     ALTER TABLE estrategia_pautas ADD COLUMN IF NOT EXISTS expandir         BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE estrategia_pautas ADD COLUMN IF NOT EXISTS expandir_max     INTEGER NOT NULL DEFAULT 5;
@@ -1663,6 +1674,7 @@ app.delete('/api/buscas/:id', requireAuth, requireEditor, async (req, res) => {
 // A tela monta a linha editorial; quem executa é o worker (jobs/estrategia.js),
 // a cada ciclo do scheduler. Aqui é só leitura/gravação do plano.
 const estrategiaMotor = require('./jobs/estrategia');
+const distribuicao = require('./jobs/distribuicao');
 
 function erroEstrategia(res, e) {
   if (e instanceof estrategiaMotor.ErroEstrategia) return res.status(e.status).json({ erro: e.message });
@@ -1674,7 +1686,9 @@ async function planoEstrategia() {
   await pool.query(`INSERT INTO estrategia (ativo) VALUES (false) ON CONFLICT (tenant_id) DO NOTHING`);
   const { rows: [p] } = await pool.query(
     `SELECT ativo, simultaneos, ao_concluir, estado, estado_em,
-            crm_controle, crm_fila_gatilho, crm_fila_pendentes, crm_fila_em FROM estrategia`);
+            crm_controle, crm_fila_gatilho, crm_fila_pendentes, crm_fila_em,
+            distrib_ativo, distrib_modo, distrib_conexoes,
+            (distrib_token IS NOT NULL AND distrib_token <> '') AS distrib_tem_token FROM estrategia`);
   return p;
 }
 
@@ -1763,6 +1777,23 @@ app.patch('/api/estrategia', requireAuth, requireEditor, async (req, res) => {
       if (!(n >= 0 && n <= 100000)) return res.status(400).json({ erro: 'gatilho da fila: um número de 0 em diante' });
       vals.push(n); sets.push(`crm_fila_gatilho=$${vals.length}`);
     }
+    // Distribuição entre conexões do CRM GK.
+    if (typeof b.distrib_ativo === 'boolean') { vals.push(b.distrib_ativo); sets.push(`distrib_ativo=$${vals.length}`); }
+    if (b.distrib_modo != null) {
+      if (!distribuicao.MODOS.includes(b.distrib_modo)) return res.status(400).json({ erro: 'modo de distribuição inválido' });
+      vals.push(b.distrib_modo); sets.push(`distrib_modo=$${vals.length}`);
+    }
+    if (b.distrib_conexoes != null) {
+      const lista = distribuicao.normalizarConexoes(b.distrib_conexoes);
+      if (!lista) return res.status(400).json({ erro: 'lista de conexões inválida' });
+      vals.push(JSON.stringify(lista)); sets.push(`distrib_conexoes=$${vals.length}::jsonb`);
+    }
+    if (b.distrib_token != null) {
+      // Credencial do CRM: só o master grava (mesma regra das Integrações).
+      if (!req.user.master) return res.status(403).json({ erro: 'só o administrador master altera o Token da Empresa' });
+      const t = String(b.distrib_token).trim();
+      vals.push(t || null); sets.push(`distrib_token=$${vals.length}`);
+    }
     if (!sets.length) return res.status(400).json({ erro: 'nada para atualizar' });
     // Ligar/desligar limpa o estado: o que valia antes não diz nada do agora, e
     // a tela mostraria "rodando" de uma estratégia que acabou de ser desligada.
@@ -1776,7 +1807,54 @@ app.patch('/api/estrategia', requireAuth, requireEditor, async (req, res) => {
       await pool.query(`INSERT INTO estrategia_eventos (acao, detalhe) VALUES ('crm', $1)`,
         [`controle pela fila do CRM ${b.crm_controle ? 'ligado' : 'desligado'} por ${req.user.nome || req.user.email}`]);
     }
+    if (typeof b.distrib_ativo === 'boolean' || b.distrib_modo != null) {
+      const { rows: [e] } = await pool.query(`SELECT distrib_ativo, distrib_modo, distrib_conexoes FROM estrategia`);
+      const n = distribuicao.elegiveis(e.distrib_conexoes).length;
+      await pool.query(`INSERT INTO estrategia_eventos (acao, detalhe) VALUES ('crm', $1)`,
+        [`distribuição entre conexões ${e.distrib_ativo ? `ligada (${e.distrib_modo === 'ponderada' ? 'amostragem ponderada' : 'rodízio'}, ${n} conexão(ões))` : 'desligada'} por ${req.user.nome || req.user.email}`]);
+    }
     res.json(await planoEstrategia());
+  } catch (e) { erroEstrategia(res, e); }
+});
+
+// Conexões (números de WhatsApp) da empresa no CRM GK, com o que está marcado
+// na distribuição e quantos leads cada uma recebeu nos últimos 30 dias. Só
+// existe com o CRM GK ativo; sem ele a tela nem mostra o cartão.
+app.get('/api/estrategia/conexoes', requireAuth, async (req, res) => {
+  try {
+    const { rows: [ig] } = await pool.query(
+      `SELECT provedor, key_cifrada, config FROM integracoes
+        WHERE categoria='crm' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> ''
+        ORDER BY ordem, id LIMIT 1`);
+    if (ig?.provedor !== 'gk' || !ig.config?.backend) return res.json({ gk: false, conexoes: [] });
+    await planoEstrategia();
+    const { rows: [e] } = await pool.query(`SELECT distrib_conexoes, distrib_token FROM estrategia`);
+    const salvas = Array.isArray(e?.distrib_conexoes) ? e.distrib_conexoes : [];
+    const { rows: contagem } = await pool.query(
+      `SELECT crm_conexao_id AS id, COUNT(*)::int AS n FROM leads
+        WHERE crm_conexao_id IS NOT NULL AND enviado_crm_em >= now() - interval '30 days'
+        GROUP BY crm_conexao_id`);
+    const enviados = Object.fromEntries(contagem.map(r => [r.id, r.n]));
+    let doCrm = [], erro = null;
+    try {
+      // Token da Empresa quando existe; senão o da conexão — a doc diz que essa
+      // rota devolve todas as conexões da empresa com qualquer um dos dois.
+      doCrm = await gk.listarConexoes(ig.config.backend, e?.distrib_token || ig.key_cifrada);
+    } catch (err) { erro = err.message; }
+    // Junta o que veio do CRM com o que está salvo. Conexão marcada que sumiu do
+    // CRM continua na lista (com aviso) — senão sairia do sorteio sem ninguém ver.
+    const porId = new Map(salvas.map(c => [String(c.id), c]));
+    const conexoes = doCrm.map(c => {
+      const s = porId.get(c.id);
+      return { ...c, ativo: !!s?.ativo, peso: s?.peso || 1, enviados_30d: enviados[c.id] || 0 };
+    });
+    for (const s of salvas) {
+      if (!doCrm.some(c => c.id === String(s.id))) {
+        conexoes.push({ id: String(s.id), nome: s.nome, status: null, ativo: !!s.ativo, peso: s.peso || 1,
+                        enviados_30d: enviados[String(s.id)] || 0, sumiu: !erro });
+      }
+    }
+    res.json({ gk: true, conexoes, erro });
   } catch (e) { erroEstrategia(res, e); }
 });
 
