@@ -732,6 +732,13 @@ async function init() {
     );
     CREATE INDEX IF NOT EXISTS idx_decisoes_jev_tipo_data ON decisoes_jev(tipo, criado_em DESC);
   `);
+  // Score 1 em observação (jobs/score1.js): nota da regra, corte e nota do Jev.
+  await pool.query(`
+    ALTER TABLE decisoes_jev ADD COLUMN IF NOT EXISTS busca_id INTEGER;
+    ALTER TABLE decisoes_jev ADD COLUMN IF NOT EXISTS regra_score INTEGER;
+    ALTER TABLE decisoes_jev ADD COLUMN IF NOT EXISTS corte INTEGER;
+    ALTER TABLE decisoes_jev ADD COLUMN IF NOT EXISTS jev_score REAL;
+  `);
 
   // Nota de segurança da lista de semelhantes (jobs/avaliacao-lista.js): o Jev
   // compara cada empresa da lista com o cliente ideal de uma proposta de valor.
@@ -2720,9 +2727,45 @@ app.get('/api/decisao/relatorio', requireAuth, requireMaster, async (req, res) =
         incertos: soma(porRegra, 'jev_incerto'),
       },
       por_regra: porRegra,
+      score1: await relatorioScore1(dias),
     });
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
+
+// Score 1 em observação: o Jev (0 a 1, aderência ao cliente ideal) ao lado da
+// nota da regra, com o desfecho de cada lead criado. É isso que diz se o Jev
+// deve entrar na nota (item 2) e decidir a zona cinzenta do corte (item 3).
+async function relatorioScore1(dias) {
+  const intervalo = `criado_em > now() - ($1 || ' days')::interval`;
+  const { rows: [total] } = await pool.query(
+    `SELECT count(*)::int AS avaliacoes, count(*) FILTER (WHERE erro IS NOT NULL)::int AS erros,
+            round(avg(latencia_ms))::int AS latencia_media_ms,
+            count(*) FILTER (WHERE alvo='zona_cinza')::int AS na_zona_cinza
+     FROM decisoes_jev WHERE tipo='score1' AND ${intervalo}`, [dias]);
+  // Zona cinzenta: onde regra e Jev discordam.
+  const { rows: [zona] } = await pool.query(
+    `SELECT count(*) FILTER (WHERE regra='passou' AND jev_tipo='passaria')::int AS regra_passou_jev_passaria,
+            count(*) FILTER (WHERE regra='passou' AND jev_tipo='cortaria')::int AS regra_passou_jev_cortaria,
+            count(*) FILTER (WHERE regra='cortado' AND jev_tipo='passaria')::int AS regra_cortou_jev_passaria,
+            count(*) FILTER (WHERE regra='cortado' AND jev_tipo='cortaria')::int AS regra_cortou_jev_cortaria
+     FROM decisoes_jev WHERE tipo='score1' AND alvo='zona_cinza' AND ${intervalo}`, [dias]);
+  // Desfecho dos leads que passaram, por nível do Jev (0 sem relação … 3 bate
+  // em cheio). Se "fora do perfil" se concentra nos níveis baixos e "convertido"
+  // nos altos, o Jev separa bem e vale entrar na nota.
+  const { rows: porNivel } = await pool.query(
+    `SELECT round(d.jev_score * 3)::int AS nivel_jev,
+            count(*)::int AS leads,
+            round(avg(d.regra_score))::int AS nota_regra_media,
+            count(*) FILTER (WHERE l.status='Enviado')::int AS enviados,
+            count(*) FILTER (WHERE l.contato_status='fora_do_perfil')::int AS fora_do_perfil,
+            count(*) FILTER (WHERE EXISTS (SELECT 1 FROM sementes s WHERE s.cnpj=d.cnpj AND s.origem='crm'))::int AS convertidos
+     FROM (SELECT DISTINCT ON (busca_id, cnpj) busca_id, cnpj, jev_score, regra_score
+           FROM decisoes_jev WHERE tipo='score1' AND regra='passou' AND jev_score IS NOT NULL AND ${intervalo}
+           ORDER BY busca_id, cnpj, id DESC) d
+     LEFT JOIN leads l ON l.busca_id = d.busca_id AND l.cnpj = d.cnpj
+     GROUP BY 1 ORDER BY 1`, [dias]);
+  return { ...total, zona_cinza: zona, desfecho_por_nivel_jev: porNivel };
+}
 
 // ── API: integrações (chaves dos providers, Fase 3) ────────────────────────────
 // Cifragem real da key fica pra tela dedicada da Fase 3.1; por ora a tela de
