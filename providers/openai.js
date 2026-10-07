@@ -169,7 +169,18 @@ function montarPrompt(empresa, contexto, perfilEmpresa) {
   const motivoMatch = breakdown.length
     ? breakdown.map(b => `${b.item}${b.pts != null ? ` (+${b.pts}pts)` : ''}`).join('; ')
     : '';
-  return `Empresa a analisar:\n${linhas.join('\n')}\n` +
+  // Prova pela lista de clientes (Jev): o segmento do lead e quantos clientes
+  // atuais do vendedor estão no mesmo segmento. É prova social concreta pro
+  // closer: "empresas como a sua já compram de nós".
+  const p = perfilEmpresa?.prova;
+  const prova = p && p.clientes_no_segmento > 0
+    ? `\nProva pela carteira de clientes do vendedor: esta empresa é do segmento "${p.rotulo}", o mesmo de ` +
+      `${p.clientes_no_segmento} cliente(s) atual(is) do vendedor (${p.pct_lista}% da lista de clientes usada no radar)` +
+      (p.exemplos?.length ? `, por exemplo: ${p.exemplos.join(', ')}` : '') +
+      `. Use isso no resumo e no sinal comercial como prova social: empresas parecidas já compram.\n`
+    : (p ? `\nAtenção: esta empresa é do segmento "${p.rotulo}", que NÃO aparece entre os clientes atuais do vendedor ` +
+      `usados no radar. Diga isso no sinal comercial: é um perfil novo, a abordagem precisa explicar o encaixe.\n` : '');
+  return `Empresa a analisar:\n${linhas.join('\n')}\n` + prova +
     (motivoMatch ? `\nPor que essa empresa deu match no perfil buscado (Score ${perfilEmpresa?.score ?? '—'}/100):\n${motivoMatch}\n` : '') +
     (resumoSite ? `\nO que o site oficial da empresa diz sobre ela mesma:\n"${resumoSite}"\n` : '') +
     (ctx ? `\nContexto do que estamos vendendo / ICP:\n${ctx}\n` : '') +

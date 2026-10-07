@@ -97,6 +97,23 @@ segmento, que vira um radar Semelhantes próprio.
 Lista nova (ou reenviada) com o Jev ativo e ao menos uma proposta de valor é
 avaliada sozinha, com a primeira proposta; o usuário pode reavaliar com outra.
 
+## Prova do lead pela lista (radar Semelhantes)
+
+Num radar Semelhantes cuja lista já tem raio-X, o Score 1 em observação pede
+ao Jev também o segmento da empresa vinda da Receita, na mesma chamada. O
+código cruza com o raio-X: quantos clientes atuais do vendedor estão nesse
+segmento e quais (até 3 exemplos). Isso vai para `decisoes_jev.prova` e o
+corte não muda.
+
+O SWOT lê essa prova e a usa como prova social no briefing ("empresas como
+esta já compram de você: A, B, C"), ou avisa o closer quando o segmento não
+aparece entre os clientes (perfil novo, a abordagem precisa explicar o
+encaixe). Os nomes dos clientes vão só para a IA do próprio tenant que gera o
+briefing.
+
+O relatório ganha `score1.por_segmento`: empresas avaliadas por segmento, se o
+segmento existe na lista e o desfecho dos leads (fora do perfil, convertidos).
+
 ## Regra do state
 
 O Jev julga cada resposta **contra o `state`**. Tudo que é para ser avaliado
