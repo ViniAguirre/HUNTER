@@ -37,6 +37,7 @@ const queues = {
   swot: new Queue('hunter-swot', { connection: REDIS_OPTS }),
   crm: new Queue('hunter-crm', { connection: REDIS_OPTS }),
   tracking: new Queue('hunter-tracking', { connection: REDIS_OPTS }),
+  avaliacaoLista: new Queue('hunter-avaliacao_lista', { connection: REDIS_OPTS }),
 };
 
 const descobertaFn = require('./jobs/descoberta');
@@ -47,6 +48,7 @@ const validacaoFn = require('./jobs/validacao');
 const swotFn = require('./jobs/swot');
 const crmFn = require('./jobs/crm');
 const trackingFn = require('./jobs/tracking');
+const avaliacaoListaFn = require('./jobs/avaliacao-lista');
 const estrategia = require('./jobs/estrategia');
 
 // Preenchido só DEPOIS da trava anti-superuser passar (ver boot() no fim) —
@@ -63,6 +65,8 @@ function iniciarWorkers() {
     swot: new Worker('hunter-swot', job => swotFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 3 }),
     crm: new Worker('hunter-crm', job => crmFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 5 }),
     tracking: new Worker('hunter-tracking', job => trackingFn(job, pool), { connection: REDIS_OPTS, concurrency: 4 }),
+    // Nota de segurança da lista (Jev). Uma por vez: pode consultar a CNPJá.
+    avaliacaoLista: new Worker('hunter-avaliacao_lista', job => avaliacaoListaFn(job, pool), { connection: REDIS_OPTS, concurrency: 1 }),
   });
   for (const [nome, w] of Object.entries(workers)) {
     w.on('completed', job => console.log(`[${nome}] job ${job.id} ok`));

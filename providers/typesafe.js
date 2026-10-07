@@ -123,6 +123,101 @@ async function avaliarSites(apiKey, empresa, candidatos, opts = {}) {
   };
 }
 
+// ── Nota de segurança da lista de semelhantes ────────────────────────────────
+// Cada empresa da lista é julgada contra o cliente ideal (texto da proposta de
+// valor) numa escala de 4 níveis. A nota da lista é calculada no CÓDIGO a partir
+// dessas respostas, para ser explicável: aderência média, quem puxa o perfil
+// para fora e o tamanho da lista.
+const NIVEIS_ADERENCIA = [
+  { what: 'Unrelated: sells or does something the ideal customer description does not cover',
+    examples: ['A law firm in a list meant for auto repair shops'] },
+  { what: 'Loosely related: same broad sector, but a different kind of business from the ideal customer',
+    examples: ['A car dealership in a list meant for tire and brake repair shops'] },
+  { what: 'Related: a similar kind of business, with some differences in what it sells, its size or how it operates' },
+  { what: 'Strong match: exactly the kind of business the ideal customer description targets' },
+];
+const LOTE_LISTA = 25;   // empresas por chamada ao Jev
+
+function empresaParaJev(e) {
+  return {
+    legal_name: e.razao || null,
+    trade_name: e.fantasia || null,
+    activity: e.setor || null,
+    cnae: e.cnae || null,
+    size: e.porte || null,
+    capital_range: e.capital || null,
+    city: e.cidade || null,
+    state: e.uf || null,
+    founded: e.abertura || null,
+    website_summary: corta(e.resumo_site, 400),
+  };
+}
+
+// Devolve, na ordem das empresas: { cnpj, nivel (0..3 fracionário), norm (0..1),
+// confianca, probabilidades }. Lança erro se o Jev falhar (o job registra).
+async function avaliarAderencia(apiKey, icpTexto, empresas, opts = {}) {
+  const out = [];
+  let modelo = null, tokens = 0;
+  for (let i = 0; i < empresas.length; i += LOTE_LISTA) {
+    const lote = empresas.slice(i, i + LOTE_LISTA);
+    const questions = {};
+    lote.forEach((e, j) => {
+      questions[`fit_${j}`] = {
+        type: 'score',
+        instructions: {
+          company: empresaParaJev(e),
+          question: 'How well does `company` match the ideal customer described in `ideal_customer`?',
+        },
+        criteria: NIVEIS_ADERENCIA,
+      };
+    });
+    const data = await systemOne(apiKey, { ideal_customer: corta(icpTexto, 2000) }, questions, opts);
+    modelo = data.model || modelo;
+    tokens += data.usage?.input_tokens || 0;
+    lote.forEach((e, j) => {
+      const a = data.answers?.[`fit_${j}`] || {};
+      const nivel = typeof a.score === 'number' ? a.score : null;
+      out.push({
+        cnpj: e.cnpj,
+        nome: e.fantasia || e.razao || e.cnpj,
+        nivel,
+        norm: nivel == null ? null : nivel / (NIVEIS_ADERENCIA.length - 1),
+        confianca: a.confidence ?? null,
+        probabilidades: a.probabilities || null,
+      });
+    });
+  }
+  return { modelo, tokens, itens: out };
+}
+
+// Nota 0–100 da lista, com os componentes à mostra.
+//  - aderência: média do quanto cada empresa bate com o cliente ideal;
+//  - suspeitas: empresas abaixo de "Related" (norm < 0,5), que puxam o perfil
+//    médio para fora do cliente ideal — cada uma piora todo radar da lista;
+//  - tamanho: lista curta tem perfil frágil (mesma régua de `confiancaDe`).
+function notaDaLista(itens) {
+  const validos = itens.filter(x => x.norm != null);
+  if (!validos.length) return null;
+  const aderencia = validos.reduce((s, x) => s + x.norm, 0) / validos.length;
+  const suspeitas = validos.filter(x => x.norm < 0.5).sort((a, b) => a.norm - b.norm);
+  const n = validos.length;
+  const fatorTamanho = n < 6 ? 0.8 : n < 15 ? 0.9 : 1;
+  const nota = Math.round(aderencia * 100 * fatorTamanho);
+  return {
+    nota,
+    faixa: nota >= 75 ? 'segura' : nota >= 55 ? 'atencao' : 'arriscada',
+    aderencia_media: Math.round(aderencia * 100),
+    avaliadas: n,
+    suspeitas: suspeitas.length,
+    fator_tamanho: fatorTamanho,
+    // Quanto a nota subiria tirando as suspeitas: ajuda a decidir se vale limpar.
+    nota_sem_suspeitas: suspeitas.length && suspeitas.length < n
+      ? Math.round(validos.filter(x => x.norm >= 0.5).reduce((s, x) => s + x.norm, 0) / (n - suspeitas.length) * 100
+        * ((n - suspeitas.length) < 6 ? 0.8 : (n - suspeitas.length) < 15 ? 0.9 : 1))
+      : null,
+  };
+}
+
 // Integração ativa do tenant (RLS já filtra pelo tenant da conexão).
 async function integracao(pool) {
   const { rows: [ig] } = await pool.query(
@@ -133,4 +228,5 @@ async function integracao(pool) {
   return ig ? { apiKey: ig.key_cifrada, modelo: ig.config?.modelo || null } : null;
 }
 
-module.exports = { systemOne, avaliarSites, perguntasSite, integracao, TIPOS_PAGINA, MODELO_PADRAO };
+module.exports = { systemOne, avaliarSites, perguntasSite, integracao, TIPOS_PAGINA, MODELO_PADRAO,
+  avaliarAderencia, notaDaLista, NIVEIS_ADERENCIA };

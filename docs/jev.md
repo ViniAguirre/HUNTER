@@ -25,6 +25,33 @@ Enviados ao Jev: nome, razão, fantasia, cidade, UF, atividade e CNPJ da
 empresa, e título, identidade, resumo (até 600 caracteres), telefone e CNPJ
 impressos na página. O decisor nunca é enviado.
 
+## Nota de segurança da lista de semelhantes
+
+Na tela **Semelhantes**, cada lista ganha o botão **Avaliar com Jev**. O
+usuário escolhe a proposta de valor que descreve o cliente ideal e o worker
+(`jobs/avaliacao-lista.js`, fila `hunter-avaliacao_lista`):
+
+1. lê até 120 empresas positivas da lista (o cadastro global costuma já ter a
+   firmografia; o que faltar é consultado na CNPJá como no perfilamento);
+2. manda ao Jev, em lotes de 25, uma pergunta `score` por empresa: "quanto esta
+   empresa bate com o cliente ideal?", em 4 níveis (sem relação, pouca relação,
+   relacionada, bate em cheio);
+3. calcula no código (`typesafe.notaDaLista`) a nota 0–100: aderência média ×
+   fator de tamanho (0,8 abaixo de 6 empresas, 0,9 abaixo de 15). Faixas:
+   segura (≥ 75), atenção (≥ 55), arriscada;
+4. grava em `avaliacoes_lista` (isolada por tenant) as suspeitas (abaixo de
+   "relacionada") e a nota que a lista teria sem elas.
+
+O usuário decide o que fazer com cada suspeita. **Retirar do perfil** marca a
+semente como `excluida`: ela sai do perfil dos radares (que re-perfilam na
+próxima varredura), mas continua cliente e nunca vira lead. **Devolver ao
+perfil** desfaz. Ao criar um radar com uma lista de nota abaixo de 75, a tela
+avisa antes.
+
+Enviados ao Jev: o texto da proposta de valor e, de cada empresa, razão,
+fantasia, atividade, CNAE, porte, capital, cidade, UF, abertura e resumo do
+site (até 400 caracteres). Sem decisor nem contatos.
+
 ## Ligar por cliente
 
 Desligado por padrão. Cada cliente (tenant) liga na tela **Integrações →
