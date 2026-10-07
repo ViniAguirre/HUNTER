@@ -103,7 +103,16 @@ function buildLeadsFilter(query) {
   if (q && q.trim()) {
     vals.push(`%${q.trim()}%`);
     const n = vals.length;
-    conditions.push(`(l.fantasia ILIKE $${n} OR l.decisor ILIKE $${n} OR l.razao ILIKE $${n})`);
+    // Também pelo identificador que vai pro CRM (hunter_ref, "hnt_…"): é o que
+    // o CRM mostra no log, e colar ele aqui acha o lead na hora. E pelo CNPJ,
+    // com ou sem pontuação, quando a busca tem dígitos suficientes.
+    const conds = [`l.fantasia ILIKE $${n}`, `l.decisor ILIKE $${n}`, `l.razao ILIKE $${n}`, `l.crm_ref ILIKE $${n}`];
+    const digitos = q.replace(/\D/g, '');
+    if (digitos.length >= 5 && /^[\d\s./-]+$/.test(q.trim())) {
+      vals.push(`%${digitos}%`);
+      conds.push(`regexp_replace(COALESCE(l.cnpj,''), '\\D', '', 'g') LIKE $${vals.length}`);
+    }
+    conditions.push(`(${conds.join(' OR ')})`);
   }
   // "Enviado" aceita sub-filtro: 'Enviado:crm' (o motor entregou ao CRM) ou
   // 'Enviado:manual' (o usuário marcou à mão). Sem sufixo, traz os dois.

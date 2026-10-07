@@ -3030,7 +3030,7 @@ function Leads({
   })), /*#__PURE__*/React.createElement("input", {
     value: q,
     onChange: handleQ,
-    placeholder: "Buscar empresa, decisor\u2026",
+    placeholder: "Empresa, decisor, CNPJ ou ID do CRM\u2026",
     style: {
       width: '100%',
       height: 38,
@@ -12992,6 +12992,69 @@ function Monitor() {
 }
 
 // ── Lead Detail Slideover ─────────────────────────────────────────────────────
+// Identificador do lead no CRM (o hunter_ref que vai em todo envio). É por ele
+// que o lead é achado lá — nome muda, decisor muda, o ref não.
+function RefCrm({
+  valor
+}) {
+  const [copiado, setCopiado] = useState(false);
+  if (!valor) return null;
+  const copiar = async () => {
+    try {
+      await navigator.clipboard.writeText(valor);
+    } catch (_) {
+      const t = document.createElement('textarea');
+      t.value = valor;
+      document.body.appendChild(t);
+      t.select();
+      try {
+        document.execCommand('copy');
+      } catch (__) {}
+      document.body.removeChild(t);
+    }
+    setCopiado(true);
+    setTimeout(() => setCopiado(false), 1500);
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 7,
+      marginTop: 6,
+      flexWrap: 'wrap'
+    },
+    title: "C\xF3digo que vai em todo envio ao CRM (hunter_ref). Procure por ele no CRM para achar este lead."
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--faint)'
+    }
+  }, "ID no CRM:"), /*#__PURE__*/React.createElement("code", {
+    style: {
+      fontSize: 11.5,
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+      color: 'var(--dim)',
+      background: 'var(--panel2)',
+      border: '1px solid var(--border)',
+      borderRadius: 6,
+      padding: '1px 6px',
+      userSelect: 'all'
+    }
+  }, valor), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: copiar,
+    "aria-label": "Copiar o ID no CRM",
+    style: {
+      background: 'none',
+      border: 'none',
+      padding: 0,
+      color: copiado ? C.green : C.gold,
+      fontSize: 11.5,
+      cursor: 'pointer',
+      fontFamily: 'inherit'
+    }
+  }, copiado ? 'copiado' : 'copiar'));
+}
 function LeadDetailPanel({
   leadId,
   onClose,
@@ -13398,7 +13461,9 @@ function LeadDetailPanel({
       color: 'var(--dim)',
       margin: '3px 0 0'
     }
-  }, l.razao)), /*#__PURE__*/React.createElement(ScoreRing, {
+  }, l.razao), /*#__PURE__*/React.createElement(RefCrm, {
+    valor: l.crm_ref
+  })), /*#__PURE__*/React.createElement(ScoreRing, {
     score: l.score,
     size: 84
   }), /*#__PURE__*/React.createElement("button", {
