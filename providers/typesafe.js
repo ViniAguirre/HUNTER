@@ -139,6 +139,18 @@ const NIVEIS_ADERENCIA = [
   { what: 'Ideal buyer: exactly the kind of business the offer is built for',
     examples: ['A restaurant for an offer of commercial kitchen equipment'] },
 ];
+// Lista de semelhantes: as empresas JÁ COMPRARAM (é regra da lista). A pergunta
+// não é "compraria?" (já comprou), é "é um bom MODELO?": achar mais empresas
+// parecidas com ela traria mais compradores? Uma livraria que comprou
+// purificador de uma fabricante é cliente de verdade, mas como modelo leva o
+// radar a procurar livrarias.
+const NIVEIS_REPRESENTATIVO = [
+  { what: 'Atypical customer: bought, but its business is unrelated to the ideal customer profile; businesses similar to it are unlikely to buy',
+    examples: ['A bookstore that bought from a manufacturer whose ideal customers are specialized resellers'] },
+  { what: 'Occasional customer: related to the profile only at the edges; businesses similar to it buy only sometimes' },
+  { what: 'Representative customer: a typical kind of business for this seller; similar businesses often buy' },
+  { what: 'Core customer: exactly the ideal customer profile; similar businesses are the best prospects' },
+];
 const LOTE_LISTA = 8;    // chamadas ao Jev em paralelo (uma por empresa)
 
 function empresaParaJev(e) {
@@ -146,6 +158,9 @@ function empresaParaJev(e) {
     legal_name: e.razao || null,
     trade_name: e.fantasia || null,
     activity: e.setor || null,
+    // O nome costuma dizer o negócio real melhor que o código da Receita:
+    // "HDR PURIFICADORES DE AGUA" registrada como loja de eletrodomésticos.
+    note: 'The official activity code is often generic or outdated; the legal and trade names may reveal the real business better.',
     cnae: e.cnae || null,
     size: e.porte || null,
     capital_range: e.capital || null,
@@ -165,11 +180,16 @@ async function avaliarAderencia(apiKey, icpTexto, empresas, opts = {}) {
   // "comprador improvável" para quase todas (Planeta Água: nota 19, 109 de 119
   // suspeitas). Como o state é um só por chamada, vai uma empresa por chamada,
   // LOTE_LISTA em paralelo.
+  // opts.modo 'cliente': empresas da lista de semelhantes (já compraram) —
+  // julga se é um bom modelo. Padrão: prospect (Score 1) — julga se compraria.
+  const cliente = opts.modo === 'cliente';
   const contexto = {
     // A proposta de valor descreve o que o CLIENTE DO HUNTER vende, não quem
     // compra: a empresa é julgada como compradora, não como parecida.
     offer: { seller_value_proposition: corta(icpTexto, 2000),
-      note: 'What the seller sells; it may mention who it targets. Judge `company` as a potential BUYER, not as a competitor or a similar seller.' },
+      note: cliente
+        ? 'What the seller sells. `company` is a CONFIRMED customer that already bought from this seller.'
+        : 'What the seller sells; it may mention who it targets. Judge `company` as a potential BUYER, not as a competitor or a similar seller.' },
     // Fichamento comercial (tela Agente SWOT): o próprio vendedor dizendo quem
     // compra, que dor resolve e o que desqualifica. Pesa mais que a oferta.
     ...(opts.perfil ? { buyer_profile: { ...opts.perfil,
@@ -178,8 +198,10 @@ async function avaliarAderencia(apiKey, icpTexto, empresas, opts = {}) {
   const questions = {
     fit: {
       type: 'score',
-      instructions: 'How likely is the business in `company` to buy what the seller offers in `offer`?',
-      criteria: NIVEIS_ADERENCIA,
+      instructions: cliente
+        ? 'This confirmed customer in `company` will be used as a model to find more prospects. How well does it represent the ideal customer of the seller in `offer`?'
+        : 'How likely is the business in `company` to buy what the seller offers in `offer`?',
+      criteria: cliente ? NIVEIS_REPRESENTATIVO : NIVEIS_ADERENCIA,
     },
   };
   const out = new Array(empresas.length);
@@ -258,9 +280,9 @@ async function perfilComprador(pool) {
   const { rows: [c] } = await pool.query(`SELECT swot_perfil FROM config LIMIT 1`).catch(() => ({ rows: [] }));
   const f = c?.swot_perfil || {};
   const perfil = {
-    ideal_customer: corta(f.icp, 800),
-    pains_solved: corta(f.dores, 600),
-    disqualifiers: corta(f.desqualificadores, 600),
+    ideal_customer: corta(f.icp, 1200),
+    pains_solved: corta(f.dores, 800),
+    disqualifiers: corta(f.desqualificadores, 800),
   };
   for (const k of Object.keys(perfil)) if (!perfil[k]) delete perfil[k];
   return Object.keys(perfil).length ? perfil : null;
@@ -277,4 +299,4 @@ async function integracao(pool) {
 }
 
 module.exports = { systemOne, avaliarSites, perguntasSite, integracao, TIPOS_PAGINA, MODELO_PADRAO,
-  avaliarAderencia, avaliarEmpresa, notaDaLista, resumoSite, perfilComprador, NIVEIS_ADERENCIA };
+  avaliarAderencia, avaliarEmpresa, notaDaLista, resumoSite, perfilComprador, NIVEIS_ADERENCIA, NIVEIS_REPRESENTATIVO };

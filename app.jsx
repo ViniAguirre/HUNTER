@@ -2543,15 +2543,22 @@ function NotaJevLista({ l, propostas, onMudou }) {
                 <>
                   <div style={{ marginTop:6 }}>
                     {res.suspeitas_lista.length} suspeita{res.suspeitas_lista.length === 1 ? '' : 's'}: empresas que o Jev
-                    considera compradoras improváveis ou atípicas da sua oferta e que puxam o perfil da lista para fora.
+                    considera clientes atípicos: compraram, mas não se parecem com o seu cliente ideal. Como modelo, levam o radar a procurar empresas parecidas com elas.
                     {res.nota_sem_suspeitas != null && <> Sem elas a nota iria para <b>{res.nota_sem_suspeitas}</b>.</>}
                     {' '}Retirar só tira a empresa do perfil; ela continua sendo cliente e nunca vira lead.
+                    {res.suspeitas_lista.length > res.avaliadas / 2 && (
+                      <div style={{ marginTop:6, color:'var(--text)' }}>
+                        Mais da metade da lista não se parece com o cliente ideal do seu fichamento. Ou o fichamento
+                        está mais estreito que a sua clientela real (revise o "Cliente ideal" em <b>Agente SWOT</b>), ou a
+                        lista mistura perfis diferentes e rende mais separada por segmento.
+                      </div>
+                    )}
                   </div>
                   <div style={{ display:'flex', flexDirection:'column', gap:5, marginTop:7 }}>
                     {res.suspeitas_lista.map(x => (
                       <div key={x.cnpj} style={{ display:'flex', gap:8, alignItems:'center', opacity: x.removida ? 0.55 : 1 }}>
                         <span style={{ flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-                          {x.nome} <span style={{ color:'var(--faint)' }}>· {x.norm < 0.25 ? 'comprador improvável' : 'comprador possível, não típico'}</span>
+                          {x.nome} <span style={{ color:'var(--faint)' }}>· {x.norm < 0.25 ? 'cliente atípico' : 'cliente ocasional'}</span>
                         </span>
                         <button type="button" style={btn} onClick={() => alternar(x)}>
                           {x.removida ? 'Devolver ao perfil' : 'Retirar do perfil'}</button>
@@ -2559,7 +2566,7 @@ function NotaJevLista({ l, propostas, onMudou }) {
                     ))}
                   </div>
                 </>
-              ) : <div style={{ marginTop:6 }}>Nenhuma suspeita: todas as empresas avaliadas são compradoras típicas da sua oferta.</div>}
+              ) : <div style={{ marginTop:6 }}>Nenhuma suspeita: todas as empresas avaliadas representam bem o seu cliente ideal.</div>}
             </div>
           )}
         </div>
@@ -4525,8 +4532,8 @@ function NovaBusca({ onSalvar, inicial, modoPauta = false, pautaId = null, onCan
                             border:`1px solid ${l.jev_faixa === 'arriscada' ? '#F87171' : '#F59E0B'}`,
                             color:'var(--text)' }}>
                             Atenção: a nota de segurança do Jev para esta lista é <b>{l.jev_nota}</b>
-                            {l.jev_faixa === 'arriscada' ? ' (arriscada)' : ' (atenção)'}. Há empresas na lista que dificilmente
-                            comprariam a sua oferta, e o radar vai procurar semelhantes a elas também. Revise as suspeitas no menu <b>Semelhantes</b> antes de criar o radar.
+                            {l.jev_faixa === 'arriscada' ? ' (arriscada)' : ' (atenção)'}. Há na lista clientes atípicos, que não
+                            representam o seu cliente ideal, e o radar vai procurar semelhantes a eles também. Revise as suspeitas no menu <b>Semelhantes</b> antes de criar o radar.
                           </div>
                         )}
                       </div>
