@@ -60,7 +60,10 @@ module.exports = async function crm(job, pool, queues) {
     const token = ig.key_cifrada;
     // Fila do RADAR tem prioridade sobre a fila padrão da integração — permite
     // mandar cada radar pra uma fila diferente do CRM.
-    const queueId = lead.busca_queue_id || ig.config?.queueId;
+    // (Com a distribuição entre conexões, a fila da conexão sorteada passa na
+    // frente das duas — ver abaixo.)
+    let queueId = lead.busca_queue_id || ig.config?.queueId;
+    let origemFila = lead.busca_queue_id ? 'radar' : 'padrao';
     // companyId é OPCIONAL: token com escopo de uma única empresa não lista
     // /companies/all, e o próprio CRM já vincula o contato à empresa do token.
     // Exigir aqui travava o envio de quem usa token escopado.
@@ -96,6 +99,9 @@ module.exports = async function crm(job, pool, queues) {
       const esc = await distribuicao.escolher(pool, dcfg, lead);
       conexao = esc.conexao;
       auth = gk.comConexao(dcfg.token, conexao.id);
+      // Fila escolhida pra esta conexão na Estratégia. Sem ela, fica a do
+      // radar (ou a padrão), como sempre.
+      if (conexao.fila) { queueId = conexao.fila; origemFila = 'conexao'; }
       // Grava antes de enviar: se algo falhar, a retentativa cai na mesma
       // conexão em vez de gastar a vez de outra no rodízio.
       if (!esc.reuso) {
@@ -122,6 +128,7 @@ module.exports = async function crm(job, pool, queues) {
       nota = true;
     }
     resultadoGk = { contactId, ticketId: tk.ticketId, fila_aplicada: tk.filaAplicada, nota_briefing: nota,
+                    fila: { id: String(queueId), origem: origemFila },
                     ...(conexao ? { conexao: { id: conexao.id, nome: conexao.nome } } : {}),
                     ...(distribMotivo ? { distribuicao: distribMotivo } : {}),
                     ...(tk.motivo ? { motivo: tk.motivo } : {}) };

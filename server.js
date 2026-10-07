@@ -1846,11 +1846,11 @@ app.get('/api/estrategia/conexoes', requireAuth, async (req, res) => {
     const porId = new Map(salvas.map(c => [String(c.id), c]));
     const conexoes = doCrm.map(c => {
       const s = porId.get(c.id);
-      return { ...c, ativo: !!s?.ativo, peso: s?.peso || 1, enviados_30d: enviados[c.id] || 0 };
+      return { ...c, ativo: !!s?.ativo, peso: s?.peso || 1, fila: s?.fila || null, enviados_30d: enviados[c.id] || 0 };
     });
     for (const s of salvas) {
       if (!doCrm.some(c => c.id === String(s.id))) {
-        conexoes.push({ id: String(s.id), nome: s.nome, status: null, ativo: !!s.ativo, peso: s.peso || 1,
+        conexoes.push({ id: String(s.id), nome: s.nome, status: null, ativo: !!s.ativo, peso: s.peso || 1, fila: s.fila || null,
                         enviados_30d: enviados[String(s.id)] || 0, sumiu: !erro });
       }
     }

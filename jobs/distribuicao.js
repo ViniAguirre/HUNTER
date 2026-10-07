@@ -11,6 +11,9 @@
  *   - ponderada: sorteio em que a chance de cada conexão é o peso dela dividido
  *                pela soma dos pesos (peso 3 e peso 1 → ~75% / ~25%).
  *
+ * Cada conexão pode ter a própria fila (Setor) no CRM. A fila do lead segue,
+ * nesta ordem: a da conexão sorteada → a do radar → a padrão de Integrações.
+ *
  * O lead guarda a conexão escolhida: retentativa e reenvio reusam a mesma, sem
  * gastar a vez de outra conexão no rodízio.
  */
@@ -30,8 +33,11 @@ function normalizarConexoes(lista) {
     if (!id || vistos.has(id)) continue;
     vistos.add(id);
     const p = parseInt(c.peso, 10);
+    // Fila (Setor) do CRM onde os leads desta conexão caem. Vazia = vale a fila
+    // do radar (e, sem ela, a padrão de Integrações).
+    const fila = c.fila != null && String(c.fila).trim() !== '' ? String(c.fila).trim().slice(0, 40) : null;
     out.push({ id, nome: String(c.nome || `Conexão ${id}`).slice(0, 120), ativo: c.ativo === true,
-               peso: Number.isFinite(p) ? Math.min(PESO_MAX, Math.max(1, p)) : 1 });
+               peso: Number.isFinite(p) ? Math.min(PESO_MAX, Math.max(1, p)) : 1, fila });
   }
   return out;
 }

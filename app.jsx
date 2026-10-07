@@ -3277,6 +3277,11 @@ function DistribuicaoCrm({ plano, user, salvando, onSalvar }) {
   const [carregando, setCarregando] = useState(true);
   const [token, setToken] = useState('');
   const [editandoToken, setEditandoToken] = useState(false);
+  const [filas, setFilas] = useState([]);   // Setores do CRM, pra fila de cada conexão
+  useEffect(() => {
+    fetch('/api/crm/filas', { credentials:'same-origin' }).then(r => r.ok ? r.json() : { filas: [] })
+      .then(x => setFilas(Array.isArray(x.filas) ? x.filas : [])).catch(() => {});
+  }, []);
 
   const carregar = () => {
     setCarregando(true);
@@ -3297,7 +3302,7 @@ function DistribuicaoCrm({ plano, user, salvando, onSalvar }) {
   const somaPesos = marcadas.reduce((t, c) => t + (c.peso || 1), 0);
   const salvarLista = (nova) => {
     setDados(d => ({ ...d, conexoes: nova }));   // otimista: a tela responde na hora
-    onSalvar({ distrib_conexoes: nova.map(({ id, nome, ativo, peso }) => ({ id, nome, ativo, peso })) });
+    onSalvar({ distrib_conexoes: nova.map(({ id, nome, ativo, peso, fila }) => ({ id, nome, ativo, peso, fila })) });
   };
   const alterar = (id, campos) => salvarLista(conexoes.map(c => c.id === id ? { ...c, ...campos } : c));
   const salvarToken = async () => { await onSalvar({ distrib_token: token }); setToken(''); setEditandoToken(false); };
@@ -3321,6 +3326,7 @@ function DistribuicaoCrm({ plano, user, salvando, onSalvar }) {
           <div style={{ fontSize:12.5, color:'var(--dim)', lineHeight:1.5 }}>
             Cada lead enviado ao CRM abre o atendimento em uma das conexões (números de WhatsApp) marcadas abaixo.
             O lead fica com a conexão sorteada: se o envio precisar ser repetido, vai para a mesma.
+            Cada conexão pode ter a própria fila; sem fila escolhida aqui, vale a fila do radar.
           </div>
         </div>
         <Interruptor ligado={plano.distrib_ativo} disabled={salvando} rotulo="Ligar distribuição entre conexões"
@@ -3375,6 +3381,20 @@ function DistribuicaoCrm({ plano, user, salvando, onSalvar }) {
                   <span>· {c.enviados_30d} lead(s) em 30 dias</span>
                 </div>
               </div>
+              {c.ativo && filas.length > 0 && (
+                <label style={{ display:'flex', alignItems:'center', gap:6, fontSize:12, color:'var(--dim)' }}>
+                  Fila
+                  <select value={c.fila || ''} disabled={salvando} aria-label={`Fila dos leads da conexão ${c.nome}`}
+                    onChange={e => alterar(c.id, { fila: e.target.value || null })}
+                    style={{ ...inputSt, maxWidth:190, cursor:'pointer' }}>
+                    <option value="">A do radar</option>
+                    {filas.map(f => <option key={f.id} value={String(f.id)}>{f.queue}</option>)}
+                    {c.fila && !filas.some(f => String(f.id) === String(c.fila)) && (
+                      <option value={c.fila}>Fila {c.fila} (não existe mais)</option>
+                    )}
+                  </select>
+                </label>
+              )}
               {ponderada && c.ativo && (
                 <label style={{ display:'flex', alignItems:'center', gap:6, fontSize:12, color:'var(--dim)' }}>
                   Peso
