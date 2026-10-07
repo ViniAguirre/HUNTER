@@ -59,9 +59,14 @@ module.exports = async function swot(job, pool, queues) {
   }
 
   if (igs.length) {
-    const [{ rows: [empresa] }, { rows: [lead] }] = await Promise.all([
+    const [{ rows: [empresa] }, { rows: [lead] }, { rows: [jev] }] = await Promise.all([
       pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [cnpj]),
       pool.query(`SELECT contato_validado, score, breakdown FROM leads WHERE id=$1`, [lead_id]),
+      // Prova pela lista de semelhantes (Jev, jobs/score1.js): segmento do lead e
+      // clientes atuais do vendedor no mesmo segmento. Só existe em radar
+      // Semelhantes com o Jev ativo e raio-X pronto.
+      pool.query(`SELECT prova FROM decisoes_jev WHERE tipo='score1' AND busca_id=$1 AND cnpj=$2
+                  AND prova IS NOT NULL ORDER BY id DESC LIMIT 1`, [busca_id, cnpj]).catch(() => ({ rows: [] })),
     ]);
     if (empresa) {
       const crit = busca?.criterios || {};
@@ -73,6 +78,7 @@ module.exports = async function swot(job, pool, queues) {
       const perfilEmpresa = {
         resumoSite: cv.resumo_site || null, siteValidado: !!cv.validado, fonteContato: cv.fonte || null,
         score: lead?.score ?? null, breakdown: Array.isArray(lead?.breakdown) ? lead.breakdown : [],
+        prova: jev?.prova || null,
       };
       let briefing = null, ultimoErro = null;
       for (const ig of igs) {

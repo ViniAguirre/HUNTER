@@ -50,27 +50,62 @@ async function integracaoJev(pool) {
   return ig;
 }
 
-async function observarScore(pool, { empresa, busca_id, criterios, score, corte, passou }) {
+// Raio-X da última avaliação da lista do radar (segmentos dos clientes), em
+// cache por 5 min: muitas empresas do mesmo radar passam aqui em sequência.
+const _raioXCache = new Map();
+async function raioXDaLista(pool, lista) {
+  if (!lista) return null;
+  const c = _raioXCache.get(lista);
+  if (c && Date.now() - c.em < 300_000) return c.rx;
+  const { rows: [r] } = await pool.query(
+    `SELECT resultado->'raio_x' AS rx FROM avaliacoes_lista
+     WHERE lista=$1 AND status='pronta' AND resultado ? 'raio_x' ORDER BY id DESC LIMIT 1`, [lista]).catch(() => ({ rows: [] }));
+  const rx = Array.isArray(r?.rx) && r.rx.length ? r.rx : null;
+  _raioXCache.set(lista, { em: Date.now(), rx });
+  return rx;
+}
+
+// "Prova" do lead contra a lista: em que segmento ele cai e quantos clientes
+// atuais do vendedor estão nesse mesmo segmento. Vai para o SWOT como prova
+// social ("empresas como esta já compram de você: A, B, C").
+function provaPelaLista(segmento, rx) {
+  if (!segmento || !rx) return null;
+  const g = rx.find(x => x.segmento === segmento);
+  return {
+    segmento,
+    rotulo: g?.rotulo || typesafe.ROTULOS_SEGMENTO[segmento] || segmento,
+    pct_lista: g ? g.pct : 0,
+    clientes_no_segmento: g ? g.n : 0,
+    aderencia_segmento: g?.aderencia_media ?? null,
+    exemplos: g ? g.exemplos.slice(0, 3) : [],
+  };
+}
+
+async function observarScore(pool, { empresa, busca_id, criterios, score, corte, passou, lista }) {
   const icp = criterios?.proposta_valor || criterios?.params?.proposta_valor;
   if (!icp || !String(icp).trim()) return;
   if (!passou && score < corte - ZONA_CINZA) return;
   const jev = await integracaoJev(pool);
   if (!jev) return;
+  // Radar Semelhantes com raio-X pronto: pede também o segmento da empresa.
+  const rx = await raioXDaLista(pool, lista);
   let r = null, erro = null;
   try {
     r = await typesafe.avaliarEmpresa(jev.apiKey, icp,
       { ...empresa, resumo_site: typesafe.resumoSite(empresa.contatos_verificados) },
-      { modelo: jev.modelo, timeout: 10000, perfil: jev.perfil });
+      { modelo: jev.modelo, timeout: 10000, perfil: jev.perfil, segmentar: !!rx });
   } catch (e) { erro = String(e.message || e).slice(0, 300); }
+  const prova = provaPelaLista(r?.segmento, rx);
   const naZona = Math.abs(score - corte) <= ZONA_CINZA;
   const veredito = naZona && r?.norm != null ? (r.norm >= JEV_PASSARIA ? 'passaria' : 'cortaria') : null;
   await pool.query(
     `INSERT INTO decisoes_jev (tipo, cnpj, alvo, regra, busca_id, regra_score, corte, jev_score, jev_tipo,
-       jev_confianca, jev_probabilidades, modelo, latencia_ms, erro)
-     VALUES ('score1',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+       jev_confianca, jev_probabilidades, modelo, latencia_ms, erro, segmento, prova)
+     VALUES ('score1',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
     [empresa.cnpj, naZona ? 'zona_cinza' : 'acima', passou ? 'passou' : 'cortado', busca_id, score, corte,
      r?.norm ?? null, veredito, r?.confianca ?? null,
-     r?.probabilidades ? JSON.stringify(r.probabilidades) : null, r?.modelo ?? null, r?.latencia_ms ?? null, erro]);
+     r?.probabilidades ? JSON.stringify(r.probabilidades) : null, r?.modelo ?? null, r?.latencia_ms ?? null, erro,
+     r?.segmento ?? null, prova ? JSON.stringify(prova) : null]);
 }
 
 module.exports = async function score1(job, pool, queues) {
@@ -78,7 +113,7 @@ module.exports = async function score1(job, pool, queues) {
 
   const [empresaRes, buscaRes] = await Promise.all([
     pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [cnpj]),
-    pool.query(`SELECT tipo, criterios, corte_score FROM buscas WHERE id=$1`, [busca_id]),
+    pool.query(`SELECT tipo, criterios, corte_score, lista FROM buscas WHERE id=$1`, [busca_id]),
   ]);
   const empresa = empresaRes.rows[0];
   const busca = buscaRes.rows[0];
@@ -103,7 +138,8 @@ module.exports = async function score1(job, pool, queues) {
 
   // Observação do Jev em paralelo: não atrasa nem muda a decisão do corte.
   if (!importacao) {
-    observarScore(pool, { empresa, busca_id, criterios: busca.criterios, score, corte, passou })
+    observarScore(pool, { empresa, busca_id, criterios: busca.criterios, score, corte, passou,
+      lista: busca.tipo === 'lookalike' ? busca.lista : null })
       .catch(e => console.error('[jev] score1:', e.message));
   }
 
@@ -283,3 +319,5 @@ function computeScore1(emp, params) {
 
   return { score: Math.min(100, score), breakdown };
 }
+
+module.exports.provaPelaLista = provaPelaLista;

@@ -738,6 +738,8 @@ async function init() {
     ALTER TABLE decisoes_jev ADD COLUMN IF NOT EXISTS regra_score INTEGER;
     ALTER TABLE decisoes_jev ADD COLUMN IF NOT EXISTS corte INTEGER;
     ALTER TABLE decisoes_jev ADD COLUMN IF NOT EXISTS jev_score REAL;
+    ALTER TABLE decisoes_jev ADD COLUMN IF NOT EXISTS segmento TEXT;
+    ALTER TABLE decisoes_jev ADD COLUMN IF NOT EXISTS prova JSONB;
   `);
 
   // Nota de segurança da lista de semelhantes (jobs/avaliacao-lista.js): o Jev
@@ -2764,7 +2766,22 @@ async function relatorioScore1(dias) {
            ORDER BY busca_id, cnpj, id DESC) d
      LEFT JOIN leads l ON l.busca_id = d.busca_id AND l.cnpj = d.cnpj
      GROUP BY 1 ORDER BY 1`, [dias]);
-  return { ...total, zona_cinza: zona, desfecho_por_nivel_jev: porNivel };
+  // Radar Semelhantes: segmento de cada empresa avaliada e se ele existe entre
+  // os clientes da lista ("prova"), com o desfecho dos leads. Diz se os leads de
+  // segmentos que já compram convertem mais que os de segmentos novos.
+  const { rows: porSegmento } = await pool.query(
+    `SELECT d.segmento,
+            count(*)::int AS avaliadas,
+            bool_or((d.prova->>'clientes_no_segmento')::int > 0) AS segmento_na_lista,
+            count(l.id)::int AS leads,
+            count(*) FILTER (WHERE l.contato_status='fora_do_perfil')::int AS fora_do_perfil,
+            count(*) FILTER (WHERE EXISTS (SELECT 1 FROM sementes s WHERE s.cnpj=d.cnpj AND s.origem='crm'))::int AS convertidos
+     FROM (SELECT DISTINCT ON (busca_id, cnpj) busca_id, cnpj, segmento, prova
+           FROM decisoes_jev WHERE tipo='score1' AND segmento IS NOT NULL AND ${intervalo}
+           ORDER BY busca_id, cnpj, id DESC) d
+     LEFT JOIN leads l ON l.busca_id = d.busca_id AND l.cnpj = d.cnpj
+     GROUP BY d.segmento ORDER BY avaliadas DESC`, [dias]);
+  return { ...total, zona_cinza: zona, desfecho_por_nivel_jev: porNivel, por_segmento: porSegmento };
 }
 
 // ── API: integrações (chaves dos providers, Fase 3) ────────────────────────────
