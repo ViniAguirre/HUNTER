@@ -3344,7 +3344,8 @@ app.post('/api/listas', requireAuth, requireEditor, async (req, res) => {
       `SELECT COUNT(*)::int n FROM sementes WHERE lista=$1`, [nome]);
     // Se alguma dessas empresas já tinha virado lead, ela sai da esteira agora.
     const retirados = await retirarClientesDaEsteira(cnpjs);
-    res.status(201).json({ nome, rotulo: nome, n, enviados: cnpjs.length, retirados });
+    const avaliacao = await avaliarListaNova(nome);
+    res.status(201).json({ nome, rotulo: nome, n, enviados: cnpjs.length, retirados, avaliando: !!avaliacao });
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
@@ -3383,6 +3384,33 @@ app.get('/api/decisao/ativo', requireAuth, async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
+async function enfileirarAvaliacaoLista(nome, propostaId, rotulo, texto) {
+  const { rows: [av] } = await pool.query(
+    `INSERT INTO avaliacoes_lista (lista, proposta_id, proposta_rotulo, icp_texto)
+     VALUES ($1,$2,$3,$4) RETURNING id, status, criado_em`, [nome, propostaId, rotulo, texto]);
+  await monitorQueues.avaliacaoLista.add('avaliacao_lista', { avaliacao_id: av.id }, {
+    jobId: `avaliacao-lista-${av.id}`, attempts: 1,
+    removeOnComplete: { count: 100 }, removeOnFail: { count: 50 },
+  });
+  return av;
+}
+
+// Lista nova (ou reenviada) com o Jev ativo: avalia sozinha, com a primeira
+// proposta de valor, para o raio-X já estar pronto quando o usuário abrir.
+// Falha aqui nunca derruba a criação da lista.
+async function avaliarListaNova(nome) {
+  try {
+    if (!monitorQueues?.avaliacaoLista) return null;
+    const { rows: [ig] } = await pool.query(
+      `SELECT 1 FROM integracoes WHERE categoria='decisao' AND provedor='typesafe' AND ativo=true
+         AND key_cifrada IS NOT NULL AND key_cifrada <> '' LIMIT 1`);
+    if (!ig) return null;
+    const { rows: [p] } = await pool.query(`SELECT id, rotulo, texto FROM propostas_valor ORDER BY criado_em LIMIT 1`);
+    if (!p) return null;
+    return await enfileirarAvaliacaoLista(nome, p.id, p.rotulo, p.texto);
+  } catch (e) { console.error('[jev] avaliar lista nova:', e.message); return null; }
+}
+
 app.post('/api/listas/:nome/avaliar', requireAuth, requireEditor, async (req, res) => {
   const nome = String(req.params.nome || '');
   try {
@@ -3410,14 +3438,7 @@ app.post('/api/listas/:nome/avaliar', requireAuth, requireEditor, async (req, re
          AND criado_em > now() - interval '30 minutes' LIMIT 1`, [nome]);
     if (andamento) return res.status(409).json({ erro: 'avaliação em andamento', id: andamento.id });
 
-    const { rows: [av] } = await pool.query(
-      `INSERT INTO avaliacoes_lista (lista, proposta_id, proposta_rotulo, icp_texto)
-       VALUES ($1,$2,$3,$4) RETURNING id, status, criado_em`, [nome, propostaId, rotulo, texto]);
-    await monitorQueues.avaliacaoLista.add('avaliacao_lista', { avaliacao_id: av.id }, {
-      jobId: `avaliacao-lista-${av.id}`, attempts: 1,
-      removeOnComplete: { count: 100 }, removeOnFail: { count: 50 },
-    });
-    res.status(202).json(av);
+    res.status(202).json(await enfileirarAvaliacaoLista(nome, propostaId, rotulo, texto));
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 

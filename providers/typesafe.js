@@ -151,6 +151,32 @@ const NIVEIS_REPRESENTATIVO = [
   { what: 'Representative customer: a typical kind of business for this seller; similar businesses often buy' },
   { what: 'Core customer: exactly the ideal customer profile; similar businesses are the best prospects' },
 ];
+// Raio-X da lista: segmento de negócio de cada cliente. Taxonomia fixa e
+// genérica (serve para qualquer tenant), com o primeiro segmento relativo à
+// oferta: "já trabalha com o que o vendedor vende". O nome da empresa entra
+// como pista (o código da Receita costuma ser genérico).
+const SEGMENTOS = {
+  especializado: { what: 'Specialized in the same product category the seller offers in `offer`: sells, resells, installs or services that kind of product',
+    examples: ['A water purifier store for a seller of water purifiers'] },
+  construcao_hidraulica: { what: 'Building materials, hardware, plumbing, hydraulic or electrical supplies store or distributor' },
+  eletro_eletronicos: { what: 'Home appliances, electronics, computers or phone store, or their repair' },
+  alimentacao: { what: 'Supermarket, grocery, bakery, restaurant, bar, food or beverage business' },
+  varejo_outro: { what: 'Other retail store: clothing, books, stationery, gifts, furniture, variety, pet, cosmetics' },
+  atacado: { what: 'Wholesaler, distributor or importer of general goods not covered above' },
+  servicos_tecnicos: { what: 'Technical services: installation, maintenance, cleaning, equipment rental, facilities' },
+  saude_bem_estar: { what: 'Health and wellness: clinic, dentist, pharmacy, gym, beauty salon' },
+  servicos_profissionais: { what: 'Office-based professional services: law, accounting, consulting, real estate, education, marketing' },
+  hospedagem_eventos: { what: 'Hotels, events, parties, tourism, leisure' },
+  industria: { what: 'Manufacturing or industrial company' },
+  outro: { what: 'None of the above' },
+};
+const ROTULOS_SEGMENTO = {
+  especializado: 'Especializado no seu produto', construcao_hidraulica: 'Material de construção / hidráulico',
+  eletro_eletronicos: 'Eletrodomésticos / eletrônicos', alimentacao: 'Alimentação', varejo_outro: 'Outro varejo',
+  atacado: 'Atacado / distribuição', servicos_tecnicos: 'Serviços técnicos', saude_bem_estar: 'Saúde e bem-estar',
+  servicos_profissionais: 'Serviços profissionais', hospedagem_eventos: 'Hospedagem e eventos',
+  industria: 'Indústria', outro: 'Outro',
+};
 const LOTE_LISTA = 8;    // chamadas ao Jev em paralelo (uma por empresa)
 
 function empresaParaJev(e) {
@@ -203,17 +229,23 @@ async function avaliarAderencia(apiKey, icpTexto, empresas, opts = {}) {
         : 'How likely is the business in `company` to buy what the seller offers in `offer`?',
       criteria: cliente ? NIVEIS_REPRESENTATIVO : NIVEIS_ADERENCIA,
     },
+    ...(opts.segmentar ? { segmento: {
+      type: 'choice',
+      instructions: 'Which kind of business is the company in `company`? Its names may reveal the real business better than the official activity code.',
+      criteria: SEGMENTOS,
+    } } : {}),
   };
   const out = new Array(empresas.length);
   let modelo = null, tokens = 0, falhas = 0, primeiroErro = null;
   for (let i = 0; i < empresas.length; i += LOTE_LISTA) {
     await Promise.all(empresas.slice(i, i + LOTE_LISTA).map(async (e, k) => {
-      let a = {};
+      let a = {}, seg = null;
       try {
         const data = await systemOne(apiKey, { company: empresaParaJev(e), ...contexto }, questions, opts);
         modelo = data.model || modelo;
         tokens += data.usage?.input_tokens || 0;
         a = data.answers?.fit || {};
+        seg = data.answers?.segmento || null;
       } catch (err) { falhas++; primeiroErro = primeiroErro || err; }
       const nivel = typeof a.score === 'number' ? a.score : null;
       out[i + k] = {
@@ -223,12 +255,33 @@ async function avaliarAderencia(apiKey, icpTexto, empresas, opts = {}) {
         norm: nivel == null ? null : nivel / (NIVEIS_ADERENCIA.length - 1),
         confianca: a.confidence ?? null,
         probabilidades: a.probabilities || null,
+        ...(seg ? { segmento: seg.choice ?? null, segmento_conf: seg.confidence ?? null } : {}),
       };
     }));
   }
   // Falha isolada vira "sem nota" para aquela empresa; tudo falhando é erro.
   if (falhas === empresas.length && primeiroErro) throw primeiroErro;
   return { modelo, tokens, falhas, itens: out };
+}
+
+// Composição da lista por segmento, do maior para o menor, com a aderência
+// média de cada um (quais segmentos são bom modelo) e os CNPJs (para criar uma
+// lista só daquele segmento).
+function raioX(itens) {
+  const grupos = {};
+  for (const x of itens) {
+    if (!x || !x.segmento) continue;
+    const g = grupos[x.segmento] || (grupos[x.segmento] = { segmento: x.segmento,
+      rotulo: ROTULOS_SEGMENTO[x.segmento] || x.segmento, n: 0, soma: 0, comNota: 0, cnpjs: [], exemplos: [] });
+    g.n++; g.cnpjs.push(x.cnpj);
+    if (g.exemplos.length < 4) g.exemplos.push(x.nome);
+    if (x.norm != null) { g.soma += x.norm; g.comNota++; }
+  }
+  const total = Object.values(grupos).reduce((s, g) => s + g.n, 0);
+  return Object.values(grupos).map(({ soma, comNota, ...g }) => ({
+    ...g, pct: total ? Math.round(g.n / total * 100) : 0,
+    aderencia_media: comNota ? Math.round(soma / comNota * 100) : null,
+  })).sort((a, b) => b.n - a.n);
 }
 
 // Nota 0–100 da lista, com os componentes à mostra.
@@ -299,4 +352,5 @@ async function integracao(pool) {
 }
 
 module.exports = { systemOne, avaliarSites, perguntasSite, integracao, TIPOS_PAGINA, MODELO_PADRAO,
-  avaliarAderencia, avaliarEmpresa, notaDaLista, resumoSite, perfilComprador, NIVEIS_ADERENCIA, NIVEIS_REPRESENTATIVO };
+  avaliarAderencia, avaliarEmpresa, notaDaLista, resumoSite, perfilComprador, NIVEIS_ADERENCIA, NIVEIS_REPRESENTATIVO,
+  SEGMENTOS, ROTULOS_SEGMENTO, raioX };

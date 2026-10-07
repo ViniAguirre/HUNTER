@@ -2478,6 +2478,25 @@ function NotaJevLista({ l, propostas, onMudou }) {
     finally { setEnviando(false); }
   };
 
+  // Cria uma lista nova só com os clientes de um segmento do raio-X. A lista
+  // nova é avaliada sozinha pelo Jev e pode virar radar Semelhantes própria.
+  const [criandoSeg, setCriandoSeg] = useState(null);
+  const listaDoSegmento = async (g) => {
+    const nome = `${l.rotulo} · ${g.rotulo}`.slice(0, 80);
+    if (!window.confirm(`Criar a lista "${nome}" com ${g.n} cliente${g.n === 1 ? '' : 's'} deste segmento? A lista original continua igual.`)) return;
+    setCriandoSeg(g.segmento);
+    try {
+      const r = await fetch('/api/listas', {
+        method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ nome, cnpjs: g.cnpjs })
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.erro || 'Erro ao criar a lista.');
+      onMudou();
+    } catch (e) { alert(e.message); }
+    finally { setCriandoSeg(null); }
+  };
+
   const alternar = async (x) => {
     const r = await fetch('/api/listas/' + encodeURIComponent(l.nome) + '/sementes/' + x.cnpj, {
       method:'PATCH', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
@@ -2539,6 +2558,38 @@ function NotaJevLista({ l, propostas, onMudou }) {
                 {res.sem_dados ? ` · ${res.sem_dados} sem cadastro` : ''}
                 {res.fator_tamanho < 1 ? ` · lista curta (×${res.fator_tamanho})` : ''}
               </div>
+              {res.raio_x?.length > 0 && (
+                <div style={{ marginTop:10, marginBottom:4 }}>
+                  <div style={{ fontWeight:600, color:'var(--text)', marginBottom:6 }}>Raio-X da lista: que tipo de cliente compra de você</div>
+                  <div style={{ display:'flex', flexDirection:'column', gap:7 }}>
+                    {res.raio_x.map(g => (
+                      <div key={g.segmento}>
+                        <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                          <span style={{ flex:1, minWidth:0 }}>
+                            <b style={{ color:'var(--text)' }}>{g.rotulo}</b> · {g.n} ({g.pct}%)
+                            {g.aderencia_media != null && <span style={{ color:'var(--faint)' }}> · representa o cliente ideal: {g.aderencia_media}%</span>}
+                          </span>
+                          {g.n >= 3 && (
+                            <button type="button" style={btn} disabled={criandoSeg === g.segmento} onClick={() => listaDoSegmento(g)}>
+                              {criandoSeg === g.segmento ? 'Criando…' : 'Criar lista com este segmento'}</button>
+                          )}
+                        </div>
+                        <div style={{ height:5, borderRadius:3, background:'var(--border)', marginTop:3 }}>
+                          <div style={{ width:`${g.pct}%`, height:'100%', borderRadius:3, background:C.gold }}/>
+                        </div>
+                        <div style={{ fontSize:11, color:'var(--faint)', marginTop:2, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                          ex.: {g.exemplos.join(', ')}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ fontSize:11, color:'var(--faint)', marginTop:6 }}>
+                    Cada segmento pode virar uma lista própria e um radar Semelhantes próprio: o radar procura empresas
+                    parecidas com aquele tipo de cliente, em vez da média de todos. Segmentos com menos de 3 clientes não
+                    formam perfil.
+                  </div>
+                </div>
+              )}
               {res.suspeitas_lista?.length > 0 ? (
                 <>
                   <div style={{ marginTop:6 }}>
@@ -2661,9 +2712,10 @@ function Semelhantes() {
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.erro || 'Erro ao salvar a lista.');
-      setAviso(d.retirados > 0
-        ? `${d.retirados} lead(s) da sua base eram empresas desta lista e saíram da esteira — elas são o modelo da busca, não alvo.`
-        : null);
+      setAviso([
+        d.retirados > 0 ? `${d.retirados} lead(s) da sua base eram empresas desta lista e saíram da esteira — elas são o modelo da busca, não alvo.` : null,
+        d.avaliando ? 'O Jev já está montando o raio-X da lista (segmentos e nota de segurança); abra "Detalhes" na lista em alguns minutos.' : null,
+      ].filter(Boolean).join(' ') || null);
       setCriando(false); setNome(''); setTexto(''); setUploadMsg(null); carregar();
     } catch (e) { setErro(e.message); }
     finally { setSalvando(false); }
