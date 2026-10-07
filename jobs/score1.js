@@ -40,11 +40,12 @@ const ESPALHAR_MS = 5 * 60_000;
 // Só avalia quem passou e quem ficou na ZONA CINZENTA abaixo do corte — quem
 // ficou longe do corte não teria chance nenhuma e não vale a chamada.
 const ZONA_CINZA = 15;          // pontos de cada lado do corte
-const JEV_PASSARIA = 2 / 3;     // "Related" ou melhor (nível ≥ 2 de 0–3)
+const JEV_PASSARIA = 2 / 3;     // "Likely buyer" ou melhor (nível ≥ 2 de 0–3)
 let _jevCache = { em: 0, ig: null };
 async function integracaoJev(pool) {
   if (Date.now() - _jevCache.em < 60_000) return _jevCache.ig;
-  const ig = await typesafe.integracao(pool).catch(() => null);
+  let ig = await typesafe.integracao(pool).catch(() => null);
+  if (ig) ig = { ...ig, perfil: await typesafe.perfilComprador(pool) };
   _jevCache = { em: Date.now(), ig };
   return ig;
 }
@@ -59,7 +60,7 @@ async function observarScore(pool, { empresa, busca_id, criterios, score, corte,
   try {
     r = await typesafe.avaliarEmpresa(jev.apiKey, icp,
       { ...empresa, resumo_site: typesafe.resumoSite(empresa.contatos_verificados) },
-      { modelo: jev.modelo, timeout: 10000 });
+      { modelo: jev.modelo, timeout: 10000, perfil: jev.perfil });
   } catch (e) { erro = String(e.message || e).slice(0, 300); }
   const naZona = Math.abs(score - corte) <= ZONA_CINZA;
   const veredito = naZona && r?.norm != null ? (r.norm >= JEV_PASSARIA ? 'passaria' : 'cortaria') : null;

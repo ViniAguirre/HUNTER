@@ -55,7 +55,8 @@ module.exports = async function avaliacaoLista(job, pool) {
 
   let r;
   try {
-    r = await typesafe.avaliarAderencia(ig.apiKey, av.icp_texto, empresas, { modelo: ig.modelo });
+    const perfil = await typesafe.perfilComprador(pool);
+    r = await typesafe.avaliarAderencia(ig.apiKey, av.icp_texto, empresas, { modelo: ig.modelo, perfil });
   } catch (e) { return falhar(e.message); }
   const nota = typesafe.notaDaLista(r.itens);
   if (!nota) return falhar('o Jev não devolveu nota para nenhuma empresa');

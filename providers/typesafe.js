@@ -124,17 +124,17 @@ async function avaliarSites(apiKey, empresa, candidatos, opts = {}) {
 }
 
 // ── Nota de segurança da lista de semelhantes ────────────────────────────────
-// Cada empresa da lista é julgada contra o cliente ideal (texto da proposta de
-// valor) numa escala de 4 níveis. A nota da lista é calculada no CÓDIGO a partir
+// Cada empresa da lista é julgada como COMPRADORA da oferta (texto da proposta
+// de valor) numa escala de 4 níveis. A nota da lista é calculada no CÓDIGO a partir
 // dessas respostas, para ser explicável: aderência média, quem puxa o perfil
 // para fora e o tamanho da lista.
 const NIVEIS_ADERENCIA = [
-  { what: 'Unrelated: sells or does something the ideal customer description does not cover',
-    examples: ['A law firm in a list meant for auto repair shops'] },
-  { what: 'Loosely related: same broad sector, but a different kind of business from the ideal customer',
-    examples: ['A car dealership in a list meant for tire and brake repair shops'] },
-  { what: 'Related: a similar kind of business, with some differences in what it sells, its size or how it operates' },
-  { what: 'Strong match: exactly the kind of business the ideal customer description targets' },
+  { what: 'Unlikely buyer: the business has no plausible use or need for the offer',
+    examples: ['A one-person online consultancy for an offer of industrial forklifts'] },
+  { what: 'Possible buyer: could use the offer, but it is not a typical customer for it' },
+  { what: 'Likely buyer: a typical customer that commonly needs this kind of offer' },
+  { what: 'Ideal buyer: exactly the kind of business the offer is built for',
+    examples: ['A restaurant for an offer of commercial kitchen equipment'] },
 ];
 const LOTE_LISTA = 25;   // empresas por chamada ao Jev
 
@@ -166,12 +166,25 @@ async function avaliarAderencia(apiKey, icpTexto, empresas, opts = {}) {
         type: 'score',
         instructions: {
           company: empresaParaJev(e),
-          question: 'How well does `company` match the ideal customer described in `ideal_customer`?',
+          question: 'How likely is `company` to buy what the seller offers in `offer`?',
         },
         criteria: NIVEIS_ADERENCIA,
       };
     });
-    const data = await systemOne(apiKey, { ideal_customer: corta(icpTexto, 2000) }, questions, opts);
+    const data = await systemOne(apiKey, {
+      // A proposta de valor descreve o que o CLIENTE DO HUNTER vende, não quem
+      // compra. Perguntar "a empresa bate com a descrição?" comparava o comprador
+      // com o vendedor (um escritório "não é" uma empresa de purificadores, mas
+      // compra purificador). A pergunta certa é se ela compraria a oferta.
+      offer: { seller_value_proposition: corta(icpTexto, 2000),
+        note: 'This text describes what the seller sells and may mention who it targets. Judge `company` as a potential BUYER, not as a competitor or a similar seller.' },
+      // Fichamento comercial do cliente (tela Agente SWOT): quem compra, que dor
+      // resolve e o que desqualifica. É o próprio vendedor dizendo quem é o
+      // comprador (B2B de nicho, qualquer empresa, só um segmento…), então pesa
+      // mais que a dedução feita só a partir do texto da oferta.
+      ...(opts.perfil ? { buyer_profile: { ...opts.perfil,
+        note: "The seller's own description of its buyers. Use it as the main reference: a company that matches a disqualifier is an unlikely buyer." } } : {}),
+    }, questions, opts);
     modelo = data.model || modelo;
     tokens += data.usage?.input_tokens || 0;
     lote.forEach((e, j) => {
@@ -233,6 +246,20 @@ function resumoSite(cv) {
   return cv.resumo_site || null;
 }
 
+// Quem compra, segundo o fichamento comercial do tenant (config.swot_perfil).
+// null quando nenhum dos três campos foi preenchido.
+async function perfilComprador(pool) {
+  const { rows: [c] } = await pool.query(`SELECT swot_perfil FROM config LIMIT 1`).catch(() => ({ rows: [] }));
+  const f = c?.swot_perfil || {};
+  const perfil = {
+    ideal_customer: corta(f.icp, 800),
+    pains_solved: corta(f.dores, 600),
+    disqualifiers: corta(f.desqualificadores, 600),
+  };
+  for (const k of Object.keys(perfil)) if (!perfil[k]) delete perfil[k];
+  return Object.keys(perfil).length ? perfil : null;
+}
+
 // Integração ativa do tenant (RLS já filtra pelo tenant da conexão).
 async function integracao(pool) {
   const { rows: [ig] } = await pool.query(
@@ -244,4 +271,4 @@ async function integracao(pool) {
 }
 
 module.exports = { systemOne, avaliarSites, perguntasSite, integracao, TIPOS_PAGINA, MODELO_PADRAO,
-  avaliarAderencia, avaliarEmpresa, notaDaLista, resumoSite, NIVEIS_ADERENCIA };
+  avaliarAderencia, avaliarEmpresa, notaDaLista, resumoSite, perfilComprador, NIVEIS_ADERENCIA };
