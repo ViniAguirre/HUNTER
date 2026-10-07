@@ -15,6 +15,7 @@ const perfilamento = require('../providers/perfil');
 const orcamento = require('./orcamento');
 const tracking = require('../providers/tracking');
 const { registrar } = require('./tracking');
+const typesafe = require('../providers/typesafe');
 
 // Pesos vivem em providers/perfil.js — fonte única, usada tanto pelo ICP
 // (direto) quanto pelo lookalike (como prior dos pesos dinâmicos).
@@ -30,6 +31,46 @@ const ESPERA_MAXIMA_MS = 7 * 24 * 3600_000;
 // Espalha o acordar dos jobs nos primeiros minutos da abertura: na virada das
 // 9h, centenas de empresas represadas batendo no banco no mesmo segundo.
 const ESPALHAR_MS = 5 * 60_000;
+
+// ── Jev no Score 1, MODO OBSERVAÇÃO ─────────────────────────────────────────
+// Para o tenant com a integração decisao|typesafe ativa e radar com cliente
+// ideal (proposta de valor), o Jev diz o quanto a empresa bate com ele. Nada
+// muda no corte: a opinião vai para `decisoes_jev` (tipo 'score1') e o
+// relatório cruza com o desfecho do lead (enviado, fora do perfil, convertido).
+// Só avalia quem passou e quem ficou na ZONA CINZENTA abaixo do corte — quem
+// ficou longe do corte não teria chance nenhuma e não vale a chamada.
+const ZONA_CINZA = 15;          // pontos de cada lado do corte
+const JEV_PASSARIA = 2 / 3;     // "Related" ou melhor (nível ≥ 2 de 0–3)
+let _jevCache = { em: 0, ig: null };
+async function integracaoJev(pool) {
+  if (Date.now() - _jevCache.em < 60_000) return _jevCache.ig;
+  const ig = await typesafe.integracao(pool).catch(() => null);
+  _jevCache = { em: Date.now(), ig };
+  return ig;
+}
+
+async function observarScore(pool, { empresa, busca_id, criterios, score, corte, passou }) {
+  const icp = criterios?.proposta_valor || criterios?.params?.proposta_valor;
+  if (!icp || !String(icp).trim()) return;
+  if (!passou && score < corte - ZONA_CINZA) return;
+  const jev = await integracaoJev(pool);
+  if (!jev) return;
+  let r = null, erro = null;
+  try {
+    r = await typesafe.avaliarEmpresa(jev.apiKey, icp,
+      { ...empresa, resumo_site: typesafe.resumoSite(empresa.contatos_verificados) },
+      { modelo: jev.modelo, timeout: 10000 });
+  } catch (e) { erro = String(e.message || e).slice(0, 300); }
+  const naZona = Math.abs(score - corte) <= ZONA_CINZA;
+  const veredito = naZona && r?.norm != null ? (r.norm >= JEV_PASSARIA ? 'passaria' : 'cortaria') : null;
+  await pool.query(
+    `INSERT INTO decisoes_jev (tipo, cnpj, alvo, regra, busca_id, regra_score, corte, jev_score, jev_tipo,
+       jev_confianca, jev_probabilidades, modelo, latencia_ms, erro)
+     VALUES ('score1',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+    [empresa.cnpj, naZona ? 'zona_cinza' : 'acima', passou ? 'passou' : 'cortado', busca_id, score, corte,
+     r?.norm ?? null, veredito, r?.confianca ?? null,
+     r?.probabilidades ? JSON.stringify(r.probabilidades) : null, r?.modelo ?? null, r?.latencia_ms ?? null, erro]);
+}
 
 module.exports = async function score1(job, pool, queues) {
   const { cnpj, busca_id } = job.data;
@@ -58,6 +99,12 @@ module.exports = async function score1(job, pool, queues) {
     breakdown = [{ item: 'Importada por CNPJ (solicitada explicitamente)', pts: 100 }];
   }
   const passou = importacao ? true : score >= corte;
+
+  // Observação do Jev em paralelo: não atrasa nem muda a decisão do corte.
+  if (!importacao) {
+    observarScore(pool, { empresa, busca_id, criterios: busca.criterios, score, corte, passou })
+      .catch(e => console.error('[jev] score1:', e.message));
+  }
 
   if (!passou) {
     // Verificada mas fora do perfil: NÃO vira lead — só conta na busca.

@@ -11,13 +11,6 @@
 const typesafe = require('../providers/typesafe');
 const { enrichComRetry, upsertEmpresa, TETO_AMOSTRA } = require('./descoberta');
 
-// contatos_verificados é objeto (descoberta web-first) ou lista (validação).
-function resumoSite(cv) {
-  if (!cv) return null;
-  if (Array.isArray(cv)) return cv.find(c => c && c.resumo_site)?.resumo_site || null;
-  return cv.resumo_site || null;
-}
-
 module.exports = async function avaliacaoLista(job, pool) {
   const { avaliacao_id } = job.data;
   const { rows: [av] } = await pool.query(
@@ -56,7 +49,7 @@ module.exports = async function avaliacaoLista(job, pool) {
         await upsertEmpresa(pool, e);
       } catch (_) { semDados++; continue; }
     }
-    empresas.push({ ...e, resumo_site: resumoSite(e.contatos_verificados) });
+    empresas.push({ ...e, resumo_site: typesafe.resumoSite(e.contatos_verificados) });
   }
   if (!empresas.length) return falhar('nenhuma empresa da lista com dados cadastrais');
 
@@ -88,4 +81,3 @@ module.exports = async function avaliacaoLista(job, pool) {
   return { nota: nota.nota, faixa: nota.faixa, avaliadas: nota.avaliadas };
 };
 
-module.exports.resumoSite = resumoSite;

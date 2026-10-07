@@ -52,6 +52,31 @@ Enviados ao Jev: o texto da proposta de valor e, de cada empresa, razão,
 fantasia, atividade, CNAE, porte, capital, cidade, UF, abertura e resumo do
 site (até 400 caracteres). Sem decisor nem contatos.
 
+## Score 1 — modo observação: aderência ao cliente ideal e zona cinzenta
+
+`jobs/score1.js` continua decidindo o corte só com a regra (firmografia ou
+proximidade ao perfil da lista). Em paralelo, sem atrasar o job, quando o
+radar tem proposta de valor e o tenant tem o Jev ativo:
+
+- o Jev diz o quanto a empresa bate com o cliente ideal (mesma escala de 4
+  níveis da nota da lista, gravada de 0 a 1 em `jev_score`);
+- só são avaliadas as empresas que passaram e as que ficaram até 15 pontos
+  abaixo do corte; as muito abaixo não gastam chamada;
+- na **zona cinzenta** (até 15 pontos de cada lado do corte) fica registrado o
+  que o Jev decidiria: `passaria` (nível "relacionada" ou melhor) ou
+  `cortaria`.
+
+Tudo vai para `decisoes_jev` com `tipo='score1'`, junto da nota da regra, do
+corte e do radar. O relatório ganha a seção `score1`:
+
+- `zona_cinza`: quantas vezes regra e Jev concordam ou discordam;
+- `desfecho_por_nivel_jev`: dos leads que passaram, por nível do Jev, quantos
+  foram enviados, marcados como fora do perfil e convertidos no CRM.
+
+Se "fora do perfil" se concentra nos níveis baixos e "convertido" nos altos, o
+Jev separa bem: aí vale ele entrar na nota (item 2) e decidir a zona cinzenta
+(item 3). Até lá, nenhum lead muda.
+
 ## Ligar por cliente
 
 Desligado por padrão. Cada cliente (tenant) liga na tela **Integrações →
@@ -75,5 +100,5 @@ As divergências mais úteis de revisar:
 1. Jev decide o site quando a regra não tem prova forte (o CNPJ continua
    sendo prova e veto, calculado no código).
 2. Filtro antes da consulta paga na descoberta web-first.
-3. Aderência semântica ao ICP antes do SWOT (composite scoring).
+3. Aderência ao ICP com o site lido, antes do SWOT (Score 2).
 4. Verificação dos itens do SWOT contra o site (anti-invenção).

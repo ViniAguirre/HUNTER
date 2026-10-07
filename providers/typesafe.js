@@ -218,6 +218,21 @@ function notaDaLista(itens) {
   };
 }
 
+// Aderência de UMA empresa ao cliente ideal (Score 1 em modo observação).
+async function avaliarEmpresa(apiKey, icpTexto, empresa, opts = {}) {
+  const t0 = Date.now();
+  const r = await avaliarAderencia(apiKey, icpTexto, [empresa], opts);
+  return { ...r.itens[0], modelo: r.modelo, latencia_ms: Date.now() - t0 };
+}
+
+// Resumo do site guardado no cadastro: contatos_verificados é objeto (descoberta
+// web-first) ou lista (validação).
+function resumoSite(cv) {
+  if (!cv) return null;
+  if (Array.isArray(cv)) return cv.find(c => c && c.resumo_site)?.resumo_site || null;
+  return cv.resumo_site || null;
+}
+
 // Integração ativa do tenant (RLS já filtra pelo tenant da conexão).
 async function integracao(pool) {
   const { rows: [ig] } = await pool.query(
@@ -229,4 +244,4 @@ async function integracao(pool) {
 }
 
 module.exports = { systemOne, avaliarSites, perguntasSite, integracao, TIPOS_PAGINA, MODELO_PADRAO,
-  avaliarAderencia, notaDaLista, NIVEIS_ADERENCIA };
+  avaliarAderencia, avaliarEmpresa, notaDaLista, resumoSite, NIVEIS_ADERENCIA };
