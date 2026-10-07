@@ -33,7 +33,7 @@ usuário escolhe a proposta de valor que descreve o cliente ideal e o worker
 
 1. lê até 120 empresas positivas da lista (o cadastro global costuma já ter a
    firmografia; o que faltar é consultado na CNPJá como no perfilamento);
-2. manda ao Jev, em lotes de 25, uma pergunta `score` por empresa: "quanto esta
+2. manda ao Jev, uma chamada por empresa (8 em paralelo), uma pergunta `score`: "quanto esta
    empresa provavelmente compraria a oferta?", em 4 níveis (comprador
    improvável, possível, provável, ideal). A proposta de valor descreve o que o
    cliente do Hunter VENDE; a primeira versão perguntava se a empresa "batia
@@ -83,6 +83,17 @@ corte e do radar. O relatório ganha a seção `score1`:
 Se "fora do perfil" se concentra nos níveis baixos e "convertido" nos altos, o
 Jev separa bem: aí vale ele entrar na nota (item 2) e decidir a zona cinzenta
 (item 3). Até lá, nenhum lead muda.
+
+## Regra do state
+
+O Jev julga cada resposta **contra o `state`**. Tudo que é para ser avaliado
+(a empresa, a página) vai no state; as `instructions` só dizem a pergunta. As
+primeiras versões punham a empresa (nota da lista, Score 1) e a página (site)
+nas instructions: o Jev avaliava o resto do state e a nota da lista da Planeta
+Água saiu 19, com 109 de 119 suspeitas. Corrigido em 2026-10-07; como o state é
+um só por chamada, agora é uma chamada por empresa ou por página. As
+observações de site e de Score 1 gravadas antes disso não valem para o
+relatório.
 
 ## Ligar por cliente
 

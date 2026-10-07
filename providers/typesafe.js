@@ -61,64 +61,67 @@ const TIPOS_PAGINA = {
   outro: { what: 'None of the above' },
 };
 
-// Monta UMA chamada para todos os candidatos lidos de um lead: duas perguntas
-// por candidato (tipo da página e "pertence à empresa?"), todas em paralelo no
-// Jev, com a página dentro das instructions e a empresa no state.
-function perguntasSite(candidatos) {
-  const q = {};
-  candidatos.forEach((c, i) => {
-    const pagina = {
-      url: c.site,
-      search_title: corta(c.titulo, 200),
-      identity: corta(c.identidade, 300),
-      summary: corta(c.resumo),
-      phone_on_page: c.telefone || null,
-      cnpj_on_page: c.cnpj || null,
-      phone_count_on_home: c.qtd_telefones || 0,
-    };
-    q[`tipo_${i}`] = {
+// Página de um candidato, no formato que vai para o state.
+function paginaParaJev(c) {
+  return {
+    url: c.site,
+    search_title: corta(c.titulo, 200),
+    identity: corta(c.identidade, 300),
+    summary: corta(c.resumo),
+    phone_on_page: c.telefone || null,
+    cnpj_on_page: c.cnpj || null,
+    phone_count_on_home: c.qtd_telefones || 0,
+  };
+}
+
+// Duas perguntas por candidato: tipo da página e "pertence à empresa?". Empresa
+// E página vão no state (o Jev julga contra o state; com a página nas
+// instructions ele não a enxergava como conteúdo a avaliar).
+function perguntasSite() {
+  return {
+    tipo: {
       type: 'choice',
-      instructions: { page: pagina, question: 'What is `page` in relation to the company in `company`?' },
+      instructions: 'What is `page` in relation to the company in `company`?',
       criteria: TIPOS_PAGINA,
-    };
-    q[`pertence_${i}`] = {
+    },
+    pertence: {
       type: 'noul',
-      instructions: { page: pagina, question: 'Is `page` the official website of the company described in `company`?' },
+      instructions: 'Is `page` the official website of the company described in `company`?',
       criteria: {
         true: 'The page is run by this exact business: same company, same city or region',
         false: 'The page belongs to someone else, lists many companies, or only mentions this company',
       },
-    };
-  });
-  return q;
-}
-
-// Opinião do Jev sobre os candidatos a site de UMA empresa. Devolve uma linha
-// por candidato, na mesma ordem: { tipo, confianca, probabilidades, pertence }.
-async function avaliarSites(apiKey, empresa, candidatos, opts = {}) {
-  const state = {
-    company: {
-      name: empresa.nome || null,
-      legal_name: empresa.razao || null,
-      trade_name: empresa.fantasia || null,
-      city: empresa.cidade || null,
-      state: empresa.uf || null,
-      activity: empresa.setor || null,
-      cnpj: empresa.cnpj || null,
     },
   };
+}
+
+// Opinião do Jev sobre os candidatos a site de UMA empresa: uma chamada por
+// candidato, em paralelo. Devolve uma linha por candidato, na mesma ordem:
+// { tipo, confianca, probabilidades, pertence }.
+async function avaliarSites(apiKey, empresa, candidatos, opts = {}) {
+  const company = {
+    name: empresa.nome || null,
+    legal_name: empresa.razao || null,
+    trade_name: empresa.fantasia || null,
+    city: empresa.cidade || null,
+    state: empresa.uf || null,
+    activity: empresa.setor || null,
+    cnpj: empresa.cnpj || null,
+  };
   const t0 = Date.now();
-  const data = await systemOne(apiKey, state, perguntasSite(candidatos), opts);
-  const a = data.answers || {};
+  let modelo = null, tokens = 0;
+  const respostas = await Promise.all(candidatos.map(c =>
+    systemOne(apiKey, { company, page: paginaParaJev(c) }, perguntasSite(), opts)
+      .then(data => { modelo = data.model || modelo; tokens += data.usage?.input_tokens || 0; return data.answers || {}; })));
   return {
-    modelo: data.model || null,
+    modelo,
     latencia_ms: Date.now() - t0,
-    tokens: data.usage?.input_tokens ?? null,
-    candidatos: candidatos.map((_, i) => ({
-      tipo: a[`tipo_${i}`]?.choice ?? null,
-      confianca: a[`tipo_${i}`]?.confidence ?? null,
-      probabilidades: a[`tipo_${i}`]?.probabilities ?? null,
-      pertence: a[`pertence_${i}`]?.noul ?? null,
+    tokens,
+    candidatos: respostas.map(a => ({
+      tipo: a.tipo?.choice ?? null,
+      confianca: a.tipo?.confidence ?? null,
+      probabilidades: a.tipo?.probabilities ?? null,
+      pertence: a.pertence?.noul ?? null,
     })),
   };
 }
@@ -136,7 +139,7 @@ const NIVEIS_ADERENCIA = [
   { what: 'Ideal buyer: exactly the kind of business the offer is built for',
     examples: ['A restaurant for an offer of commercial kitchen equipment'] },
 ];
-const LOTE_LISTA = 25;   // empresas por chamada ao Jev
+const LOTE_LISTA = 8;    // chamadas ao Jev em paralelo (uma por empresa)
 
 function empresaParaJev(e) {
   return {
@@ -156,51 +159,54 @@ function empresaParaJev(e) {
 // Devolve, na ordem das empresas: { cnpj, nivel (0..3 fracionário), norm (0..1),
 // confianca, probabilidades }. Lança erro se o Jev falhar (o job registra).
 async function avaliarAderencia(apiKey, icpTexto, empresas, opts = {}) {
-  const out = [];
-  let modelo = null, tokens = 0;
+  // A EMPRESA vai no state, não nas instructions: o Jev julga cada nível
+  // "contra o state" (docs.typesafe.ai/primitives/score). Com a empresa nas
+  // instructions e só a oferta no state, ele avaliava a própria oferta e dava
+  // "comprador improvável" para quase todas (Planeta Água: nota 19, 109 de 119
+  // suspeitas). Como o state é um só por chamada, vai uma empresa por chamada,
+  // LOTE_LISTA em paralelo.
+  const contexto = {
+    // A proposta de valor descreve o que o CLIENTE DO HUNTER vende, não quem
+    // compra: a empresa é julgada como compradora, não como parecida.
+    offer: { seller_value_proposition: corta(icpTexto, 2000),
+      note: 'What the seller sells; it may mention who it targets. Judge `company` as a potential BUYER, not as a competitor or a similar seller.' },
+    // Fichamento comercial (tela Agente SWOT): o próprio vendedor dizendo quem
+    // compra, que dor resolve e o que desqualifica. Pesa mais que a oferta.
+    ...(opts.perfil ? { buyer_profile: { ...opts.perfil,
+      note: "The seller's own description of its buyers. Use it as the main reference: a company that matches a disqualifier is an unlikely buyer." } } : {}),
+  };
+  const questions = {
+    fit: {
+      type: 'score',
+      instructions: 'How likely is the business in `company` to buy what the seller offers in `offer`?',
+      criteria: NIVEIS_ADERENCIA,
+    },
+  };
+  const out = new Array(empresas.length);
+  let modelo = null, tokens = 0, falhas = 0, primeiroErro = null;
   for (let i = 0; i < empresas.length; i += LOTE_LISTA) {
-    const lote = empresas.slice(i, i + LOTE_LISTA);
-    const questions = {};
-    lote.forEach((e, j) => {
-      questions[`fit_${j}`] = {
-        type: 'score',
-        instructions: {
-          company: empresaParaJev(e),
-          question: 'How likely is `company` to buy what the seller offers in `offer`?',
-        },
-        criteria: NIVEIS_ADERENCIA,
-      };
-    });
-    const data = await systemOne(apiKey, {
-      // A proposta de valor descreve o que o CLIENTE DO HUNTER vende, não quem
-      // compra. Perguntar "a empresa bate com a descrição?" comparava o comprador
-      // com o vendedor (um escritório "não é" uma empresa de purificadores, mas
-      // compra purificador). A pergunta certa é se ela compraria a oferta.
-      offer: { seller_value_proposition: corta(icpTexto, 2000),
-        note: 'This text describes what the seller sells and may mention who it targets. Judge `company` as a potential BUYER, not as a competitor or a similar seller.' },
-      // Fichamento comercial do cliente (tela Agente SWOT): quem compra, que dor
-      // resolve e o que desqualifica. É o próprio vendedor dizendo quem é o
-      // comprador (B2B de nicho, qualquer empresa, só um segmento…), então pesa
-      // mais que a dedução feita só a partir do texto da oferta.
-      ...(opts.perfil ? { buyer_profile: { ...opts.perfil,
-        note: "The seller's own description of its buyers. Use it as the main reference: a company that matches a disqualifier is an unlikely buyer." } } : {}),
-    }, questions, opts);
-    modelo = data.model || modelo;
-    tokens += data.usage?.input_tokens || 0;
-    lote.forEach((e, j) => {
-      const a = data.answers?.[`fit_${j}`] || {};
+    await Promise.all(empresas.slice(i, i + LOTE_LISTA).map(async (e, k) => {
+      let a = {};
+      try {
+        const data = await systemOne(apiKey, { company: empresaParaJev(e), ...contexto }, questions, opts);
+        modelo = data.model || modelo;
+        tokens += data.usage?.input_tokens || 0;
+        a = data.answers?.fit || {};
+      } catch (err) { falhas++; primeiroErro = primeiroErro || err; }
       const nivel = typeof a.score === 'number' ? a.score : null;
-      out.push({
+      out[i + k] = {
         cnpj: e.cnpj,
         nome: e.fantasia || e.razao || e.cnpj,
         nivel,
         norm: nivel == null ? null : nivel / (NIVEIS_ADERENCIA.length - 1),
         confianca: a.confidence ?? null,
         probabilidades: a.probabilities || null,
-      });
-    });
+      };
+    }));
   }
-  return { modelo, tokens, itens: out };
+  // Falha isolada vira "sem nota" para aquela empresa; tudo falhando é erro.
+  if (falhas === empresas.length && primeiroErro) throw primeiroErro;
+  return { modelo, tokens, falhas, itens: out };
 }
 
 // Nota 0–100 da lista, com os componentes à mostra.
