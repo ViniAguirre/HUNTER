@@ -67,6 +67,7 @@ if (process.env.REDIS_HOST) {
     swot: new Queue('hunter-swot', { connection: { ...redisOpts } }),
     crm: new Queue('hunter-crm', { connection: { ...redisOpts } }),
     tracking: new Queue('hunter-tracking', { connection: { ...redisOpts } }),
+    avaliacaoLista: new Queue('hunter-avaliacao_lista', { connection: { ...redisOpts } }),
   };
 }
 
@@ -732,8 +733,30 @@ async function init() {
     CREATE INDEX IF NOT EXISTS idx_decisoes_jev_tipo_data ON decisoes_jev(tipo, criado_em DESC);
   `);
 
+  // Nota de segurança da lista de semelhantes (jobs/avaliacao-lista.js): o Jev
+  // compara cada empresa da lista com o cliente ideal de uma proposta de valor.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS avaliacoes_lista (
+      id               BIGSERIAL PRIMARY KEY,
+      criado_em        TIMESTAMPTZ NOT NULL DEFAULT now(),
+      concluido_em     TIMESTAMPTZ,
+      lista            TEXT NOT NULL,
+      proposta_id      INTEGER,
+      proposta_rotulo  TEXT,
+      icp_texto        TEXT NOT NULL,
+      status           TEXT NOT NULL DEFAULT 'processando',
+      nota             INTEGER,
+      faixa            TEXT,
+      resultado        JSONB,
+      modelo           TEXT,
+      erro             TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_avaliacoes_lista_lista ON avaliacoes_lista(lista, id DESC);
+  `);
+
   for (const t of ['usuarios', 'buscas', 'leads', 'integracoes', 'sementes', 'contadores', 'contadores_hora', 'propostas_valor', 'listas_semelhantes', 'chaves_api',
-                   'estrategia', 'estrategia_pautas', 'estrategia_slots', 'estrategia_eventos', 'decisoes_jev']) {
+                   'estrategia', 'estrategia_pautas', 'estrategia_slots', 'estrategia_eventos', 'decisoes_jev',
+                   'avaliacoes_lista']) {
     await tenantizarTabela(pool, t);
   }
 
@@ -3070,7 +3093,7 @@ app.post('/api/webhooks/crm/conversao', webhookLimiter, async (req, res) => {
     // Mesma conta da tela de Semelhantes: só clientes (positivos). O CRM grava
     // esse número no histórico do lead, então os dois lados precisam bater.
     const { rows:[{ n }] } = await pool.query(
-      `SELECT COUNT(*)::int n FROM sementes WHERE lista=$1 AND tipo <> 'negativa'`, [lista]);
+      `SELECT COUNT(*)::int n FROM sementes WHERE lista=$1 AND tipo = 'positiva'`, [lista]);
     const ja_estava = !!antes && antes.tipo !== 'negativa';
     // Converteu no CRM = virou cliente. Sai da esteira de prospecção na hora.
     await retirarClientesDaEsteira([cnpj]);
@@ -3224,13 +3247,19 @@ app.get('/api/listas', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(`
       SELECT l.nome, l.rotulo, l.criado_em,
-             COUNT(s.id) FILTER (WHERE s.tipo <> 'negativa')::int AS n,
+             COUNT(s.id) FILTER (WHERE s.tipo = 'positiva')::int AS n,
              COUNT(s.id) FILTER (WHERE s.tipo = 'negativa')::int AS negativos,
+             COUNT(s.id) FILTER (WHERE s.tipo = 'excluida')::int AS excluidas,
              MAX(s.criado_em) AS atualizado_em,
-             COALESCE(BOOL_OR(s.origem = 'crm'), l.nome = $1) AS automatica
+             COALESCE(BOOL_OR(s.origem = 'crm'), l.nome = $1) AS automatica,
+             av.nota AS jev_nota, av.faixa AS jev_faixa, av.status AS jev_status,
+             av.criado_em AS jev_em
       FROM listas_semelhantes l
       LEFT JOIN sementes s ON s.lista = l.nome
-      GROUP BY l.nome, l.rotulo, l.criado_em
+      LEFT JOIN LATERAL (
+        SELECT nota, faixa, status, criado_em FROM avaliacoes_lista a
+        WHERE a.lista = l.nome ORDER BY a.id DESC LIMIT 1) av ON true
+      GROUP BY l.nome, l.rotulo, l.criado_em, av.nota, av.faixa, av.status, av.criado_em
       ORDER BY (l.nome = $1) DESC, COALESCE(MAX(s.criado_em), l.criado_em) DESC`, [LISTA_CRM]);
     res.json(rows);
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
@@ -3295,6 +3324,96 @@ app.delete('/api/listas/:nome', requireAuth, requireEditor, async (req, res) => 
     const { rowCount } = await pool.query(`DELETE FROM sementes WHERE lista=$1`, [nome]);
     await pool.query(`DELETE FROM listas_semelhantes WHERE nome=$1`, [nome]);
     res.json({ ok: true, removidos: rowCount });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// ── Nota de segurança da lista (Jev) ─────────────────────────────────────────
+// O Jev compara cada empresa da lista com o cliente ideal (uma proposta de
+// valor) e o código calcula a nota 0–100 e as suspeitas. Só avalia; quem
+// remove uma suspeita é o usuário. Desligado sem a integração decisao|typesafe.
+app.get('/api/decisao/ativo', requireAuth, async (req, res) => {
+  try {
+    const { rows: [ig] } = await pool.query(
+      `SELECT 1 FROM integracoes WHERE categoria='decisao' AND provedor='typesafe' AND ativo=true
+         AND key_cifrada IS NOT NULL AND key_cifrada <> '' LIMIT 1`);
+    res.json({ ativo: !!ig });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+app.post('/api/listas/:nome/avaliar', requireAuth, requireEditor, async (req, res) => {
+  const nome = String(req.params.nome || '');
+  try {
+    const { rows: [l] } = await pool.query(`SELECT nome FROM listas_semelhantes WHERE nome=$1`, [nome]);
+    if (!l) return res.status(404).json({ erro: 'lista não encontrada' });
+    const { rows: [ig] } = await pool.query(
+      `SELECT 1 FROM integracoes WHERE categoria='decisao' AND provedor='typesafe' AND ativo=true
+         AND key_cifrada IS NOT NULL AND key_cifrada <> '' LIMIT 1`);
+    if (!ig) return res.status(400).json({ erro: 'ative a integração Decisões (Jev) em Integrações' });
+    if (!monitorQueues?.avaliacaoLista) return res.status(503).json({ erro: 'motor indisponível' });
+
+    let texto = String(req.body?.texto || '').trim();
+    let propostaId = null, rotulo = null;
+    if (req.body?.proposta_id != null) {
+      const { rows: [p] } = await pool.query(
+        `SELECT id, rotulo, texto FROM propostas_valor WHERE id=$1`, [parseInt(req.body.proposta_id, 10) || 0]);
+      if (!p) return res.status(404).json({ erro: 'proposta não encontrada' });
+      texto = p.texto; propostaId = p.id; rotulo = p.rotulo;
+    }
+    if (!texto) return res.status(400).json({ erro: 'escolha a proposta de valor (cliente ideal)' });
+    if (texto.length > MAX_TEXTO_PROPOSTA) return res.status(400).json({ erro: 'descrição do cliente ideal muito longa' });
+
+    const { rows: [andamento] } = await pool.query(
+      `SELECT id FROM avaliacoes_lista WHERE lista=$1 AND status='processando'
+         AND criado_em > now() - interval '30 minutes' LIMIT 1`, [nome]);
+    if (andamento) return res.status(409).json({ erro: 'avaliação em andamento', id: andamento.id });
+
+    const { rows: [av] } = await pool.query(
+      `INSERT INTO avaliacoes_lista (lista, proposta_id, proposta_rotulo, icp_texto)
+       VALUES ($1,$2,$3,$4) RETURNING id, status, criado_em`, [nome, propostaId, rotulo, texto]);
+    await monitorQueues.avaliacaoLista.add('avaliacao_lista', { avaliacao_id: av.id }, {
+      jobId: `avaliacao-lista-${av.id}`, attempts: 1,
+      removeOnComplete: { count: 100 }, removeOnFail: { count: 50 },
+    });
+    res.status(202).json(av);
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+app.get('/api/listas/:nome/avaliacao', requireAuth, async (req, res) => {
+  try {
+    const { rows: [av] } = await pool.query(
+      `SELECT id, criado_em, concluido_em, proposta_id, proposta_rotulo, status, nota, faixa,
+              resultado, modelo, erro
+       FROM avaliacoes_lista WHERE lista=$1 ORDER BY id DESC LIMIT 1`, [String(req.params.nome || '')]);
+    if (!av) return res.json(null);
+    // Suspeitas já removidas pelo usuário saem da lista mostrada.
+    if (av.resultado?.suspeitas_lista?.length) {
+      const { rows } = await pool.query(
+        `SELECT cnpj FROM sementes WHERE lista=$1 AND tipo='excluida'`, [String(req.params.nome || '')]);
+      const fora = new Set(rows.map(r => r.cnpj));
+      av.resultado.suspeitas_lista = av.resultado.suspeitas_lista.map(x => ({ ...x, removida: fora.has(x.cnpj) }));
+    }
+    if (av.resultado) delete av.resultado.itens;   // a tela só precisa das suspeitas
+    res.json(av);
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// Tira a empresa do PERFIL da lista sem apagar a semente: ela continua sendo
+// cliente (o portão da descoberta segue impedindo que vire lead), só deixa de
+// ensinar o radar. Desfazer = PATCH tipo 'positiva'.
+app.patch('/api/listas/:nome/sementes/:cnpj', requireAuth, requireEditor, async (req, res) => {
+  const tipo = req.body?.tipo;
+  if (!['positiva', 'excluida'].includes(tipo)) return res.status(400).json({ erro: 'tipo inválido' });
+  try {
+    const { rows: [s] } = await pool.query(
+      `UPDATE sementes SET tipo=$3 WHERE lista=$1 AND cnpj=$2 AND tipo <> 'negativa'
+       RETURNING cnpj, tipo`,
+      [String(req.params.nome || ''), String(req.params.cnpj || '').replace(/\D/g, ''), tipo]);
+    if (!s) return res.status(404).json({ erro: 'empresa não está na lista' });
+    // Radares da lista re-perfilam na próxima varredura sem a empresa excluída.
+    await pool.query(
+      `UPDATE buscas SET criterios = criterios #- '{params,perfil}'
+       WHERE lista=$1 AND tipo='lookalike'`, [String(req.params.nome || '')]);
+    res.json(s);
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 

@@ -5234,6 +5234,267 @@ function PropostaDropdown({
 // A lista é a matéria-prima do radar "Semelhantes": o Hunter lê a firmografia
 // dessas empresas e destila o perfil de quem compra. Aqui ela vira um item
 // reaproveitável — sobe uma vez, usa em quantos radares quiser.
+// Nota de segurança da lista (Jev): compara cada empresa da lista com o cliente
+// ideal de uma proposta de valor. Só aparece com a integração Decisões ativa.
+const FAIXA_JEV = {
+  segura: ['segura', '#4ADE80'],
+  atencao: ['atenção', '#F59E0B'],
+  arriscada: ['arriscada', '#F87171']
+};
+function NotaJevLista({
+  l,
+  propostas,
+  onMudou
+}) {
+  const [aberto, setAberto] = useState(false);
+  const [av, setAv] = useState(null);
+  const [propostaId, setPropostaId] = useState('');
+  const [erro, setErro] = useState(null);
+  const [enviando, setEnviando] = useState(false);
+  const buscar = () => fetch('/api/listas/' + encodeURIComponent(l.nome) + '/avaliacao', {
+    credentials: 'same-origin'
+  }).then(r => r.ok ? r.json() : null).then(d => {
+    setAv(d);
+    return d;
+  }).catch(() => null);
+  useEffect(() => {
+    if (aberto) buscar();
+  }, [aberto]);
+  // Enquanto o motor avalia, consulta de novo a cada 4s.
+  useEffect(() => {
+    if (!(av && av.status === 'processando') && l.jev_status !== 'processando') return;
+    const t = setInterval(() => buscar().then(d => {
+      if (d && d.status !== 'processando') {
+        clearInterval(t);
+        onMudou();
+      }
+    }), 4000);
+    return () => clearInterval(t);
+  }, [av?.status, l.jev_status]);
+  useEffect(() => {
+    if (!propostaId && propostas.length) setPropostaId(String(propostas[0].id));
+  }, [propostas]);
+  const avaliar = async () => {
+    if (!propostaId) {
+      setErro('Crie uma proposta de valor (o cliente ideal) antes.');
+      return;
+    }
+    setEnviando(true);
+    setErro(null);
+    try {
+      const r = await fetch('/api/listas/' + encodeURIComponent(l.nome) + '/avaliar', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          proposta_id: parseInt(propostaId, 10)
+        })
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok && r.status !== 409) throw new Error(d.erro || 'Erro ao avaliar.');
+      setAberto(true);
+      await buscar();
+      onMudou();
+    } catch (e) {
+      setErro(e.message);
+    } finally {
+      setEnviando(false);
+    }
+  };
+  const alternar = async x => {
+    const r = await fetch('/api/listas/' + encodeURIComponent(l.nome) + '/sementes/' + x.cnpj, {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        tipo: x.removida ? 'positiva' : 'excluida'
+      })
+    });
+    if (r.ok) {
+      buscar();
+      onMudou();
+    } else {
+      const d = await r.json().catch(() => ({}));
+      alert(d.erro || 'Erro ao alterar a empresa.');
+    }
+  };
+  const [fx, cor] = FAIXA_JEV[l.jev_faixa] || [null, 'var(--faint)'];
+  const res = av?.resultado;
+  const btn = {
+    height: 28,
+    padding: '0 11px',
+    borderRadius: 8,
+    border: '1px solid var(--border)',
+    background: 'transparent',
+    color: 'var(--dim)',
+    fontSize: 11.5,
+    fontFamily: 'inherit',
+    cursor: 'pointer'
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 8
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      alignItems: 'center',
+      flexWrap: 'wrap'
+    }
+  }, l.jev_status === 'processando' ? /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)'
+    }
+  }, "Jev avaliando a lista\u2026") : l.jev_nota != null ? /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => setAberto(a => !a),
+    title: "Ver detalhes da nota",
+    style: {
+      fontSize: 11,
+      padding: '2px 9px',
+      borderRadius: 20,
+      color: cor,
+      border: `1px solid ${cor}`,
+      background: 'transparent',
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, "nota Jev ", l.jev_nota, " \xB7 ", fx) : /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)'
+    }
+  }, "sem nota de seguran\xE7a"), !aberto && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    style: btn,
+    onClick: () => setAberto(true)
+  }, l.jev_nota != null ? 'Detalhes' : 'Avaliar com Jev')), aberto && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 9,
+      padding: 12,
+      borderRadius: 10,
+      background: 'var(--panel2)',
+      border: '1px solid var(--border)'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      alignItems: 'center',
+      flexWrap: 'wrap',
+      marginBottom: 8
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--faint)'
+    }
+  }, "Cliente ideal:"), /*#__PURE__*/React.createElement("select", {
+    value: propostaId,
+    onChange: e => setPropostaId(e.target.value),
+    style: {
+      height: 28,
+      borderRadius: 8,
+      border: '1px solid var(--border)',
+      background: 'var(--panel)',
+      color: 'var(--text)',
+      fontSize: 12,
+      fontFamily: 'inherit',
+      maxWidth: 260
+    }
+  }, propostas.length === 0 && /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "nenhuma proposta de valor"), propostas.map(p => /*#__PURE__*/React.createElement("option", {
+    key: p.id,
+    value: p.id
+  }, p.rotulo || String(p.texto).slice(0, 40)))), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: avaliar,
+    disabled: enviando || av?.status === 'processando',
+    style: {
+      ...btn,
+      border: 'none',
+      background: 'var(--gold)',
+      color: '#0E1936',
+      fontWeight: 600
+    }
+  }, enviando ? 'Enviando…' : av ? 'Avaliar de novo' : 'Avaliar'), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    style: btn,
+    onClick: () => setAberto(false)
+  }, "Fechar")), erro && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: '#F87171',
+      marginBottom: 6
+    }
+  }, erro), av?.status === 'processando' && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--faint)'
+    }
+  }, "Avaliando\u2026 listas grandes com empresas sem cadastro podem levar alguns minutos."), av?.status === 'erro' && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: '#F87171'
+    }
+  }, "Falhou: ", av.erro), av?.status === 'pronta' && res && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--dim)',
+      lineHeight: 1.6
+    }
+  }, /*#__PURE__*/React.createElement("div", null, "Nota ", /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: (FAIXA_JEV[av.faixa] || [])[1]
+    }
+  }, av.nota), " (", (FAIXA_JEV[av.faixa] || [])[0], ")", av.proposta_rotulo ? /*#__PURE__*/React.createElement(React.Fragment, null, " contra \"", av.proposta_rotulo, "\"") : null, " \xB7 ader\xEAncia m\xE9dia ", res.aderencia_media, "% \xB7", ' ', res.avaliadas, " avaliada", res.avaliadas === 1 ? '' : 's', res.sem_dados ? ` · ${res.sem_dados} sem cadastro` : '', res.fator_tamanho < 1 ? ` · lista curta (×${res.fator_tamanho})` : ''), res.suspeitas_lista?.length > 0 ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 6
+    }
+  }, res.suspeitas_lista.length, " suspeita", res.suspeitas_lista.length === 1 ? '' : 's', ": empresas que o Jev considera longe do cliente ideal e que puxam o perfil da lista para fora.", res.nota_sem_suspeitas != null && /*#__PURE__*/React.createElement(React.Fragment, null, " Sem elas a nota iria para ", /*#__PURE__*/React.createElement("b", null, res.nota_sem_suspeitas), "."), ' ', "Retirar s\xF3 tira a empresa do perfil; ela continua sendo cliente e nunca vira lead."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 5,
+      marginTop: 7
+    }
+  }, res.suspeitas_lista.map(x => /*#__PURE__*/React.createElement("div", {
+    key: x.cnpj,
+    style: {
+      display: 'flex',
+      gap: 8,
+      alignItems: 'center',
+      opacity: x.removida ? 0.55 : 1
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      flex: 1,
+      minWidth: 0,
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap'
+    }
+  }, x.nome, " ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, "\xB7 ", x.norm < 0.25 ? 'sem relação' : 'pouca relação')), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    style: btn,
+    onClick: () => alternar(x)
+  }, x.removida ? 'Devolver ao perfil' : 'Retirar do perfil'))))) : /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 6
+    }
+  }, "Nenhuma suspeita: todas as empresas avaliadas parecem com o cliente ideal."))));
+}
 function Semelhantes() {
   const [listas, setListas] = useState(null);
   const [criando, setCriando] = useState(false);
@@ -5253,6 +5514,18 @@ function Semelhantes() {
   };
   useEffect(() => {
     carregar();
+  }, []);
+  const [jevAtivo, setJevAtivo] = useState(false);
+  const [propostas, setPropostas] = useState([]);
+  useEffect(() => {
+    fetch('/api/decisao/ativo', {
+      credentials: 'same-origin'
+    }).then(r => r.ok ? r.json() : {}).then(d => {
+      setJevAtivo(!!d.ativo);
+      if (d.ativo) fetch('/api/propostas', {
+        credentials: 'same-origin'
+      }).then(r => r.ok ? r.json() : []).then(p => setPropostas(Array.isArray(p) ? p : [])).catch(() => {});
+    }).catch(() => {});
   }, []);
   const cnpjs = useMemo(() => {
     const vistos = new Set(),
@@ -5672,7 +5945,7 @@ function Semelhantes() {
       style: {
         display: 'flex',
         gap: 13,
-        alignItems: 'center',
+        alignItems: 'flex-start',
         padding: '14px 16px',
         borderRadius: 12,
         background: 'var(--panel)',
@@ -5761,7 +6034,11 @@ function Semelhantes() {
       style: {
         color: cor
       }
-    }, rot), l.automatica && ' · alimentada pelo CRM automaticamente'))), editNome !== l.nome && /*#__PURE__*/React.createElement("div", {
+    }, rot), l.automatica && ' · alimentada pelo CRM automaticamente', l.excluidas > 0 && ` · ${l.excluidas} fora do perfil`), jevAtivo && /*#__PURE__*/React.createElement(NotaJevLista, {
+      l: l,
+      propostas: propostas,
+      onMudou: carregar
+    }))), editNome !== l.nome && /*#__PURE__*/React.createElement("div", {
       style: {
         display: 'flex',
         gap: 7,
@@ -9412,7 +9689,15 @@ function NovaBusca({
         style: {
           color: cor
         }
-      }, rot), " (", l.n, " empresas).", l.automatica && ' Esta lista cresce sozinha a cada conversão recebida do CRM, e o radar refaz o perfil junto.');
+      }, rot), " (", l.n, " empresas).", l.automatica && ' Esta lista cresce sozinha a cada conversão recebida do CRM, e o radar refaz o perfil junto.', l.jev_nota != null && l.jev_faixa !== 'segura' && /*#__PURE__*/React.createElement("div", {
+        style: {
+          marginTop: 6,
+          padding: '7px 10px',
+          borderRadius: 8,
+          border: `1px solid ${l.jev_faixa === 'arriscada' ? '#F87171' : '#F59E0B'}`,
+          color: 'var(--text)'
+        }
+      }, "Aten\xE7\xE3o: a nota de seguran\xE7a do Jev para esta lista \xE9 ", /*#__PURE__*/React.createElement("b", null, l.jev_nota), l.jev_faixa === 'arriscada' ? ' (arriscada)' : ' (atenção)', ". H\xE1 empresas na lista longe do cliente ideal, e o radar vai procurar semelhantes a elas tamb\xE9m. Revise as suspeitas no menu ", /*#__PURE__*/React.createElement("b", null, "Semelhantes"), " antes de criar o radar."));
     })(), /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 11.5,

@@ -365,6 +365,8 @@ async function perfilar(pool, criterios, busca_id, lista, apiKey = null) {
       // Contraexemplo (joinha pra baixo): NÃO entra na amostra de compradores —
       // entra do outro lado da conta, pra o motor saber o que evitar.
       if (r.tipo === 'negativa') { negativos.push(r.cnpj); cnpjs.delete(r.cnpj); }
+      // Excluída pelo usuário (suspeita da nota Jev): segue cliente, fora do perfil.
+      else if (r.tipo === 'excluida') cnpjs.delete(r.cnpj);
       else cnpjs.add(r.cnpj);
     }
   }
@@ -633,3 +635,8 @@ function buildSearchParams(criterios) {
   }
   return out;
 }
+
+// Reusados pela nota de segurança da lista (jobs/avaliacao-lista.js).
+module.exports.enrichComRetry = enrichComRetry;
+module.exports.upsertEmpresa = upsertEmpresa;
+module.exports.TETO_AMOSTRA = TETO_AMOSTRA;
