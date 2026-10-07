@@ -9,6 +9,7 @@
 const crypto = require('crypto');
 const webhook = require('../providers/webhook');
 const gk = require('../providers/gk');
+const distribuicao = require('./distribuicao');
 const { registrar } = require('./tracking');
 
 module.exports = async function crm(job, pool, queues) {
@@ -33,7 +34,7 @@ module.exports = async function crm(job, pool, queues) {
   const { rows: [lead] } = await pool.query(
     `SELECT l.id, l.cnpj, l.busca_id, l.score, l.swot, l.contato_validado, l.crm_ref,
             l.fantasia, l.razao, l.setor, l.cnae, l.porte, l.cidade, l.uf,
-            l.decisor, l.cargo, l.endereco, l.situacao, l.abertura, l.capital, l.breakdown,
+            l.decisor, l.cargo, l.endereco, l.situacao, l.abertura, l.capital, l.breakdown, l.crm_conexao_id,
             b.nome AS busca_nome, b.crm_queue_id AS busca_queue_id, b.tags AS busca_tags
      FROM leads l LEFT JOIN buscas b ON b.id=l.busca_id WHERE l.id=$1`, [lead_id]
   );
@@ -85,20 +86,44 @@ module.exports = async function crm(job, pool, queues) {
     // de tag documentado, então vão em informação adicional, como o hunter_ref.
     if (tags.length) contato.extraInfo.push({ name: 'Tags', value: tags.join(', ').slice(0, 250) });
 
-    const contactId = await gk.upsertContato(backend, token, contato);
+    // Distribuição entre conexões (aba Estratégia): sorteia o número de
+    // WhatsApp que recebe este lead e fala com o CRM pelo Token da Empresa
+    // apontado pra ele. Desligada (ou incompleta) = caminho de sempre, pelo
+    // token da conexão salvo em Integrações.
+    let auth = token, conexao = null, distribMotivo = null;
+    const dcfg = await distribuicao.config(pool);
+    if (dcfg?.token) {
+      const esc = await distribuicao.escolher(pool, dcfg, lead);
+      conexao = esc.conexao;
+      auth = gk.comConexao(dcfg.token, conexao.id);
+      // Grava antes de enviar: se algo falhar, a retentativa cai na mesma
+      // conexão em vez de gastar a vez de outra no rodízio.
+      if (!esc.reuso) {
+        await pool.query(`UPDATE leads SET crm_conexao_id=$2, crm_conexao_nome=$3 WHERE id=$1`,
+          [lead_id, conexao.id, conexao.nome]);
+      }
+    } else if (dcfg?.motivo) {
+      distribMotivo = dcfg.motivo;
+      console.warn(`[crm] distribuição ligada mas sem efeito (${dcfg.motivo}) — lead ${lead_id} vai pela conexão padrão`);
+    }
+
+    const contactId = await gk.upsertContato(backend, auth, contato);
     crmLeadId = contactId != null ? String(contactId) : null;
-    const tk = await gk.abrirTicket(backend, token,
-      { contactId, queueId, status: ig.config?.status || 'pending', number: contato.number });
+    const tk = await gk.abrirTicket(backend, auth,
+      { contactId, queueId, status: ig.config?.status || 'pending', number: contato.number,
+        whatsappId: conexao?.id || null });
     // Briefing completo do agente (empresa + SWOT + fatos + dores + sinal +
     // motivos do score) como nota interna no ticket: é o material que o closer
     // usa, e não cabe nos campos do contato. Sem ticket não há onde gravar —
     // fica registrado no resultado do job.
     let nota = false;
     if (tk.ticketId) {
-      await gk.enviarNotaInterna(backend, token, tk.ticketId, gk.montarBriefing(empresa, lead, extras));
+      await gk.enviarNotaInterna(backend, auth, tk.ticketId, gk.montarBriefing(empresa, lead, extras));
       nota = true;
     }
     resultadoGk = { contactId, ticketId: tk.ticketId, fila_aplicada: tk.filaAplicada, nota_briefing: nota,
+                    ...(conexao ? { conexao: { id: conexao.id, nome: conexao.nome } } : {}),
+                    ...(distribMotivo ? { distribuicao: distribMotivo } : {}),
                     ...(tk.motivo ? { motivo: tk.motivo } : {}) };
   } else {
     // webhook genérico

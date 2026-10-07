@@ -3250,7 +3250,188 @@ function ControleCrm({ plano, crm, salvando, onSalvar }) {
   );
 }
 
-function Estrategia({ onNovaPauta, onEditarPauta, onUsarRadar, onAbrirRadar }) {
+// Interruptor acessível (botão com role=switch): o checkbox do navegador não
+// deixa claro, numa lista longa, o que está ligado.
+function Interruptor({ ligado, onChange, disabled, rotulo }) {
+  return (
+    <button type="button" role="switch" aria-checked={!!ligado} aria-label={rotulo} disabled={disabled}
+      onClick={() => onChange(!ligado)}
+      style={{ width:38, height:22, borderRadius:11, border:'none', padding:2, flexShrink:0,
+        cursor: disabled ? 'default' : 'pointer', opacity: disabled ? .5 : 1,
+        background: ligado ? C.green : 'var(--border)', transition:'background .15s' }}>
+      <span style={{ display:'block', width:18, height:18, borderRadius:'50%', background:'#fff',
+        transform: ligado ? 'translateX(16px)' : 'translateX(0)', transition:'transform .15s',
+        boxShadow:'0 1px 2px rgba(0,0,0,.3)' }}/>
+    </button>
+  );
+}
+
+const STATUS_CONEXAO = { CONNECTED: ['conectada', C.green], OPENING: ['abrindo', C.amber], PAIRING: ['pareando', C.amber],
+  qrcode: ['aguardando QR', C.amber], DISCONNECTED: ['desconectada', C.red], TIMEOUT: ['sem resposta', C.red] };
+
+// Distribuição dos leads entre as conexões (números de WhatsApp) do CRM GK.
+// Só aparece com o CRM GK ativo. Cada lead enviado vai pra uma conexão marcada,
+// em rodízio ou por sorteio ponderado.
+function DistribuicaoCrm({ plano, user, salvando, onSalvar }) {
+  const [dados, setDados] = useState(null);
+  const [carregando, setCarregando] = useState(true);
+  const [token, setToken] = useState('');
+  const [editandoToken, setEditandoToken] = useState(false);
+
+  const carregar = () => {
+    setCarregando(true);
+    return fetch('/api/estrategia/conexoes', { credentials:'same-origin' })
+      .then(r => r.ok ? r.json() : r.json().then(x => Promise.reject(new Error(x.erro || 'erro'))))
+      .then(x => setDados(x))
+      .catch(e => setDados({ gk: true, conexoes: [], erro: e.message }))
+      .finally(() => setCarregando(false));
+  };
+  useEffect(() => { carregar(); }, [plano.distrib_tem_token]);
+
+  if (!dados && carregando) return null;
+  if (!dados?.gk) return null;
+
+  const conexoes = dados.conexoes || [];
+  const marcadas = conexoes.filter(c => c.ativo);
+  const ponderada = plano.distrib_modo === 'ponderada';
+  const somaPesos = marcadas.reduce((t, c) => t + (c.peso || 1), 0);
+  const salvarLista = (nova) => {
+    setDados(d => ({ ...d, conexoes: nova }));   // otimista: a tela responde na hora
+    onSalvar({ distrib_conexoes: nova.map(({ id, nome, ativo, peso }) => ({ id, nome, ativo, peso })) });
+  };
+  const alterar = (id, campos) => salvarLista(conexoes.map(c => c.id === id ? { ...c, ...campos } : c));
+  const salvarToken = async () => { await onSalvar({ distrib_token: token }); setToken(''); setEditandoToken(false); };
+
+  const pronta = plano.distrib_tem_token && marcadas.length > 0;
+  const aviso = !plano.distrib_ativo ? null
+    : !plano.distrib_tem_token ? 'Falta o Token da Empresa do CRM — enquanto isso os leads seguem pela conexão padrão de Integrações.'
+    : !marcadas.length ? 'Nenhuma conexão marcada — enquanto isso os leads seguem pela conexão padrão de Integrações.'
+    : null;
+  const inputSt = { height:34, borderRadius:8, border:'1px solid var(--border)', background:'var(--panel2)',
+    color:'var(--text)', padding:'0 10px', fontSize:13, fontFamily:'inherit' };
+
+  return (
+    <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:20, marginBottom:18 }}>
+      <div style={{ display:'flex', alignItems:'flex-start', gap:14, flexWrap:'wrap' }}>
+        <div style={{ flex:'1 1 320px', minWidth:0 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:6 }}>
+            <StatusDot color={plano.distrib_ativo && pronta ? C.green : C.gray} pulse={false}/>
+            <span style={{ fontSize:15, fontWeight:600 }}>Distribuição entre conexões do CRM</span>
+          </div>
+          <div style={{ fontSize:12.5, color:'var(--dim)', lineHeight:1.5 }}>
+            Cada lead enviado ao CRM abre o atendimento em uma das conexões (números de WhatsApp) marcadas abaixo.
+            O lead fica com a conexão sorteada: se o envio precisar ser repetido, vai para a mesma.
+          </div>
+        </div>
+        <Interruptor ligado={plano.distrib_ativo} disabled={salvando} rotulo="Ligar distribuição entre conexões"
+          onChange={v => onSalvar({ distrib_ativo: v })}/>
+      </div>
+
+      {aviso && <div style={{ fontSize:12, color:C.amber, marginTop:12 }}>{aviso}</div>}
+
+      <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginTop:16 }}>
+        {[['rodizio', 'Rodízio', 'Um lead para cada conexão marcada, na ordem da lista, e recomeça.'],
+          ['ponderada', 'Amostragem ponderada', 'Sorteio em que cada conexão tem chance proporcional ao seu peso.']].map(([v, nome, desc]) => {
+          const sel = (plano.distrib_modo || 'rodizio') === v;
+          return (
+            <button key={v} type="button" disabled={salvando} onClick={() => !sel && onSalvar({ distrib_modo: v })}
+              aria-pressed={sel}
+              style={{ flex:'1 1 240px', textAlign:'left', padding:'10px 12px', borderRadius:10, cursor:'pointer', fontFamily:'inherit',
+                border: sel ? `1.5px solid ${C.gold}` : '1px solid var(--border)',
+                background: sel ? 'color-mix(in srgb, var(--accent) 7%, transparent)' : 'var(--panel2)', color:'var(--text)' }}>
+              <div style={{ fontSize:13, fontWeight:600, color: sel ? C.gold : 'var(--text)' }}>{nome}</div>
+              <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:3, lineHeight:1.4 }}>{desc}</div>
+            </button>
+          );
+        })}
+      </div>
+
+      <div style={{ marginTop:16 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:8 }}>
+          <span style={{ fontSize:12, color:'var(--dim)', flex:1 }}>
+            Conexões da empresa no CRM {marcadas.length > 0 && <span style={{ color:'var(--faint)' }}>· {marcadas.length} marcada(s)</span>}
+          </span>
+          <button type="button" onClick={carregar} disabled={carregando}
+            style={{ background:'none', border:'none', padding:0, color:C.gold, fontSize:12, cursor:'pointer', fontFamily:'inherit' }}>
+            {carregando ? 'Atualizando…' : 'Atualizar lista'}
+          </button>
+        </div>
+        {dados.erro && <div style={{ fontSize:12, color:C.amber, marginBottom:8 }}>Não consegui buscar as conexões no CRM: {dados.erro}</div>}
+        {!conexoes.length && !dados.erro && (
+          <div style={{ fontSize:12, color:'var(--faint)' }}>O CRM não devolveu nenhuma conexão.</div>
+        )}
+        {conexoes.map(c => {
+          const [stTxt, stCor] = STATUS_CONEXAO[c.status] || [c.status ? String(c.status).toLowerCase() : 'status desconhecido', C.gray];
+          const pct = c.ativo && somaPesos ? Math.round(100 * (ponderada ? (c.peso || 1) / somaPesos : 1 / marcadas.length)) : null;
+          return (
+            <div key={c.id} style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 0', borderTop:'1px solid var(--border)', flexWrap:'wrap' }}>
+              <Interruptor ligado={c.ativo} disabled={salvando} rotulo={`Receber leads na conexão ${c.nome}`}
+                onChange={v => alterar(c.id, { ativo: v })}/>
+              <div style={{ flex:'1 1 200px', minWidth:0 }}>
+                <div style={{ fontSize:13, fontWeight:500, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }} title={c.nome}>{c.nome}</div>
+                <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:2, display:'flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
+                  <span style={{ color: c.sumiu ? C.red : stCor }}>● {c.sumiu ? 'não existe mais no CRM' : stTxt}</span>
+                  {c.numero && <span>· {c.numero}</span>}
+                  <span>· {c.enviados_30d} lead(s) em 30 dias</span>
+                </div>
+              </div>
+              {ponderada && c.ativo && (
+                <label style={{ display:'flex', alignItems:'center', gap:6, fontSize:12, color:'var(--dim)' }}>
+                  Peso
+                  <input type="number" min={1} max={100} defaultValue={c.peso || 1} key={c.id + ':' + c.peso}
+                    aria-label={`Peso da conexão ${c.nome}`}
+                    onBlur={e => { const n = Math.min(100, Math.max(1, parseInt(e.target.value, 10) || 1));
+                      e.target.value = n; if (n !== c.peso) alterar(c.id, { peso: n }); }}
+                    onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+                    style={{ ...inputSt, width:64 }}/>
+                </label>
+              )}
+              {pct != null && (
+                <span style={{ fontSize:12, fontWeight:600, color:C.gold, minWidth:44, textAlign:'right' }}
+                  title={ponderada ? 'Chance de receber cada lead' : 'Parte dos leads no rodízio'}>{pct}%</span>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div style={{ marginTop:14, paddingTop:14, borderTop:'1px solid var(--border)' }}>
+        <div style={{ fontSize:12, color:'var(--dim)', display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+          <span>Token da Empresa do CRM:</span>
+          {plano.distrib_tem_token
+            ? <b style={{ color:C.green }}>configurado</b>
+            : <b style={{ color:C.amber }}>não configurado</b>}
+          {user?.master && !editandoToken && (
+            <button type="button" onClick={() => setEditandoToken(true)}
+              style={{ background:'none', border:'none', padding:0, color:C.gold, fontSize:12, cursor:'pointer', fontFamily:'inherit' }}>
+              {plano.distrib_tem_token ? 'trocar' : 'configurar'}
+            </button>
+          )}
+        </div>
+        {user?.master && editandoToken && (
+          <div style={{ display:'flex', gap:8, marginTop:8, flexWrap:'wrap' }}>
+            <input type="password" autoComplete="off" value={token} onChange={e => setToken(e.target.value)}
+              placeholder="Cole o Token da Empresa" aria-label="Token da Empresa do CRM" data-1p-ignore data-lpignore="true"
+              style={{ ...inputSt, flex:'1 1 260px' }}/>
+            <button type="button" disabled={salvando || !token.trim()} onClick={salvarToken}
+              style={{ height:34, padding:'0 14px', borderRadius:8, border:'none', background:'var(--gold)', color:'#0E1936',
+                fontWeight:600, fontSize:12.5, fontFamily:'inherit', cursor:'pointer', opacity: token.trim() ? 1 : .5 }}>Salvar</button>
+            <button type="button" onClick={() => { setEditandoToken(false); setToken(''); }}
+              style={{ height:34, padding:'0 12px', borderRadius:8, border:'1px solid var(--border)', background:'transparent',
+                color:'var(--text)', fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>Cancelar</button>
+          </div>
+        )}
+        <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:6, lineHeight:1.45 }}>
+          O token salvo em Integrações pertence a uma única conexão e só abre atendimento nela. Para escolher o número de cada lead,
+          o Hunter usa o Token da Empresa (no CRM: Configurações → Token da Empresa).
+          {!user?.master && !plano.distrib_tem_token && ' Peça ao administrador master para configurá-lo.'}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Estrategia({ onNovaPauta, onEditarPauta, onUsarRadar, onAbrirRadar, user }) {
   const [d, setD] = useState(null);
   const [erro, setErro] = useState(null);
   const [radares, setRadares] = useState([]);
@@ -3361,6 +3542,12 @@ function Estrategia({ onNovaPauta, onEditarPauta, onUsarRadar, onAbrirRadar }) {
         <ControleCrm plano={plano} crm={d.crm} salvando={salvando}
           onSalvar={corpo => enviar('/api/estrategia', 'PATCH', corpo)}/>
       </div>
+
+      {/* ── Distribuição entre conexões (só CRM GK) ────────────────────── */}
+      {d.crm?.provedor === 'gk' && (
+        <DistribuicaoCrm plano={plano} user={user} salvando={salvando}
+          onSalvar={corpo => enviar('/api/estrategia', 'PATCH', corpo)}/>
+      )}
 
       {/* ── Calendário do mês ──────────────────────────────────────────── */}
       <div style={cartao}>
@@ -6512,7 +6699,7 @@ function App() {
       case 'buscaDetail': return <BuscaDetail buscaId={buscaDetailId} onBack={() => setScreen('buscas')} onOpenLead={setOpenLeadId} onDuplicar={duplicarBusca}/>;
       case 'nova': return <NovaBusca key={duplicarDe ? 'dup-'+duplicarDe.id : 'nova'} inicial={duplicarDe} onSalvar={() => navTo('buscas')}/>;
       case 'estrategia': return (
-        <Estrategia
+        <Estrategia user={user}
           onNovaPauta={() => { setPautaEdit({}); setScreen('pautaForm'); }}
           onEditarPauta={(p) => { setPautaEdit({ pauta: p }); setScreen('pautaForm'); }}
           onUsarRadar={async (b) => {
