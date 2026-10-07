@@ -5303,6 +5303,35 @@ function NotaJevLista({
       setEnviando(false);
     }
   };
+
+  // Cria uma lista nova só com os clientes de um segmento do raio-X. A lista
+  // nova é avaliada sozinha pelo Jev e pode virar radar Semelhantes própria.
+  const [criandoSeg, setCriandoSeg] = useState(null);
+  const listaDoSegmento = async g => {
+    const nome = `${l.rotulo} · ${g.rotulo}`.slice(0, 80);
+    if (!window.confirm(`Criar a lista "${nome}" com ${g.n} cliente${g.n === 1 ? '' : 's'} deste segmento? A lista original continua igual.`)) return;
+    setCriandoSeg(g.segmento);
+    try {
+      const r = await fetch('/api/listas', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          nome,
+          cnpjs: g.cnpjs
+        })
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.erro || 'Erro ao criar a lista.');
+      onMudou();
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setCriandoSeg(null);
+    }
+  };
   const alternar = async x => {
     const r = await fetch('/api/listas/' + encodeURIComponent(l.nome) + '/sementes/' + x.cnpj, {
       method: 'PATCH',
@@ -5454,7 +5483,79 @@ function NotaJevLista({
     style: {
       color: (FAIXA_JEV[av.faixa] || [])[1]
     }
-  }, av.nota), " (", (FAIXA_JEV[av.faixa] || [])[0], ")", av.proposta_rotulo ? /*#__PURE__*/React.createElement(React.Fragment, null, " contra \"", av.proposta_rotulo, "\"") : null, " \xB7 ader\xEAncia m\xE9dia ", res.aderencia_media, "% \xB7", ' ', res.avaliadas, " avaliada", res.avaliadas === 1 ? '' : 's', res.sem_dados ? ` · ${res.sem_dados} sem cadastro` : '', res.fator_tamanho < 1 ? ` · lista curta (×${res.fator_tamanho})` : ''), res.suspeitas_lista?.length > 0 ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, av.nota), " (", (FAIXA_JEV[av.faixa] || [])[0], ")", av.proposta_rotulo ? /*#__PURE__*/React.createElement(React.Fragment, null, " contra \"", av.proposta_rotulo, "\"") : null, " \xB7 ader\xEAncia m\xE9dia ", res.aderencia_media, "% \xB7", ' ', res.avaliadas, " avaliada", res.avaliadas === 1 ? '' : 's', res.sem_dados ? ` · ${res.sem_dados} sem cadastro` : '', res.fator_tamanho < 1 ? ` · lista curta (×${res.fator_tamanho})` : ''), res.raio_x?.length > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 10,
+      marginBottom: 4
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontWeight: 600,
+      color: 'var(--text)',
+      marginBottom: 6
+    }
+  }, "Raio-X da lista: que tipo de cliente compra de voc\xEA"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 7
+    }
+  }, res.raio_x.map(g => /*#__PURE__*/React.createElement("div", {
+    key: g.segmento
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      alignItems: 'center'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      flex: 1,
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: 'var(--text)'
+    }
+  }, g.rotulo), " \xB7 ", g.n, " (", g.pct, "%)", g.aderencia_media != null && /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, " \xB7 representa o cliente ideal: ", g.aderencia_media, "%")), g.n >= 3 && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    style: btn,
+    disabled: criandoSeg === g.segmento,
+    onClick: () => listaDoSegmento(g)
+  }, criandoSeg === g.segmento ? 'Criando…' : 'Criar lista com este segmento')), /*#__PURE__*/React.createElement("div", {
+    style: {
+      height: 5,
+      borderRadius: 3,
+      background: 'var(--border)',
+      marginTop: 3
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: `${g.pct}%`,
+      height: '100%',
+      borderRadius: 3,
+      background: C.gold
+    }
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)',
+      marginTop: 2,
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap'
+    }
+  }, "ex.: ", g.exemplos.join(', '))))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)',
+      marginTop: 6
+    }
+  }, "Cada segmento pode virar uma lista pr\xF3pria e um radar Semelhantes pr\xF3prio: o radar procura empresas parecidas com aquele tipo de cliente, em vez da m\xE9dia de todos. Segmentos com menos de 3 clientes n\xE3o formam perfil.")), res.suspeitas_lista?.length > 0 ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 6
     }
@@ -5629,7 +5730,7 @@ function Semelhantes() {
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.erro || 'Erro ao salvar a lista.');
-      setAviso(d.retirados > 0 ? `${d.retirados} lead(s) da sua base eram empresas desta lista e saíram da esteira — elas são o modelo da busca, não alvo.` : null);
+      setAviso([d.retirados > 0 ? `${d.retirados} lead(s) da sua base eram empresas desta lista e saíram da esteira — elas são o modelo da busca, não alvo.` : null, d.avaliando ? 'O Jev já está montando o raio-X da lista (segmentos e nota de segurança); abra "Detalhes" na lista em alguns minutos.' : null].filter(Boolean).join(' ') || null);
       setCriando(false);
       setNome('');
       setTexto('');

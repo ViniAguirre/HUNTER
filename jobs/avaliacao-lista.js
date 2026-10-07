@@ -56,7 +56,7 @@ module.exports = async function avaliacaoLista(job, pool) {
   let r;
   try {
     const perfil = await typesafe.perfilComprador(pool);
-    r = await typesafe.avaliarAderencia(ig.apiKey, av.icp_texto, empresas, { modelo: ig.modelo, perfil, modo: 'cliente' });
+    r = await typesafe.avaliarAderencia(ig.apiKey, av.icp_texto, empresas, { modelo: ig.modelo, perfil, modo: 'cliente', segmentar: true });
   } catch (e) { return falhar(e.message); }
   const nota = typesafe.notaDaLista(r.itens);
   if (!nota) return falhar('o Jev não devolveu nota para nenhuma empresa');
@@ -66,6 +66,7 @@ module.exports = async function avaliacaoLista(job, pool) {
     nivel: x.nivel == null ? null : Math.round(x.nivel * 100) / 100,
     norm: x.norm == null ? null : Math.round(x.norm * 100) / 100,
     confianca: x.confianca == null ? null : Math.round(x.confianca * 100) / 100,
+    segmento: x.segmento || null,
   }));
   const resultado = {
     ...nota,
@@ -73,6 +74,7 @@ module.exports = async function avaliacaoLista(job, pool) {
     total_lista: sementes.length,
     tokens: r.tokens,
     falhas_jev: r.falhas || 0,
+    raio_x: typesafe.raioX(itens),
     suspeitas_lista: itens.filter(x => x.norm != null && x.norm < 0.5).sort((a, b) => a.norm - b.norm),
     itens,
   };

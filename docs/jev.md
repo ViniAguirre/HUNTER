@@ -83,6 +83,20 @@ Se "fora do perfil" se concentra nos níveis baixos e "convertido" nos altos, o
 Jev separa bem: aí vale ele entrar na nota (item 2) e decidir a zona cinzenta
 (item 3). Até lá, nenhum lead muda.
 
+## Raio-X da lista
+
+Na mesma chamada da nota, o Jev classifica cada cliente num segmento
+(`typesafe.SEGMENTOS`): especializado no produto do vendedor, material de
+construção/hidráulico, eletro/eletrônicos, alimentação, outro varejo, atacado,
+serviços técnicos, saúde e bem-estar, serviços profissionais, hospedagem e
+eventos, indústria, outro. O nome da empresa entra como pista (o código da
+Receita costuma ser genérico). A tela mostra a composição, quanto cada segmento
+representa o cliente ideal e um botão para criar uma lista só com aquele
+segmento, que vira um radar Semelhantes próprio.
+
+Lista nova (ou reenviada) com o Jev ativo e ao menos uma proposta de valor é
+avaliada sozinha, com a primeira proposta; o usuário pode reavaliar com outra.
+
 ## Regra do state
 
 O Jev julga cada resposta **contra o `state`**. Tudo que é para ser avaliado
