@@ -289,25 +289,64 @@ function raioX(itens) {
 //  - suspeitas: empresas abaixo de "Related" (norm < 0,5), que puxam o perfil
 //    médio para fora do cliente ideal — cada uma piora todo radar da lista;
 //  - tamanho: lista curta tem perfil frágil (mesma régua de `confiancaDe`).
+const fatorTamanhoDe = n => (n < 6 ? 0.8 : n < 15 ? 0.9 : 1);
+
+// Nota 0–100 da lista = COESÃO: a fatia do segmento principal (choice do Jev),
+// ajustada pelo tamanho. Um radar Semelhantes procura empresas parecidas com a
+// MÉDIA da lista; lista que mistura segmentos gera uma média que não é nenhum
+// deles. Suspeitas = clientes fora do segmento principal.
+// Por que não a aderência ao fichamento: no diagnóstico da Planeta Água o Jev
+// classificou 53 de 54 revendas de filtro como "especializado no produto", mas
+// deu nota de aderência ~0,4/3 para as mesmas empresas contra o "Cliente ideal"
+// (texto longo em português, onde a TypeSafe avisa que a precisão é menor).
+// A aderência continua calculada e exposta, mas não decide a nota.
 function notaDaLista(itens) {
-  const validos = itens.filter(x => x.norm != null);
+  const comSeg = itens.filter(x => x && x.segmento);
+  if (comSeg.length) {
+    const n = comSeg.length;
+    const cont = {};
+    for (const x of comSeg) cont[x.segmento] = (cont[x.segmento] || 0) + 1;
+    const [principal, nPrincipal] = Object.entries(cont).sort((a, b) => b[1] - a[1])[0];
+    const fator = fatorTamanhoDe(n);
+    const nota = Math.round(nPrincipal / n * 100 * fator);
+    const suspeitas = comSeg.filter(x => x.segmento !== principal);
+    const validos = itens.filter(x => x && x.norm != null);
+    return {
+      base: 'coesao',
+      nota,
+      faixa: nota >= 75 ? 'segura' : nota >= 55 ? 'atencao' : 'arriscada',
+      segmento_principal: principal,
+      segmento_principal_rotulo: ROTULOS_SEGMENTO[principal] || principal,
+      pct_principal: Math.round(nPrincipal / n * 100),
+      segmentos: Object.keys(cont).length,
+      aderencia_media: validos.length ? Math.round(validos.reduce((a, x) => a + x.norm, 0) / validos.length * 100) : null,
+      avaliadas: n,
+      suspeitas: suspeitas.length,
+      suspeitas_cnpjs: suspeitas.map(x => x.cnpj),
+      fator_tamanho: fator,
+      // Só o segmento principal, como lista própria: o que o raio-X oferece.
+      nota_sem_suspeitas: suspeitas.length ? Math.round(100 * fatorTamanhoDe(nPrincipal)) : null,
+    };
+  }
+  // Sem segmento (avaliação antiga ou falha na classificação): aderência.
+  const validos = itens.filter(x => x && x.norm != null);
   if (!validos.length) return null;
   const aderencia = validos.reduce((s, x) => s + x.norm, 0) / validos.length;
-  const suspeitas = validos.filter(x => x.norm < 0.5).sort((a, b) => a.norm - b.norm);
+  const suspeitas = validos.filter(x => x.norm < 0.5);
   const n = validos.length;
-  const fatorTamanho = n < 6 ? 0.8 : n < 15 ? 0.9 : 1;
-  const nota = Math.round(aderencia * 100 * fatorTamanho);
+  const nota = Math.round(aderencia * 100 * fatorTamanhoDe(n));
   return {
+    base: 'aderencia',
     nota,
     faixa: nota >= 75 ? 'segura' : nota >= 55 ? 'atencao' : 'arriscada',
     aderencia_media: Math.round(aderencia * 100),
     avaliadas: n,
     suspeitas: suspeitas.length,
-    fator_tamanho: fatorTamanho,
-    // Quanto a nota subiria tirando as suspeitas: ajuda a decidir se vale limpar.
+    suspeitas_cnpjs: suspeitas.map(x => x.cnpj),
+    fator_tamanho: fatorTamanhoDe(n),
     nota_sem_suspeitas: suspeitas.length && suspeitas.length < n
       ? Math.round(validos.filter(x => x.norm >= 0.5).reduce((s, x) => s + x.norm, 0) / (n - suspeitas.length) * 100
-        * ((n - suspeitas.length) < 6 ? 0.8 : (n - suspeitas.length) < 15 ? 0.9 : 1))
+        * fatorTamanhoDe(n - suspeitas.length))
       : null,
   };
 }

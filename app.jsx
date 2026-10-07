@@ -2553,7 +2553,9 @@ function NotaJevLista({ l, propostas, onMudou }) {
             <div style={{ fontSize:12, color:'var(--dim)', lineHeight:1.6 }}>
               <div>
                 Nota <b style={{ color:(FAIXA_JEV[av.faixa] || [])[1] }}>{av.nota}</b> ({(FAIXA_JEV[av.faixa] || [])[0]})
-                {av.proposta_rotulo ? <> contra "{av.proposta_rotulo}"</> : null} · aderência média {res.aderencia_media}% ·
+                {res.base === 'coesao'
+                  ? <> · segmento principal: <b style={{ color:'var(--text)' }}>{res.segmento_principal_rotulo}</b> ({res.pct_principal}%) · {res.segmentos} segmento{res.segmentos === 1 ? '' : 's'} ·</>
+                  : <>{av.proposta_rotulo ? <> contra "{av.proposta_rotulo}"</> : null} · aderência média {res.aderencia_media}% ·</>}
                 {' '}{res.avaliadas} avaliada{res.avaliadas === 1 ? '' : 's'}
                 {res.sem_dados ? ` · ${res.sem_dados} sem cadastro` : ''}
                 {res.fator_tamanho < 1 ? ` · lista curta (×${res.fator_tamanho})` : ''}
@@ -2567,7 +2569,6 @@ function NotaJevLista({ l, propostas, onMudou }) {
                         <div style={{ display:'flex', gap:8, alignItems:'center' }}>
                           <span style={{ flex:1, minWidth:0 }}>
                             <b style={{ color:'var(--text)' }}>{g.rotulo}</b> · {g.n} ({g.pct}%)
-                            {g.aderencia_media != null && <span style={{ color:'var(--faint)' }}> · representa o cliente ideal: {g.aderencia_media}%</span>}
                           </span>
                           {g.n >= 3 && (
                             <button type="button" style={btn} disabled={criandoSeg === g.segmento} onClick={() => listaDoSegmento(g)}>
@@ -2593,15 +2594,15 @@ function NotaJevLista({ l, propostas, onMudou }) {
               {res.suspeitas_lista?.length > 0 ? (
                 <>
                   <div style={{ marginTop:6 }}>
-                    {res.suspeitas_lista.length} suspeita{res.suspeitas_lista.length === 1 ? '' : 's'}: empresas que o Jev
-                    considera clientes atípicos: compraram, mas não se parecem com o seu cliente ideal. Como modelo, levam o radar a procurar empresas parecidas com elas.
+                    {res.suspeitas_lista.length} suspeita{res.suspeitas_lista.length === 1 ? '' : 's'}: {res.base === 'coesao'
+                      ? <>clientes fora do segmento principal ({res.segmento_principal_rotulo}). O radar procura empresas parecidas com a média da lista; misturar segmentos dilui essa média.</>
+                      : <>empresas que o Jev considera clientes atípicos: compraram, mas não se parecem com o seu cliente ideal.</>}
                     {res.nota_sem_suspeitas != null && <> Sem elas a nota iria para <b>{res.nota_sem_suspeitas}</b>.</>}
                     {' '}Retirar só tira a empresa do perfil; ela continua sendo cliente e nunca vira lead.
                     {res.suspeitas_lista.length > res.avaliadas / 2 && (
                       <div style={{ marginTop:6, color:'var(--text)' }}>
-                        Mais da metade da lista não se parece com o cliente ideal do seu fichamento. Ou o fichamento
-                        está mais estreito que a sua clientela real (revise o "Cliente ideal" em <b>Agente SWOT</b>), ou a
-                        lista mistura perfis diferentes e rende mais separada por segmento.
+                        A lista mistura perfis diferentes. Use o raio-X acima para criar uma lista por segmento e um
+                        radar Semelhantes para cada uma.
                       </div>
                     )}
                   </div>
@@ -2609,7 +2610,7 @@ function NotaJevLista({ l, propostas, onMudou }) {
                     {res.suspeitas_lista.map(x => (
                       <div key={x.cnpj} style={{ display:'flex', gap:8, alignItems:'center', opacity: x.removida ? 0.55 : 1 }}>
                         <span style={{ flex:1, minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
-                          {x.nome} <span style={{ color:'var(--faint)' }}>· {x.norm < 0.25 ? 'cliente atípico' : 'cliente ocasional'}</span>
+                          {x.nome} <span style={{ color:'var(--faint)' }}>· {res.base === 'coesao' ? (x.segmento_rotulo || 'outro segmento') : (x.norm < 0.25 ? 'cliente atípico' : 'cliente ocasional')}</span>
                         </span>
                         <button type="button" style={btn} onClick={() => alternar(x)}>
                           {x.removida ? 'Devolver ao perfil' : 'Retirar do perfil'}</button>
@@ -2617,7 +2618,7 @@ function NotaJevLista({ l, propostas, onMudou }) {
                     ))}
                   </div>
                 </>
-              ) : <div style={{ marginTop:6 }}>Nenhuma suspeita: todas as empresas avaliadas representam bem o seu cliente ideal.</div>}
+              ) : <div style={{ marginTop:6 }}>Nenhuma suspeita: todas as empresas avaliadas são do mesmo segmento.</div>}
             </div>
           )}
         </div>
@@ -4584,8 +4585,8 @@ function NovaBusca({ onSalvar, inicial, modoPauta = false, pautaId = null, onCan
                             border:`1px solid ${l.jev_faixa === 'arriscada' ? '#F87171' : '#F59E0B'}`,
                             color:'var(--text)' }}>
                             Atenção: a nota de segurança do Jev para esta lista é <b>{l.jev_nota}</b>
-                            {l.jev_faixa === 'arriscada' ? ' (arriscada)' : ' (atenção)'}. Há na lista clientes atípicos, que não
-                            representam o seu cliente ideal, e o radar vai procurar semelhantes a eles também. Revise as suspeitas no menu <b>Semelhantes</b> antes de criar o radar.
+                            {l.jev_faixa === 'arriscada' ? ' (arriscada)' : ' (atenção)'}. A lista mistura clientes de perfis
+                            diferentes, e o radar procura a média de todos. Use o raio-X no menu <b>Semelhantes</b> para separar por segmento antes de criar o radar.
                           </div>
                         )}
                       </div>
