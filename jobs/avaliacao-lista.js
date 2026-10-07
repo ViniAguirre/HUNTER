@@ -72,6 +72,7 @@ module.exports = async function avaliacaoLista(job, pool) {
     sem_dados: semDados,
     total_lista: sementes.length,
     tokens: r.tokens,
+    falhas_jev: r.falhas || 0,
     suspeitas_lista: itens.filter(x => x.norm != null && x.norm < 0.5).sort((a, b) => a.norm - b.norm),
     itens,
   };
