@@ -51,6 +51,7 @@ module.exports = async function swot(job, pool, queues) {
   // OpenAI). Se a primeira falhar — crédito esgotado, chave inválida, rate
   // limit — tenta a próxima automaticamente.
   const igs = await openai.integracoesIA(pool);
+  let usado = null;   // provedor/modelo que gerou o briefing (vai no retorno do job)
   // Sem isto, "nenhuma IA ativa" some sem deixar rastro e o briefing só aparece
   // vazio na tela, sem explicação. O log diz a verdade.
   if (!igs.length) {
@@ -80,20 +81,29 @@ module.exports = async function swot(job, pool, queues) {
         score: lead?.score ?? null, breakdown: Array.isArray(lead?.breakdown) ? lead.breakdown : [],
         prova: jev?.prova || null,
       };
-      let briefing = null, ultimoErro = null;
+      // Guarda a falha de CADA provedor: antes só a última ia pro erro do job,
+      // e com OpenRouter e OpenAI falhando a tela mostrava só a da OpenAI —
+      // sem dizer que a OpenRouter tinha sido tentada antes (e por que caiu).
+      let briefing = null;
+      const falhas = [];
       for (const ig of igs) {
         try {
           briefing = await openai.gerarSwot(empresa, {
             apiKey: ig.key_cifrada, modelo: ig.config?.modelo, contexto, perfilEmpresa, provedor: ig.provedor,
             instrucoesCliente,
           });
+          briefing.provedor = ig.provedor;
+          if (falhas.length) briefing.reserva_de = falhas.map(f => f.provedor);
+          usado = { provedor: ig.provedor, modelo: briefing.modelo,
+                    ...(falhas.length ? { caiu_de: falhas } : {}) };
           break;
         } catch (e) {
-          ultimoErro = e;
+          falhas.push({ provedor: ig.provedor, modelo: ig.config?.modelo || null, erro: e.message.slice(0, 200) });
           console.warn(`[swot] provedor ${ig.provedor} falhou (${e.message}) — tentando o próximo`);
         }
       }
-      if (!briefing) throw ultimoErro;   // todas as chaves falharam → job re-tenta com backoff
+      // Todas as chaves falharam → job re-tenta com backoff.
+      if (!briefing) throw new Error('IA: todos os provedores falharam — ' + falhas.map(f => f.erro).join(' | '));
       await pool.query(
         `UPDATE leads SET swot=$2::jsonb, estagio='pronto', atualizado_em=now() WHERE id=$1`,
         [lead_id, JSON.stringify(briefing)]
@@ -120,5 +130,5 @@ module.exports = async function swot(job, pool, queues) {
       { jobId: `crm-${lead_id}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 4, backoff: { type: 'exponential', delay: 15000 } });
   }
 
-  return { cnpj, lead_id, swot: igs.length > 0, crm_auto: crmAuto, contato_ok: contatoOk };
+  return { cnpj, lead_id, swot: igs.length > 0, crm_auto: crmAuto, contato_ok: contatoOk, ...(usado ? { ia: usado } : {}) };
 };

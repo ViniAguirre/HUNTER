@@ -340,6 +340,32 @@ async function sugerirCnae(texto, catalogo, { apiKey, modelo, max = 8, provedor 
   }
 }
 
+// Teste de conexão da tela de Integrações: uma chamada mínima com a chave e o
+// modelo SALVOS, pra mostrar qual modelo de fato respondeu. O rótulo do card não
+// prova nada — modelo com nome errado só aparecia quando o briefing falhava.
+async function testarChave(provedor, apiKey, modelo) {
+  const prov = provedorDe(provedor);
+  if (!apiKey) return { ok: false, erro: 'chave não salva' };
+  const pedido = modelo || prov.modelo;
+  const inicio = Date.now();
+  try {
+    const { data } = await axios.post(prov.url, {
+      model: pedido,
+      messages: [{ role: 'user', content: 'Responda só: ok' }],
+      max_tokens: 16, temperature: 0,
+    }, { headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, timeout: 30000 });
+    return { ok: true, pedido, respondeu: data?.model || pedido, ms: Date.now() - inicio };
+  } catch (err) {
+    const status = err.response?.status;
+    const msg = err.response?.data?.error?.message || err.message;
+    const dica = status === 401 ? 'chave inválida ou revogada'
+      : status === 402 ? 'sem crédito na conta'
+      : status === 404 || /model|not found|does not exist/i.test(msg) ? `o modelo "${pedido}" não existe neste provedor`
+      : status === 429 ? 'limite de uso atingido (rate limit)' : null;
+    return { ok: false, pedido, status: status || null, erro: `${prov.rotulo}${status ? ' HTTP ' + status : ''}: ${String(msg).slice(0, 200)}`, dica };
+  }
+}
+
 // Lista as integrações de IA ativas, na ordem de preferência do sistema:
 // OpenRouter primeiro (quando ligado), depois OpenAI. O chamador tenta na
 // ordem e cai pro próximo se a chave falhar (crédito esgotado, rate limit...).
@@ -352,4 +378,4 @@ async function integracoesIA(pool) {
   return rows;
 }
 
-module.exports = { gerarSwot, sugerirCnae, integracoesIA, MODELO_PADRAO };
+module.exports = { gerarSwot, sugerirCnae, integracoesIA, testarChave, PROVEDORES, MODELO_PADRAO };
