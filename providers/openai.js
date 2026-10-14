@@ -28,26 +28,69 @@ const MODELO_PADRAO = PROVEDORES.openai.modelo;
 
 function provedorDe(nome) { return PROVEDORES[nome] || PROVEDORES.openai; }
 
-// POST no endpoint de chat com fallback: se o provedor/modelo recusar
-// `response_format`, tenta de novo sem ele em vez de falhar a geração.
-async function postChat(url, body, apiKey) {
-  try {
-    return await axios.post(url, body, {
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      timeout: 30000,
-    });
-  } catch (err) {
-    const status = err.response?.status;
-    const msg = String(err.response?.data?.error?.message || '');
-    const recusouJson = body.response_format
-      && [400, 404, 422].includes(status)
-      && /response_format|json|structured|schema/i.test(msg);
-    if (!recusouJson) throw err;
-    const { response_format, ...semJson } = body;
-    return axios.post(url, semJson, {
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      timeout: 30000,
-    });
+// Ajusta o corpo quando o modelo recusa um parâmetro, em vez de falhar:
+//   - `max_tokens` → `max_completion_tokens`: os modelos novos da OpenAI (série
+//     o*, gpt-5 em diante) só aceitam o segundo — o gpt-6-luna recusava o
+//     teste e o briefing inteiro com HTTP 400 por isso;
+//   - `temperature`: modelos de raciocínio só aceitam o padrão;
+//   - `response_format`: modelo/provedor sem JSON mode (o prompt já pede JSON).
+// Devolve o corpo ajustado, ou null quando o erro não é de parâmetro.
+function ajustarCorpo(body, status, msg) {
+  if (![400, 404, 422].includes(status)) return null;
+  if ('max_tokens' in body && /max_tokens/.test(msg) && /max_completion_tokens|not supported|unsupported/i.test(msg)) {
+    const { max_tokens, ...resto } = body;
+    return { ...resto, max_completion_tokens: max_tokens };
+  }
+  if ('temperature' in body && /temperature/i.test(msg)) {
+    const { temperature, ...resto } = body;
+    return resto;
+  }
+  if (body.response_format && /response_format|json|structured|schema/i.test(msg)) {
+    const { response_format, ...resto } = body;
+    return resto;
+  }
+  return null;
+}
+
+// O que cada modelo já recusou (por processo): o próximo lead manda o corpo
+// certo de primeira, em vez de repetir as mesmas chamadas recusadas.
+const _ajustesPorModelo = new Map();
+function aplicarAjustesConhecidos(url, body) {
+  const ajustes = _ajustesPorModelo.get(`${url}|${body.model}`);
+  if (!ajustes) return body;
+  let corpo = { ...body };
+  if (ajustes.has('max_completion_tokens') && 'max_tokens' in corpo) {
+    const { max_tokens, ...resto } = corpo; corpo = { ...resto, max_completion_tokens: max_tokens };
+  }
+  if (ajustes.has('sem_temperature')) { const { temperature, ...resto } = corpo; corpo = resto; }
+  if (ajustes.has('sem_json')) { const { response_format, ...resto } = corpo; corpo = resto; }
+  return corpo;
+}
+function lembrarAjuste(url, model, antes, depois) {
+  const chave = `${url}|${model}`;
+  const ajustes = _ajustesPorModelo.get(chave) || new Set();
+  if ('max_tokens' in antes && 'max_completion_tokens' in depois) ajustes.add('max_completion_tokens');
+  else if ('temperature' in antes && !('temperature' in depois)) ajustes.add('sem_temperature');
+  else if (antes.response_format && !depois.response_format) ajustes.add('sem_json');
+  _ajustesPorModelo.set(chave, ajustes);
+}
+
+// POST no endpoint de chat. Se o modelo recusar um parâmetro, ajusta e tenta de
+// novo (até 3 ajustes: um modelo pode recusar max_tokens E temperature).
+async function postChat(url, body, apiKey, { timeout = 30000 } = {}) {
+  let corpo = aplicarAjustesConhecidos(url, body);
+  for (let i = 0; ; i++) {
+    try {
+      return await axios.post(url, corpo, {
+        headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+        timeout,
+      });
+    } catch (err) {
+      const novo = i < 3 ? ajustarCorpo(corpo, err.response?.status, String(err.response?.data?.error?.message || '')) : null;
+      if (!novo) throw err;
+      lembrarAjuste(url, corpo.model, corpo, novo);
+      corpo = novo;
+    }
   }
 }
 
@@ -315,7 +358,9 @@ async function sugerirCnae(texto, catalogo, { apiKey, modelo, max = 8, provedor 
         `Responda no formato JSON: { "codigos": ["7500100", "..."] } — só os códigos, do mais relevante ao menos.` },
     ],
     temperature: 0.1,
-    max_tokens: 200,
+    // Folga pra modelo de raciocínio (pensa antes de responder); quem não
+    // pensa para nos ~100 tokens da resposta e não paga pelo resto.
+    max_tokens: 1500,
   };
   body.response_format = { type: 'json_object' };
   try {
@@ -349,18 +394,25 @@ async function testarChave(provedor, apiKey, modelo) {
   const pedido = modelo || prov.modelo;
   const inicio = Date.now();
   try {
-    const { data } = await axios.post(prov.url, {
+    // Mesmo caminho do briefing (postChat), pra o teste falhar ou passar pelos
+    // mesmos motivos. Folga de tokens: modelo de raciocínio gasta parte
+    // pensando antes de responder.
+    const { data } = await postChat(prov.url, {
       model: pedido,
       messages: [{ role: 'user', content: 'Responda só: ok' }],
-      max_tokens: 16, temperature: 0,
-    }, { headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, timeout: 30000 });
+      max_tokens: 400, temperature: 0,
+    }, apiKey);
     return { ok: true, pedido, respondeu: data?.model || pedido, ms: Date.now() - inicio };
   } catch (err) {
     const status = err.response?.status;
     const msg = err.response?.data?.error?.message || err.message;
     const dica = status === 401 ? 'chave inválida ou revogada'
       : status === 402 ? 'sem crédito na conta'
-      : status === 404 || /model|not found|does not exist/i.test(msg) ? `o modelo "${pedido}" não existe neste provedor`
+      // Só 404 ou mensagem explícita de modelo inexistente. Antes bastava a
+      // palavra "model" no texto, e um 400 de parâmetro ("not supported with
+      // this model") virava "o modelo não existe" — errado.
+      : status === 404 || /model_not_found|does not exist|no endpoints found|invalid model|unknown model/i.test(msg)
+        ? `o modelo "${pedido}" não existe neste provedor`
       : status === 429 ? 'limite de uso atingido (rate limit)' : null;
     return { ok: false, pedido, status: status || null, erro: `${prov.rotulo}${status ? ' HTTP ' + status : ''}: ${String(msg).slice(0, 200)}`, dica };
   }
