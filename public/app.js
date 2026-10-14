@@ -14379,7 +14379,13 @@ function LeadDetailPanel({
     }
   }, l.razao), /*#__PURE__*/React.createElement(RefCrm, {
     valor: l.crm_ref
-  }), l.crm_afiliado?.name && /*#__PURE__*/React.createElement("p", {
+  }), l.crm_afiliado?.fila && !l.crm_afiliado?.name && /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--dim)',
+      margin: '4px 0 0'
+    }
+  }, "Na fila da distribui\xE7\xE3o do CRM Afiliados", l.crm_afiliado.alvo ? ` (${l.crm_afiliado.via === 'grupo' ? 'grupo' : 'afiliado'} ${l.crm_afiliado.alvo})` : '', ' ', "\u2014 vai para o pr\xF3ximo afiliado apto."), l.crm_afiliado?.name && /*#__PURE__*/React.createElement("p", {
     style: {
       fontSize: 11.5,
       color: 'var(--dim)',
