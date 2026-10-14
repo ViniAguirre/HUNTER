@@ -4513,7 +4513,13 @@ function BuscaDetail({
       marginTop: 2,
       lineHeight: 1.4
     }
-  }, b.crm_auto ? 'Cada lead com telefone e e-mail vai ao CRM assim que a análise termina.' : 'Os leads esperam você enviar pela triagem, em Leads.')), /*#__PURE__*/React.createElement("button", {
+  }, b.crm_auto ? 'Cada lead com telefone e e-mail vai ao CRM assim que a análise termina.' : 'Os leads esperam você enviar pela triagem, em Leads.'), b.crm_destino === 'afiliados' && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--dim)',
+      marginTop: 5
+    }
+  }, "Destino: ", /*#__PURE__*/React.createElement("b", null, "CRM Afiliados"), " \u2192 ", b.afiliados_alvo?.tipo === 'afiliado' ? 'afiliado' : 'grupo', ' ', /*#__PURE__*/React.createElement("b", null, b.afiliados_alvo?.nome || '—'))), /*#__PURE__*/React.createElement("button", {
     onClick: () => trocarCrmAuto(!b.crm_auto),
     disabled: toggling,
     style: {
@@ -8731,6 +8737,16 @@ function NovaBusca({
   const [crmFilas, setCrmFilas] = useState([]);
   const [crmFilaPadrao, setCrmFilaPadrao] = useState(null);
   const [crmQueue, setCrmQueue] = useState(inicial?.crm_queue_id ? String(inicial.crm_queue_id) : '');
+  // Destino dos leads: CRM principal (GK/webhook) ou CRM dos Afiliados. A
+  // escolha só aparece com os dois conectados; com só o dos Afiliados, ele é o
+  // destino. Indo para os Afiliados, o radar escolhe um grupo/nicho (o sistema
+  // reveza entre os afiliados dele) ou um afiliado.
+  const [crmDestinos, setCrmDestinos] = useState(null);
+  const [crmDestino, setCrmDestino] = useState(inicial?.crm_destino === 'afiliados' ? 'afiliados' : 'principal');
+  const [alvoTipo, setAlvoTipo] = useState(inicial?.afiliados_alvo?.tipo === 'afiliado' ? 'afiliado' : 'grupo');
+  const [alvoId, setAlvoId] = useState(inicial?.afiliados_alvo?.id || '');
+  const [diretorioAfil, setDiretorioAfil] = useState(null);
+  const [diretorioErro, setDiretorioErro] = useState(null);
   const [listaCnpj, setListaCnpj] = useState(Array.isArray(iniCrit.cnpjs) ? iniCrit.cnpjs.join('\n') : '');
   const [uploadMsg, setUploadMsg] = useState(null); // feedback do upload de arquivo
   // Listas de semelhantes salvas (menu Semelhantes). O radar só ESCOLHE uma —
@@ -8772,6 +8788,29 @@ function NovaBusca({
     }).catch(() => {});
   }, []);
   const crmFilaPadraoNome = crmFilas.find(q => String(q.id) === crmFilaPadrao)?.queue || '';
+  useEffect(() => {
+    fetch('/api/crm/destinos', {
+      credentials: 'same-origin'
+    }).then(r => r.ok ? r.json() : null).then(d => setCrmDestinos(d)).catch(() => {});
+  }, []);
+  const temPrincipal = !!crmDestinos?.principal?.conectado;
+  const temAfiliados = !!crmDestinos?.afiliados?.conectado;
+  const destinoEfetivo = temAfiliados && (crmDestino === 'afiliados' || !temPrincipal) ? 'afiliados' : 'principal';
+  const carregarDiretorio = () => {
+    setDiretorioErro(null);
+    fetch('/api/crm/afiliados/diretorio', {
+      credentials: 'same-origin'
+    }).then(async r => {
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.erro || 'Não foi possível ler os afiliados.');
+      return d;
+    }).then(setDiretorioAfil).catch(e => setDiretorioErro(e.message));
+  };
+  useEffect(() => {
+    if (destinoEfetivo === 'afiliados' && !diretorioAfil) carregarDiretorio();
+  }, [destinoEfetivo]);
+  const opcoesAlvo = alvoTipo === 'grupo' ? diretorioAfil?.grupos || [] : diretorioAfil?.afiliados || [];
+  const alvoSel = opcoesAlvo.find(o => o.id === alvoId) || null;
   const cnpjsParsed = useMemo(() => {
     const vistos = new Set();
     for (const item of listaCnpj.split(/[\s,;]+/)) {
@@ -9031,6 +9070,10 @@ function NovaBusca({
       alert(modoPauta ? 'Informe o nome da pauta.' : 'Informe o nome do radar.');
       return;
     }
+    if (destinoEfetivo === 'afiliados' && !alvoSel) {
+      alert(alvoTipo === 'grupo' ? 'Escolha o grupo/nicho que vai receber os leads.' : 'Escolha o afiliado que vai receber os leads.');
+      return;
+    }
     if (tipo === 'lookalike' && !listaSel) {
       alert('Escolha a lista de clientes. Se ainda não tem nenhuma, cadastre no menu "Semelhantes".');
       return;
@@ -9118,6 +9161,12 @@ function NovaBusca({
           lista: listaRadar,
           criterios,
           tags: tagsRadar,
+          crm_destino: destinoEfetivo,
+          afiliados_alvo: destinoEfetivo === 'afiliados' && alvoSel ? {
+            tipo: alvoTipo,
+            id: alvoSel.id,
+            nome: alvoSel.nome
+          } : null,
           regioes,
           semanas,
           meses,
@@ -9139,7 +9188,13 @@ function NovaBusca({
           crm_queue_id: crmQueue || null,
           lista: listaRadar,
           criterios,
-          tags: tagsRadar
+          tags: tagsRadar,
+          crm_destino: destinoEfetivo,
+          afiliados_alvo: destinoEfetivo === 'afiliados' && alvoSel ? {
+            tipo: alvoTipo,
+            id: alvoSel.id,
+            nome: alvoSel.nome
+          } : null
         })
       });
       if (!r.ok) {
@@ -10303,7 +10358,158 @@ function NovaBusca({
     value: tagsRadar,
     onChange: setTagsRadar,
     rotuloId: "tags-radar"
-  })), crmFilas.length > 0 && /*#__PURE__*/React.createElement("div", {
+  })), temPrincipal && temAfiliados && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 16
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 7
+    }
+  }, "Para qual CRM v\xE3o os leads ", modoPauta ? 'desta pauta' : 'deste radar'), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      flexWrap: 'wrap'
+    }
+  }, [['principal', crmDestinos.principal.nome || 'CRM principal'], ['afiliados', 'CRM Afiliados']].map(([k, label]) => {
+    const ativo = crmDestino === k;
+    return /*#__PURE__*/React.createElement("div", {
+      key: k,
+      role: "radio",
+      "aria-checked": ativo,
+      tabIndex: 0,
+      onClick: () => setCrmDestino(k),
+      onKeyDown: e => {
+        if (e.key === 'Enter' || e.key === ' ') setCrmDestino(k);
+      },
+      style: {
+        flex: '1 1 200px',
+        cursor: 'pointer',
+        padding: '11px 13px',
+        borderRadius: 10,
+        fontSize: 12.5,
+        lineHeight: 1.35,
+        border: ativo ? `1.5px solid ${C.gold}` : '1.5px solid var(--border)',
+        background: ativo ? 'color-mix(in srgb, var(--accent) 10%, transparent)' : 'transparent',
+        color: ativo ? 'var(--text)' : 'var(--dim)'
+      }
+    }, label);
+  }))), destinoEfetivo === 'afiliados' && /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 16,
+      padding: '14px 14px 12px',
+      borderRadius: 10,
+      border: '1px solid var(--border)',
+      background: 'var(--panel2)'
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginBottom: 7
+    }
+  }, "Quem recebe no CRM Afiliados"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      marginBottom: 10,
+      flexWrap: 'wrap'
+    }
+  }, [['grupo', 'Grupo / nicho (distribui entre os afiliados)'], ['afiliado', 'Um afiliado específico']].map(([k, label]) => {
+    const ativo = alvoTipo === k;
+    return /*#__PURE__*/React.createElement("div", {
+      key: k,
+      role: "radio",
+      "aria-checked": ativo,
+      tabIndex: 0,
+      onClick: () => {
+        setAlvoTipo(k);
+        setAlvoId('');
+      },
+      onKeyDown: e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          setAlvoTipo(k);
+          setAlvoId('');
+        }
+      },
+      style: {
+        flex: '1 1 200px',
+        cursor: 'pointer',
+        padding: '9px 12px',
+        borderRadius: 9,
+        fontSize: 12,
+        lineHeight: 1.35,
+        border: ativo ? `1.5px solid ${C.gold}` : '1.5px solid var(--border)',
+        background: ativo ? 'color-mix(in srgb, var(--accent) 10%, transparent)' : 'var(--panel)',
+        color: ativo ? 'var(--text)' : 'var(--dim)'
+      }
+    }, label);
+  })), diretorioErro ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: C.red
+    }
+  }, diretorioErro, ' ', /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: carregarDiretorio,
+    style: {
+      border: 'none',
+      background: 'none',
+      color: 'var(--text)',
+      textDecoration: 'underline',
+      cursor: 'pointer',
+      fontFamily: 'inherit',
+      fontSize: 12
+    }
+  }, "tentar de novo")) : !diretorioAfil ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--faint)'
+    }
+  }, "Buscando a lista no sistema de afiliados\u2026") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("select", {
+    value: alvoId,
+    onChange: e => setAlvoId(e.target.value),
+    "aria-label": "Destino no CRM Afiliados",
+    style: {
+      width: '100%',
+      height: 40,
+      borderRadius: 9,
+      border: '1px solid var(--border)',
+      background: 'var(--panel)',
+      color: 'var(--text)',
+      padding: '0 10px',
+      fontSize: 13,
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, alvoTipo === 'grupo' ? 'Escolha o grupo/nicho…' : 'Escolha o afiliado…'), alvoTipo === 'grupo' ? diretorioAfil.grupos.map(g => /*#__PURE__*/React.createElement("option", {
+    key: g.id,
+    value: g.id,
+    disabled: !g.afiliados
+  }, g.nome, " \u2014 ", g.afiliados ? `${g.afiliados} afiliado(s)` : 'sem afiliado ativo')) : diretorioAfil.afiliados.map(a => /*#__PURE__*/React.createElement("option", {
+    key: a.id,
+    value: a.id
+  }, a.nome, a.grupos?.length ? ` — ${a.grupos.join(', ')}` : ''))), alvoId && !alvoSel && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: C.amber,
+      marginTop: 7
+    }
+  }, "O destino salvo (", inicial?.afiliados_alvo?.nome || 'anterior', ") n\xE3o est\xE1 mais dispon\xEDvel. Escolha outro."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)',
+      marginTop: 7,
+      lineHeight: 1.4
+    }
+  }, alvoTipo === 'grupo' ? 'Cada lead vai para o afiliado do grupo que está há mais tempo sem receber lead do Hunter.' : 'Todos os leads deste radar vão para este afiliado.', ' ', "O lead cai na coluna Novo lead, com o briefing completo."))), destinoEfetivo === 'principal' && crmFilas.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 16
     }
@@ -10437,6 +10643,12 @@ const INTEGRACOES_META = {
     placeholder: 'Colar URL do webhook…',
     temSegredo: true
   },
+  'crm|afiliados': {
+    nome: 'CRM Afiliados (Antídoto)',
+    provedor: 'Funil dos afiliados — cada radar escolhe o grupo/nicho ou o afiliado',
+    icon: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75',
+    especial: 'afiliados'
+  },
   'tracking|hub': {
     nome: 'Tracking Hub (Antídoto)',
     provedor: 'Eventos do funil de prospecção',
@@ -10482,7 +10694,7 @@ const INTEGRACOES_META = {
     modeloPlaceholder: 'modelo (padrão jev-latest)'
   }
 };
-const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'contato|google', 'contato|econodata', 'busca_web|searxng', 'busca_web|tavily', 'ia|openrouter', 'ia|openai', 'decisao|typesafe', 'crm|gk', 'crm|webhook', 'tracking|hub'];
+const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'contato|google', 'contato|econodata', 'busca_web|searxng', 'busca_web|tavily', 'ia|openrouter', 'ia|openai', 'decisao|typesafe', 'crm|gk', 'crm|webhook', 'crm|afiliados', 'tracking|hub'];
 
 // Card do Tracking Hub: a URL de webhook carrega o token dentro, então é
 // tratada como segredo (vai pro mesmo campo das outras chaves, que a API nunca
@@ -10738,6 +10950,239 @@ function IntegracaoTracking({
       lineHeight: 1.5
     }
   }, "Envia 4 eventos por empresa, acompanhando o funil: ", /*#__PURE__*/React.createElement("b", null, "encontrada"), " \u2192 ", /*#__PURE__*/React.createElement("b", null, "segmentada"), " \u2192", /*#__PURE__*/React.createElement("b", null, " qualificada"), " \u2192 ", /*#__PURE__*/React.createElement("b", null, "enviada ao CRM"), ". Nenhum deles conta como convers\xE3o no Hub \u2014 quem conta \xE9 o CRM. Falha de envio nunca trava a prospec\xE7\xE3o."));
+}
+
+// Card do CRM dos Afiliados: um SEGUNDO destino de leads, que convive com o CRM
+// principal (GK ou webhook). Com os dois ligados, cada radar escolhe para qual
+// vai; indo para os Afiliados, escolhe também o grupo/nicho ou o afiliado.
+function IntegracaoAfiliados({
+  row,
+  meta,
+  onSaved
+}) {
+  const [url, setUrl] = useState(row?.config?.url || 'https://afiliados.antidotodigital.com');
+  const [chave, setChave] = useState('');
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState(null);
+  const [msg, setMsg] = useState(null);
+  const conectado = !!(row && row.ativo && row.tem_chave && row.config?.url);
+  const inputStyle = {
+    width: '100%',
+    height: 38,
+    borderRadius: 9,
+    border: '1px solid var(--border)',
+    background: 'var(--panel2)',
+    color: 'var(--text)',
+    padding: '0 12px',
+    fontSize: 12.5,
+    fontFamily: 'inherit'
+  };
+  const conectar = async () => {
+    setErro(null);
+    setMsg(null);
+    if (!chave.trim() && !row?.tem_chave) {
+      setErro('Cole a chave gerada no sistema de afiliados.');
+      return;
+    }
+    setSalvando(true);
+    try {
+      const r = await fetch('/api/integracoes/afiliados/conectar', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          url: url.trim(),
+          key: chave.trim()
+        })
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.erro || 'Falha ao conectar.');
+      setChave('');
+      setMsg(`Conectado: ${d.grupos} grupo(s) e ${d.afiliados} afiliado(s) ativos.`);
+      onSaved();
+    } catch (e) {
+      setErro(e.message);
+    } finally {
+      setSalvando(false);
+    }
+  };
+  const alternar = async () => {
+    if (!row) return;
+    if (row.ativo && !window.confirm('Pausar o CRM Afiliados? Radares marcados para ele param de enviar até você retomar.')) return;
+    await fetch('/api/integracoes/' + row.id, {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        ativo: !row.ativo
+      })
+    });
+    onSaved();
+  };
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'var(--panel)',
+      border: '1px solid var(--border)',
+      borderRadius: 14,
+      padding: '18px 20px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 16,
+      marginBottom: 16
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: 42,
+      height: 42,
+      borderRadius: 11,
+      background: 'var(--panel2)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      color: 'var(--dim)',
+      flexShrink: 0
+    }
+  }, /*#__PURE__*/React.createElement(Svg, {
+    d: meta.icon,
+    w: 20,
+    h: 20,
+    sw: 1.6
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: 1,
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 9,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 14.5,
+      fontWeight: 600
+    }
+  }, meta.nome), /*#__PURE__*/React.createElement("span", {
+    style: badgeStyle(conectado ? C.green : C.gray)
+  }, /*#__PURE__*/React.createElement(StatusDot, {
+    color: conectado ? C.green : C.gray,
+    pulse: false
+  }), conectado ? 'conectado' : row?.tem_chave ? 'pausado' : 'desconectado')), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: 'var(--faint)',
+      marginTop: 3
+    }
+  }, meta.provedor, row?.chave_mascarada ? ' · ' + row.chave_mascarada : ''))), /*#__PURE__*/React.createElement("div", {
+    className: "h-split",
+    style: {
+      gap: 12
+    }
+  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 11,
+      color: 'var(--dim)',
+      marginBottom: 5
+    }
+  }, "URL do sistema de afiliados"), /*#__PURE__*/React.createElement("input", {
+    value: url,
+    onChange: e => setUrl(e.target.value),
+    placeholder: "https://afiliados.antidotodigital.com",
+    style: inputStyle
+  })), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 11,
+      color: 'var(--dim)',
+      marginBottom: 5
+    }
+  }, "Chave de integra\xE7\xE3o ", row?.tem_chave && /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, "\xB7 j\xE1 salva (cole de novo s\xF3 para trocar)")), /*#__PURE__*/React.createElement("input", {
+    value: chave,
+    onChange: e => setChave(e.target.value),
+    placeholder: "afh_\u2026",
+    type: "password",
+    autoComplete: "off",
+    name: "chave-afiliados",
+    "data-1p-ignore": true,
+    "data-lpignore": "true",
+    style: inputStyle
+  }))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 10.5,
+      color: 'var(--faint)',
+      marginTop: 5,
+      lineHeight: 1.45
+    }
+  }, "Gere a chave no sistema de afiliados em ", /*#__PURE__*/React.createElement("b", null, "Admin \u2192 Integra\xE7\xF5es \u2192 Hunter"), ". Ela s\xF3 aparece uma vez l\xE1."), erro && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: C.red,
+      marginTop: 10
+    }
+  }, erro), msg && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: C.green,
+      marginTop: 10
+    }
+  }, msg), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 10,
+      marginTop: 12,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    onClick: conectar,
+    disabled: salvando,
+    style: {
+      height: 38,
+      padding: '0 16px',
+      borderRadius: 9,
+      border: 'none',
+      background: 'var(--gold)',
+      color: '#0E1936',
+      fontWeight: 600,
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      cursor: salvando ? 'default' : 'pointer',
+      opacity: salvando ? .6 : 1
+    }
+  }, salvando ? 'Conectando…' : row?.tem_chave ? 'Testar e salvar' : 'Conectar'), row?.tem_chave && /*#__PURE__*/React.createElement("button", {
+    onClick: alternar,
+    style: {
+      height: 38,
+      padding: '0 16px',
+      borderRadius: 9,
+      border: '1px solid var(--border)',
+      background: 'transparent',
+      color: 'var(--dim)',
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, row.ativo ? 'Pausar envio' : 'Retomar envio')), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)',
+      marginTop: 12,
+      lineHeight: 1.5
+    }
+  }, "Convive com o CRM principal. Com os dois conectados, cada radar escolhe para qual CRM os leads v\xE3o. No CRM Afiliados, o radar escolhe um ", /*#__PURE__*/React.createElement("b", null, "grupo/nicho"), " (o lead vai para o afiliado do grupo que est\xE1 h\xE1 mais tempo sem receber) ou um ", /*#__PURE__*/React.createElement("b", null, "afiliado"), " espec\xEDfico. O lead chega com o payload completo (empresa, decisor, contato, SWOT, score) na coluna ", /*#__PURE__*/React.createElement("b", null, "Novo lead"), "."));
 }
 
 // Card especial do CRM GK: fluxo em etapas (conexão → empresas → filas → salvar).
@@ -11253,6 +11698,14 @@ function Integracoes() {
     }
     if (meta.especial === 'tracking') {
       return /*#__PURE__*/React.createElement(IntegracaoTracking, {
+        key: chave,
+        row: row,
+        meta: meta,
+        onSaved: carregar
+      });
+    }
+    if (meta.especial === 'afiliados') {
+      return /*#__PURE__*/React.createElement(IntegracaoAfiliados, {
         key: chave,
         row: row,
         meta: meta,
@@ -13869,7 +14322,13 @@ function LeadDetailPanel({
     }
   }, l.razao), /*#__PURE__*/React.createElement(RefCrm, {
     valor: l.crm_ref
-  })), /*#__PURE__*/React.createElement(ScoreRing, {
+  }), l.crm_afiliado?.name && /*#__PURE__*/React.createElement("p", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--dim)',
+      margin: '4px 0 0'
+    }
+  }, "No CRM Afiliados com ", /*#__PURE__*/React.createElement("b", null, l.crm_afiliado.name), l.crm_afiliado.via === 'grupo' && l.crm_afiliado.alvo ? ` (grupo ${l.crm_afiliado.alvo})` : '')), /*#__PURE__*/React.createElement(ScoreRing, {
     score: l.score,
     size: 84
   }), /*#__PURE__*/React.createElement("button", {
