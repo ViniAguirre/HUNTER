@@ -9,12 +9,17 @@
 const crypto = require('crypto');
 const webhook = require('../providers/webhook');
 const gk = require('../providers/gk');
+const afiliados = require('../providers/afiliados');
 const distribuicao = require('./distribuicao');
 const { registrar } = require('./tracking');
 
 module.exports = async function crm(job, pool, queues) {
   const { lead_id } = job.data;
 
+  // O CRM dos Afiliados é um destino À PARTE: convive com o CRM principal e só
+  // recebe os leads dos radares marcados pra ele. Por isso fica fora da busca
+  // do CRM principal logo abaixo.
+  //
   // ORDER BY ordem, id: só "ordem" empatava (todas as integrações nascem com
   // ordem=100, e nenhuma tela manda outro valor). Com empate o Postgres devolve
   // a linha que varrer primeiro, o que muda depois de um UPDATE qualquer — e o
@@ -22,10 +27,9 @@ module.exports = async function crm(job, pool, queues) {
   // estável.
   const { rows: [ig] } = await pool.query(
     `SELECT provedor, key_cifrada, config FROM integracoes
-     WHERE categoria='crm' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> ''
+     WHERE categoria='crm' AND provedor <> 'afiliados' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> ''
      ORDER BY ordem, id LIMIT 1`
   );
-  if (!ig) return { skipped: 'sem_crm', lead_id };
 
   // Os campos de identificação do próprio lead (fantasia, razão, decisor,
   // cidade...) entram aqui porque nem todo lead tem linha em `empresas`: o
@@ -35,10 +39,26 @@ module.exports = async function crm(job, pool, queues) {
     `SELECT l.id, l.cnpj, l.busca_id, l.score, l.swot, l.contato_validado, l.crm_ref,
             l.fantasia, l.razao, l.setor, l.cnae, l.porte, l.cidade, l.uf,
             l.decisor, l.cargo, l.endereco, l.situacao, l.abertura, l.capital, l.breakdown, l.crm_conexao_id,
-            b.nome AS busca_nome, b.crm_queue_id AS busca_queue_id, b.tags AS busca_tags
+            b.nome AS busca_nome, b.crm_queue_id AS busca_queue_id, b.tags AS busca_tags,
+            b.crm_destino AS busca_crm_destino, b.afiliados_alvo AS busca_afiliados_alvo
      FROM leads l LEFT JOIN buscas b ON b.id=l.busca_id WHERE l.id=$1`, [lead_id]
   );
   if (!lead) return { error: 'lead ausente', lead_id };
+  const paraAfiliados = lead.busca_crm_destino === 'afiliados';
+  if (!paraAfiliados && !ig) return { skipped: 'sem_crm', lead_id };
+
+  let igAfiliados = null, alvo = null;
+  if (paraAfiliados) {
+    ({ rows: [igAfiliados] } = await pool.query(
+      `SELECT key_cifrada, config FROM integracoes
+       WHERE categoria='crm' AND provedor='afiliados' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> ''
+       LIMIT 1`));
+    if (!igAfiliados?.config?.url) {
+      throw new Error('CRM Afiliados desconectado: reconecte em Integrações ou mude o destino do radar.');
+    }
+    alvo = afiliados.normalizarAlvo(lead.busca_afiliados_alvo);
+    if (!alvo) throw new Error('Radar sem grupo/afiliado de destino no CRM Afiliados.');
+  }
 
   // Identificador de ida-e-volta: carimbado no CRM; quando o lead for marcado
   // como convertido, o CRM devolve só isso e o Hunter acha o CNPJ na base.
@@ -54,8 +74,19 @@ module.exports = async function crm(job, pool, queues) {
   // O que o GK devolveu (ticket e se a fila pegou) — vai no retorno do job, que
   // é o que aparece em Monitoramento.
   let resultadoGk = null;
+  // Quem recebeu no CRM Afiliados (o grupo reveza entre os afiliados dele).
+  let resultadoAfiliados = null;
 
-  if (ig.provedor === 'gk') {
+  if (paraAfiliados) {
+    const payload = afiliados.montarPayload(empresa, lead,
+      { id: lead.busca_id, nome: lead.busca_nome, tags: lead.busca_tags || [] }, ref);
+    const r = await afiliados.enviarLead(igAfiliados.config.url, igAfiliados.key_cifrada, alvo, payload);
+    crmLeadId = r.leadId != null ? String(r.leadId) : null;
+    resultadoAfiliados = { lead_id: r.leadId, duplicado: r.duplicado, afiliado: r.afiliado,
+                           alvo: { tipo: alvo.tipo, nome: alvo.nome } };
+    await pool.query(`UPDATE leads SET crm_afiliado=$2::jsonb WHERE id=$1`,
+      [lead_id, JSON.stringify({ ...(r.afiliado || {}), via: alvo.tipo, alvo: alvo.nome })]);
+  } else if (ig.provedor === 'gk') {
     const backend = ig.config?.backend;
     const token = ig.key_cifrada;
     // Fila do RADAR tem prioridade sobre a fila padrão da integração — permite
@@ -184,5 +215,7 @@ module.exports = async function crm(job, pool, queues) {
     properties: { radar_id: lead.busca_id != null ? String(lead.busca_id) : '', crm_lead_id: crmLeadId },
   });
 
-  return { ok: true, lead_id, provedor: ig.provedor, ...(resultadoGk ? { gk: resultadoGk } : {}) };
+  return { ok: true, lead_id, provedor: paraAfiliados ? 'afiliados' : ig.provedor,
+           ...(resultadoGk ? { gk: resultadoGk } : {}),
+           ...(resultadoAfiliados ? { afiliados: resultadoAfiliados } : {}) };
 };

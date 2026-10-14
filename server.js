@@ -706,6 +706,14 @@ async function init() {
     -- da Estratégia carrega as dela e passa pros radares que abrir.
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
     ALTER TABLE estrategia_pautas ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
+    -- Destino dos leads do radar quando há dois CRMs: o principal (GK/webhook)
+    -- ou o CRM dos Afiliados. afiliados_alvo = {tipo:'grupo'|'afiliado', id, nome}.
+    ALTER TABLE buscas ADD COLUMN IF NOT EXISTS crm_destino TEXT;
+    ALTER TABLE buscas ADD COLUMN IF NOT EXISTS afiliados_alvo JSONB;
+    ALTER TABLE estrategia_pautas ADD COLUMN IF NOT EXISTS crm_destino TEXT;
+    ALTER TABLE estrategia_pautas ADD COLUMN IF NOT EXISTS afiliados_alvo JSONB;
+    -- Afiliado que recebeu o lead no CRM dos Afiliados ({id, name, via, alvo}).
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS crm_afiliado JSONB;
     -- Pausa feita PELO PILOTO (pauta fora do período). Só essas ele desfaz
     -- sozinho; a pausa que o usuário faz à mão ele respeita.
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS pausa_auto BOOLEAN NOT NULL DEFAULT false;
@@ -1547,7 +1555,7 @@ app.get('/api/buscas', requireAuth, async (req, res) => {
         -- crm_auto vai junto: sem ele o "Duplicar" nascia sempre no Manual, por
         -- mais que o radar original fosse automático, e a lista não tinha como
         -- mostrar em que modo cada radar está.
-        b.crm_auto, b.crm_queue_id, b.tags,
+        b.crm_auto, b.crm_queue_id, b.tags, b.crm_destino, b.afiliados_alvo,
         -- Radar aberto pelo piloto da Estratégia: a lista mostra de qual pauta.
         b.estrategia_pauta_id, ep.nome AS estrategia_pauta_nome, b.pausa_auto,
         u.nome AS criador_nome,
@@ -1584,10 +1592,14 @@ app.post('/api/buscas', requireAuth, requireEditor, async (req, res) => {
   const lista = tipo === 'lookalike' ? (String(req.body.lista || '').trim() || null) : null;
   const tags = normalizarTags(req.body.tags);
   try {
+    const destino = await destinoCrm(req.body);
+    if (destino.erro) return res.status(400).json({ erro: destino.erro });
     const { rows:[b] } = await pool.query(
-      `INSERT INTO buscas (nome, tipo, ritmo, criterios, corte_score, crm_auto, crm_queue_id, lista, tags, criador_id, ultima_ativ)
-       VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9::text[],$10,now()) RETURNING *`,
-      [nome, tipo, ritmo, JSON.stringify(criterios), corteScore, crmAuto, crmQueueId, lista, tags, req.user.id]
+      `INSERT INTO buscas (nome, tipo, ritmo, criterios, corte_score, crm_auto, crm_queue_id, lista, tags, criador_id, ultima_ativ,
+                           crm_destino, afiliados_alvo)
+       VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9::text[],$10,now(),$11,$12::jsonb) RETURNING *`,
+      [nome, tipo, ritmo, JSON.stringify(criterios), corteScore, crmAuto, crmQueueId, lista, tags, req.user.id,
+       destino.crm_destino, destino.afiliados_alvo ? JSON.stringify(destino.afiliados_alvo) : null]
     );
     res.status(201).json({ ...b, health: computeHealth(b), criador_nome: req.user.nome });
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
@@ -1760,7 +1772,7 @@ app.get('/api/estrategia', requireAuth, async (req, res) => {
     ]);
     // O controle pelo CRM só faz sentido com um CRM conectado — a tela avisa.
     const { rows: [crmIg] } = await pool.query(
-      `SELECT provedor FROM integracoes WHERE categoria='crm' AND ativo=true ORDER BY ordem LIMIT 1`);
+      `SELECT provedor FROM integracoes WHERE categoria='crm' AND provedor <> 'afiliados' AND ativo=true ORDER BY ordem LIMIT 1`);
     const saida = pautas.map(p => {
       const meus = slots.filter(s => s.pauta_id === p.id);
       const regioes = estrategiaMotor.regioesDa(p).map(r => {
@@ -1865,7 +1877,7 @@ app.get('/api/estrategia/conexoes', requireAuth, async (req, res) => {
   try {
     const { rows: [ig] } = await pool.query(
       `SELECT provedor, key_cifrada, config FROM integracoes
-        WHERE categoria='crm' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> ''
+        WHERE categoria='crm' AND provedor <> 'afiliados' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> ''
         ORDER BY ordem, id LIMIT 1`);
     if (ig?.provedor !== 'gk' || !ig.config?.backend) return res.json({ gk: false, conexoes: [] });
     await planoEstrategia();
@@ -1902,6 +1914,8 @@ app.get('/api/estrategia/conexoes', requireAuth, async (req, res) => {
 app.post('/api/estrategia/pautas', requireAuth, requireEditor, async (req, res) => {
   try {
     const p = estrategiaMotor.normalizarPauta(req.body || {});
+    const destino = await destinoCrm(req.body || {});
+    if (destino.erro) return res.status(400).json({ erro: destino.erro });
     const { rows: [{ n }] } = await pool.query(`SELECT COUNT(*)::int n FROM estrategia_pautas`);
     if (n >= estrategiaMotor.MAX_PAUTAS) {
       return res.status(400).json({ erro: `no máximo ${estrategiaMotor.MAX_PAUTAS} pautas — exclua uma antes` });
@@ -1909,13 +1923,14 @@ app.post('/api/estrategia/pautas', requireAuth, requireEditor, async (req, res) 
     const { rows: [nova] } = await pool.query(
       `INSERT INTO estrategia_pautas (nome, tipo, criterios, lista, regioes, semanas, meses, corte_score,
                                       crm_auto, crm_queue_id, ativo, criado_por, expandir, expandir_max,
-                                      expandir_excluir, tags, ordem)
+                                      expandir_excluir, tags, ordem, crm_destino, afiliados_alvo)
        VALUES ($1,$2,$3::jsonb,$4,$5::jsonb,$6::int[],$7::int[],$8,$9,$10,$11,$12,$13,$14,$15::text[],$16::text[],
-               (SELECT COALESCE(MAX(ordem), 0) + 1 FROM estrategia_pautas))
+               (SELECT COALESCE(MAX(ordem), 0) + 1 FROM estrategia_pautas), $17, $18::jsonb)
        RETURNING *`,
       [p.nome, p.tipo, JSON.stringify(p.criterios), p.lista, JSON.stringify(p.regioes), p.semanas, p.meses,
        p.corte_score, p.crm_auto, p.crm_queue_id, p.ativo ?? true, req.user.id,
-       p.expandir, p.expandir_max, p.expandir_excluir, p.tags]);
+       p.expandir, p.expandir_max, p.expandir_excluir, p.tags,
+       destino.crm_destino, destino.afiliados_alvo ? JSON.stringify(destino.afiliados_alvo) : null]);
     res.status(201).json(nova);
   } catch (e) { erroEstrategia(res, e); }
 });
@@ -1927,15 +1942,18 @@ app.put('/api/estrategia/pautas/:id', requireAuth, requireEditor, async (req, re
   if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
   try {
     const p = estrategiaMotor.normalizarPauta(req.body || {});
+    const destino = await destinoCrm(req.body || {});
+    if (destino.erro) return res.status(400).json({ erro: destino.erro });
     const { rows: [atual] } = await pool.query(
       `UPDATE estrategia_pautas SET nome=$2, tipo=$3, criterios=$4::jsonb, lista=$5, regioes=$6::jsonb,
               semanas=$7::int[], meses=$8::int[], corte_score=$9, crm_auto=$10, crm_queue_id=$11,
               ativo=COALESCE($12, ativo), expandir=$13, expandir_max=$14, expandir_excluir=$15::text[],
-              tags=$16::text[], atualizado_em=now()
+              tags=$16::text[], crm_destino=$17, afiliados_alvo=$18::jsonb, atualizado_em=now()
         WHERE id=$1 RETURNING *`,
       [id, p.nome, p.tipo, JSON.stringify(p.criterios), p.lista, JSON.stringify(p.regioes), p.semanas, p.meses,
        p.corte_score, p.crm_auto, p.crm_queue_id, p.ativo ?? null,
-       p.expandir, p.expandir_max, p.expandir_excluir, p.tags]);
+       p.expandir, p.expandir_max, p.expandir_excluir, p.tags,
+       destino.crm_destino, destino.afiliados_alvo ? JSON.stringify(destino.afiliados_alvo) : null]);
     if (!atual) return res.status(404).json({ erro: 'pauta não encontrada' });
     res.json(atual);
   } catch (e) { erroEstrategia(res, e); }
@@ -2558,17 +2576,23 @@ app.get('/api/crm/status', requireAuth, async (req, res) => {
   try {
     const { rows: [ig] } = await pool.query(
       `SELECT provedor, config FROM integracoes
-       WHERE categoria='crm' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> ''
+       WHERE categoria='crm' AND provedor <> 'afiliados' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> ''
        ORDER BY ordem, id LIMIT 1`
     );
-    if (!ig) return res.json({ ativo: false });
+    const afil = await crmAfiliadosAtivo();
+    if (!ig && !afil) return res.json({ ativo: false });
+    // Só o CRM dos Afiliados conectado: é ele o destino de todo radar.
+    if (!ig) return res.json({ ativo: true, provedor: req.user.master ? 'afiliados' : undefined,
+      nome: req.user.master ? 'CRM Afiliados' : 'CRM conectado',
+      detalhe: 'Cada lead vai para o grupo ou afiliado escolhido no radar, na coluna Novo lead.' });
     // Nome/detalhe técnico (qual provedor) é sigiloso — só o master vê. Pro
     // cliente, só importa que HÁ um CRM conectado.
     if (!req.user.master) return res.json({ ativo: true, nome: 'CRM conectado', detalhe: 'Os dados do lead serão enviados ao CRM configurado.' });
     const nomes = { gk: 'CRM GK SaaS', webhook: 'Webhook' };
-    const detalhe = ig.provedor === 'gk'
+    const detalhe = (ig.provedor === 'gk'
       ? 'Cria/atualiza o contato e abre um ticket na fila configurada (status Aguardando).'
-      : 'Envia os dados do lead (empresa, decisor, score, SWOT) via POST para a URL de webhook.';
+      : 'Envia os dados do lead (empresa, decisor, score, SWOT) via POST para a URL de webhook.')
+      + (afil ? ' Leads de radares marcados para o CRM Afiliados vão para lá.' : '');
     res.json({ ativo: true, provedor: ig.provedor, nome: nomes[ig.provedor] || ig.provedor, detalhe });
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
@@ -2811,12 +2835,36 @@ app.get('/api/integracoes', requireAuth, requireMaster, async (req, res) => {
 // delas é ignorada em silêncio — e, com a ordem empatada, qual delas era ficava
 // indefinido. Ativar um CRM passa a desligar o outro, que é o que a tela sempre
 // deu a entender.
+//
+// O CRM dos Afiliados é a exceção: é um segundo destino que convive com o
+// principal (cada radar escolhe para qual vai), então nem desliga nem é desligado.
 async function desativarOutrosCrm(row) {
-  if (!row || row.categoria !== 'crm' || !row.ativo) return;
+  if (!row || row.categoria !== 'crm' || !row.ativo || row.provedor === 'afiliados') return;
   await pool.query(
-    `UPDATE integracoes SET ativo=false WHERE categoria='crm' AND id <> $1 AND ativo=true`,
+    `UPDATE integracoes SET ativo=false
+      WHERE categoria='crm' AND provedor <> 'afiliados' AND id <> $1 AND ativo=true`,
     [row.id]
   );
+}
+
+// Conexão ativa com o CRM dos Afiliados: { url, key } ou null.
+async function crmAfiliadosAtivo() {
+  const { rows: [ig] } = await pool.query(
+    `SELECT key_cifrada, config FROM integracoes
+      WHERE categoria='crm' AND provedor='afiliados' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> ''
+      LIMIT 1`);
+  return ig?.config?.url ? { url: ig.config.url, key: ig.key_cifrada } : null;
+}
+
+// Destino escolhido no radar/pauta, validado contra o que está conectado.
+// Devolve { crm_destino, afiliados_alvo } ou { erro }.
+async function destinoCrm(body) {
+  const quer = body.crm_destino === 'afiliados' ? 'afiliados' : 'principal';
+  if (quer !== 'afiliados') return { crm_destino: null, afiliados_alvo: null };
+  if (!(await crmAfiliadosAtivo())) return { erro: 'O CRM Afiliados não está conectado (Integrações).' };
+  const alvo = afiliadosCrm.normalizarAlvo(body.afiliados_alvo);
+  if (!alvo) return { erro: 'Escolha o grupo/nicho ou o afiliado que vai receber os leads.' };
+  return { crm_destino: 'afiliados', afiliados_alvo: alvo };
 }
 
 app.post('/api/integracoes', requireAuth, requireMaster, async (req, res) => {
@@ -2905,6 +2953,7 @@ app.post('/api/integracoes/tracking/testar', requireAuth, requireMaster, async (
 // GK CRM: testa a conexão (backend + token) e lista empresas + filas pra a UI.
 const gk = require('./providers/gk');
 const tracking = require('./providers/tracking');
+const afiliadosCrm = require('./providers/afiliados');
 // Filas do CRM usando a integração JÁ salva — sem pedir token e sem exigir
 // master. Serve pra escolher a fila na criação de cada radar. Devolve lista
 // vazia (200) quando não há CRM configurado, pra UI só esconder o campo.
@@ -2919,6 +2968,64 @@ app.get('/api/crm/filas', requireAuth, async (req, res) => {
     const filas = await gk.listarFilas(ig.config.backend, ig.key_cifrada).catch(() => []);
     res.json({ filas, padrao: ig.config.queueId || null });
   } catch (e) { console.error(e); res.json({ filas: [], padrao: null }); }
+});
+
+// CRM dos Afiliados: testa URL + chave (gerada no sistema de afiliados, em
+// Admin → Integrações) lendo os grupos e afiliados, e só então salva e ativa.
+// Sem chave nova, reaproveita a salva (é o "reconectar" depois de pausar).
+app.post('/api/integracoes/afiliados/conectar', requireAuth, requireMaster, async (req, res) => {
+  const url = afiliadosCrm.normalizarUrl(req.body.url);
+  if (!url) return res.status(400).json({ erro: 'URL inválida — use o endereço https do sistema de afiliados.' });
+  let key = String(req.body.key || '').trim();
+  try {
+    if (!key) {
+      const { rows: [ig] } = await pool.query(
+        `SELECT key_cifrada FROM integracoes WHERE categoria='crm' AND provedor='afiliados' LIMIT 1`);
+      key = ig?.key_cifrada || '';
+    }
+    if (!afiliadosCrm.chaveValida(key)) {
+      return res.status(400).json({ erro: 'Cole a chave gerada no sistema de afiliados (começa com afh_).' });
+    }
+    let dir;
+    try { dir = await afiliadosCrm.diretorio(url, key); }
+    catch (e) {
+      return res.status(400).json({ erro: e.status === 401 ? 'Chave recusada pelo sistema de afiliados — gere uma nova lá.' : e.message });
+    }
+    const { rows: [row] } = await pool.query(`
+      INSERT INTO integracoes (categoria, provedor, key_cifrada, config, ativo, ordem)
+      VALUES ('crm', 'afiliados', $1, $2::jsonb, true, 45)
+      ON CONFLICT (tenant_id, categoria, provedor) DO UPDATE SET
+        key_cifrada = $1, config = $2::jsonb, ativo = true
+      RETURNING id`, [key, JSON.stringify({ url })]);
+    res.json({ ok: true, id: row.id, grupos: dir.grupos.length, afiliados: dir.afiliados.length });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// Quais CRMs estão conectados — a tela do radar só oferece a escolha de destino
+// com os DOIS ligados, e o grupo/afiliado só quando o destino é o dos Afiliados.
+app.get('/api/crm/destinos', requireAuth, async (req, res) => {
+  try {
+    const { rows: [ig] } = await pool.query(
+      `SELECT provedor FROM integracoes
+        WHERE categoria='crm' AND provedor <> 'afiliados' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> ''
+        ORDER BY ordem, id LIMIT 1`);
+    const nomes = { gk: 'CRM GK SaaS', webhook: 'CRM via Webhook' };
+    res.json({
+      principal: { conectado: !!ig, nome: ig ? (req.user.master ? (nomes[ig.provedor] || ig.provedor) : 'CRM principal') : null },
+      afiliados: { conectado: !!(await crmAfiliadosAtivo()) },
+    });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// Grupos (nichos) e afiliados ativos do sistema de afiliados, lidos na hora.
+app.get('/api/crm/afiliados/diretorio', requireAuth, requireEditor, async (req, res) => {
+  try {
+    const c = await crmAfiliadosAtivo();
+    if (!c) return res.status(400).json({ erro: 'O CRM Afiliados não está conectado.' });
+    res.json(await afiliadosCrm.diretorio(c.url, c.key));
+  } catch (e) {
+    res.status(502).json({ erro: e.status === 401 ? 'Chave do CRM Afiliados recusada — reconecte em Integrações.' : e.message });
+  }
 });
 
 app.post('/api/integracoes/gk/conectar', requireAuth, requireMaster, async (req, res) => {
