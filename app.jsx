@@ -6817,6 +6817,12 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
             <h2 style={{ fontSize:19, fontWeight:600, margin:0 }}>{l.fantasia}</h2>
             <p style={{ fontSize:12.5, color:'var(--dim)', margin:'3px 0 0' }}>{l.razao}</p>
             <RefCrm valor={l.crm_ref}/>
+            {l.crm_afiliado?.fila && !l.crm_afiliado?.name && (
+              <p style={{ fontSize:11.5, color:'var(--dim)', margin:'4px 0 0' }}>
+                Na fila da distribuição do CRM Afiliados{l.crm_afiliado.alvo ? ` (${l.crm_afiliado.via === 'grupo' ? 'grupo' : 'afiliado'} ${l.crm_afiliado.alvo})` : ''}
+                {' '}— vai para o próximo afiliado apto.
+              </p>
+            )}
             {l.crm_afiliado?.name && (
               <p style={{ fontSize:11.5, color:'var(--dim)', margin:'4px 0 0' }}>
                 No CRM Afiliados com <b>{l.crm_afiliado.name}</b>

@@ -75,7 +75,11 @@ async function enviarLead(url, key, alvo, payload) {
   const target = { kind: alvo.tipo === 'afiliado' ? 'affiliate' : 'group', id: alvo.id };
   try {
     const { data, status } = await cliente(url, key).post('/api/integrations/hunter/leads', { target, lead: payload });
-    return { status, leadId: data.lead_id, duplicado: !!data.duplicate, afiliado: data.affiliate || null };
+    // 202 = ninguém apto agora (limite do dia, contato pendente, sem WhatsApp):
+    // o lead fica na fila da distribuição de lá e sai sozinho quando alguém
+    // puder receber. Para o Hunter, o lead já foi entregue ao CRM.
+    return { status, leadId: data.lead_id || null, duplicado: !!data.duplicate, afiliado: data.affiliate || null,
+             fila: !!data.queued, motivo: data.reason || null };
   } catch (err) { throw erroDe(err); }
 }
 

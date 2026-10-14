@@ -83,9 +83,10 @@ module.exports = async function crm(job, pool, queues) {
     const r = await afiliados.enviarLead(igAfiliados.config.url, igAfiliados.key_cifrada, alvo, payload);
     crmLeadId = r.leadId != null ? String(r.leadId) : null;
     resultadoAfiliados = { lead_id: r.leadId, duplicado: r.duplicado, afiliado: r.afiliado,
-                           alvo: { tipo: alvo.tipo, nome: alvo.nome } };
+                           alvo: { tipo: alvo.tipo, nome: alvo.nome },
+                           ...(r.fila ? { fila: true, motivo: r.motivo } : {}) };
     await pool.query(`UPDATE leads SET crm_afiliado=$2::jsonb WHERE id=$1`,
-      [lead_id, JSON.stringify({ ...(r.afiliado || {}), via: alvo.tipo, alvo: alvo.nome })]);
+      [lead_id, JSON.stringify({ ...(r.afiliado || {}), via: alvo.tipo, alvo: alvo.nome, ...(r.fila ? { fila: true } : {}) })]);
   } else if (ig.provedor === 'gk') {
     const backend = ig.config?.backend;
     const token = ig.key_cifrada;
