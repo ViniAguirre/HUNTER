@@ -5027,12 +5027,13 @@ const INTEGRACOES_META = {
     icon:'M3 5h18v14H3zM3 7l9 6 9-6', editavel:false },
   'validacao_tel|twilio': { nome:'Validação de telefone', provedor:'Twilio Lookup',
     icon:'M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.6A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.3 1.8.6 2.6a2 2 0 0 1-.5 2.1L8 9.6a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.5c.8.3 1.7.5 2.6.6a2 2 0 0 1 1.7 2z', editavel:false },
-  'ia|openai': { nome:'Inteligência (IA) — agente SWOT', provedor:'OpenAI (gpt-4o-mini)',
+  'ia|openai': { nome:'Inteligência (IA) — OpenAI', provedor:'OpenAI — reserva: usada quando a OpenRouter falha (ou sozinha, sem OpenRouter)',
+    modeloPadrao:'gpt-4o-mini',
     icon:'M12 3v2M12 19v2M5 12H3M21 12h-2M7 7L5.5 5.5M18.5 18.5L17 17M17 7l1.5-1.5M5.5 18.5L7 17', editavel:true,
     temModelo:true, modeloPlaceholder:'modelo (padrão gpt-4o-mini)' },
   'ia|openrouter': { nome:'Inteligência (IA) — OpenRouter', provedor:'OpenRouter — preferida quando ativa; sem crédito, cai na OpenAI',
     icon:'M12 3v2M12 19v2M5 12H3M21 12h-2M7 7L5.5 5.5M18.5 18.5L17 17M17 7l1.5-1.5M5.5 18.5L7 17', editavel:true,
-    placeholder:'Colar chave da OpenRouter (sk-or-…)…',
+    placeholder:'Colar chave da OpenRouter (sk-or-…)…', modeloPadrao:'openai/gpt-4o-mini',
     temModelo:true, modeloPlaceholder:'modelo (ex.: meta-llama/llama-3.3-70b-instruct:free)' },
   'decisao|typesafe': { nome:'Decisões (Jev) — modo observação', provedor:'TypeSafe Jev — opina se o site achado é mesmo da empresa, ao lado das regras atuais, sem mudar o lead',
     icon:'M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11', editavel:true,
@@ -5520,6 +5521,21 @@ function Integracoes() {
     }
   };
 
+  // Resultado do "Testar" por card de IA: qual modelo respondeu de verdade.
+  const [testes, setTestes] = useState({});
+  const [testando, setTestando] = useState(null);
+  const testarIa = async (chave, provedor) => {
+    setTestando(chave);
+    try {
+      const r = await fetch('/api/integracoes/ia/testar', {
+        method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ provedor })
+      });
+      const d = await r.json().catch(() => ({}));
+      setTestes(t => ({ ...t, [chave]: r.ok ? d : { ok:false, erro: d.erro || 'Falha no teste.' } }));
+    } finally { setTestando(null); }
+  };
+
   const alternar = async (chave) => {
     const existente = porChave[chave];
     if (!existente) return;
@@ -5569,7 +5585,10 @@ function Integracoes() {
               <div style={{ fontSize:12.5, color:'var(--faint)', marginTop:3 }}>
                 {meta.provedor}{row?.chave_mascarada ? ' · ' + row.chave_mascarada : ''}
                 {meta.temSegredo ? (row?.config?.secret ? ' · segredo configurado' : ' · sem segredo (assinatura desativada)') : ''}
-                {meta.temModelo && row?.config?.modelo ? ' · modelo: ' + row.config.modelo : ''}
+                {/* O modelo que vai na chamada é o salvo; sem ele, o padrão do provedor.
+                    O nome antigo do card ("OpenAI (gpt-4o-mini)") não mudava com o
+                    modelo salvo e deixava dúvida sobre qual estava valendo. */}
+                {meta.temModelo ? ' · modelo usado: ' + (row?.config?.modelo || (meta.modeloPadrao ? meta.modeloPadrao + ' (padrão)' : 'padrão')) : ''}
               </div>
             </div>
             {meta.editavel ? (
@@ -5605,6 +5624,14 @@ function Integracoes() {
                     opacity: salvando === chave ? .6 : 1 }}>
                   {salvando === chave ? 'Salvando…' : 'Salvar'}
                 </button>
+                {categoria === 'ia' && row?.tem_chave && (
+                  <button onClick={() => testarIa(chave, provedor)} disabled={testando === chave}
+                    style={{ height:38, padding:'0 12px', borderRadius:9, border:'1px solid var(--border)',
+                      background:'transparent', color:'var(--text)', fontSize:12.5, fontFamily:'inherit',
+                      cursor: testando === chave ? 'default' : 'pointer', flexShrink:0, opacity: testando === chave ? .6 : 1 }}>
+                    {testando === chave ? 'Testando…' : 'Testar'}
+                  </button>
+                )}
                 {row && (
                   <button onClick={() => alternar(chave)}
                     style={{ height:38, padding:'0 12px', borderRadius:9, border:'1px solid var(--border)',
@@ -5616,6 +5643,16 @@ function Integracoes() {
               </>
             ) : (
               <div style={{ fontSize:12.5, color:'var(--faint)', flexShrink:0 }}>Em breve</div>
+            )}
+            {testes[chave] && (
+              <div style={{ flexBasis:'100%', fontSize:12, lineHeight:1.5, borderRadius:9, padding:'9px 11px',
+                color: testes[chave].ok ? C.green : C.red,
+                background: testes[chave].ok ? 'rgba(52,211,153,.08)' : 'rgba(248,113,113,.08)' }}>
+                {testes[chave].ok
+                  ? <>Funcionando: o modelo <b>{testes[chave].respondeu}</b> respondeu em {(testes[chave].ms / 1000).toFixed(1)} s
+                      {testes[chave].respondeu !== testes[chave].pedido ? ` (pedido: ${testes[chave].pedido})` : ''}.</>
+                  : <>Não funcionou{testes[chave].dica ? <> — <b>{testes[chave].dica}</b></> : ''}. {testes[chave].erro}</>}
+              </div>
             )}
           </div>
         );
@@ -7001,6 +7038,14 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                 <div style={{ background:'rgba(58,142,255,.07)', border:'1px solid rgba(58,142,255,.22)', borderRadius:11, padding:14, marginBottom:10 }}>
                   <div style={{ fontSize:10.5, fontWeight:600, color:C.blue, marginBottom:5, textTransform:'uppercase', letterSpacing:'.06em' }}>Sinal comercial</div>
                   <p style={{ fontSize:13, lineHeight:1.55, margin:0, color:'var(--text)' }}>{l.swot.sinal_comercial || l.swot.gancho}</p>
+                </div>
+              )}
+              {/* Só o master recebe esses campos (a API tira pro cliente). */}
+              {l.swot.modelo && (
+                <div style={{ fontSize:11, color:'var(--faint)', marginTop:4 }}>
+                  Gerado por {l.swot.provedor === 'openrouter' ? 'OpenRouter' : l.swot.provedor === 'openai' ? 'OpenAI' : 'IA'} · {l.swot.modelo}
+                  {Array.isArray(l.swot.reserva_de) && l.swot.reserva_de.length
+                    ? ` · reserva (${l.swot.reserva_de.map(p => p === 'openrouter' ? 'OpenRouter' : p).join(', ')} falhou antes)` : ''}
                 </div>
               )}
               <div style={{ marginTop:12, display:'flex', gap:8, flexWrap:'wrap' }}>

@@ -10668,8 +10668,9 @@ const INTEGRACOES_META = {
     editavel: false
   },
   'ia|openai': {
-    nome: 'Inteligência (IA) — agente SWOT',
-    provedor: 'OpenAI (gpt-4o-mini)',
+    nome: 'Inteligência (IA) — OpenAI',
+    provedor: 'OpenAI — reserva: usada quando a OpenRouter falha (ou sozinha, sem OpenRouter)',
+    modeloPadrao: 'gpt-4o-mini',
     icon: 'M12 3v2M12 19v2M5 12H3M21 12h-2M7 7L5.5 5.5M18.5 18.5L17 17M17 7l1.5-1.5M5.5 18.5L7 17',
     editavel: true,
     temModelo: true,
@@ -10681,6 +10682,7 @@ const INTEGRACOES_META = {
     icon: 'M12 3v2M12 19v2M5 12H3M21 12h-2M7 7L5.5 5.5M18.5 18.5L17 17M17 7l1.5-1.5M5.5 18.5L7 17',
     editavel: true,
     placeholder: 'Colar chave da OpenRouter (sk-or-…)…',
+    modeloPadrao: 'openai/gpt-4o-mini',
     temModelo: true,
     modeloPlaceholder: 'modelo (ex.: meta-llama/llama-3.3-70b-instruct:free)'
   },
@@ -11648,6 +11650,35 @@ function Integracoes() {
       setSalvando(null);
     }
   };
+
+  // Resultado do "Testar" por card de IA: qual modelo respondeu de verdade.
+  const [testes, setTestes] = useState({});
+  const [testando, setTestando] = useState(null);
+  const testarIa = async (chave, provedor) => {
+    setTestando(chave);
+    try {
+      const r = await fetch('/api/integracoes/ia/testar', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          provedor
+        })
+      });
+      const d = await r.json().catch(() => ({}));
+      setTestes(t => ({
+        ...t,
+        [chave]: r.ok ? d : {
+          ok: false,
+          erro: d.erro || 'Falha no teste.'
+        }
+      }));
+    } finally {
+      setTestando(null);
+    }
+  };
   const alternar = async chave => {
     const existente = porChave[chave];
     if (!existente) return;
@@ -11771,7 +11802,7 @@ function Integracoes() {
         color: 'var(--faint)',
         marginTop: 3
       }
-    }, meta.provedor, row?.chave_mascarada ? ' · ' + row.chave_mascarada : '', meta.temSegredo ? row?.config?.secret ? ' · segredo configurado' : ' · sem segredo (assinatura desativada)' : '', meta.temModelo && row?.config?.modelo ? ' · modelo: ' + row.config.modelo : '')), meta.editavel ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("input", {
+    }, meta.provedor, row?.chave_mascarada ? ' · ' + row.chave_mascarada : '', meta.temSegredo ? row?.config?.secret ? ' · segredo configurado' : ' · sem segredo (assinatura desativada)' : '', meta.temModelo ? ' · modelo usado: ' + (row?.config?.modelo || (meta.modeloPadrao ? meta.modeloPadrao + ' (padrão)' : 'padrão')) : '')), meta.editavel ? /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("input", {
       ref: el => chaveRefs.current[chave] = el,
       placeholder: meta.placeholder || 'Colar chave da API…',
       type: "password",
@@ -11845,7 +11876,23 @@ function Integracoes() {
         flexShrink: 0,
         opacity: salvando === chave ? .6 : 1
       }
-    }, salvando === chave ? 'Salvando…' : 'Salvar'), row && /*#__PURE__*/React.createElement("button", {
+    }, salvando === chave ? 'Salvando…' : 'Salvar'), categoria === 'ia' && row?.tem_chave && /*#__PURE__*/React.createElement("button", {
+      onClick: () => testarIa(chave, provedor),
+      disabled: testando === chave,
+      style: {
+        height: 38,
+        padding: '0 12px',
+        borderRadius: 9,
+        border: '1px solid var(--border)',
+        background: 'transparent',
+        color: 'var(--text)',
+        fontSize: 12.5,
+        fontFamily: 'inherit',
+        cursor: testando === chave ? 'default' : 'pointer',
+        flexShrink: 0,
+        opacity: testando === chave ? .6 : 1
+      }
+    }, testando === chave ? 'Testando…' : 'Testar'), row && /*#__PURE__*/React.createElement("button", {
       onClick: () => alternar(chave),
       style: {
         height: 38,
@@ -11865,7 +11912,17 @@ function Integracoes() {
         color: 'var(--faint)',
         flexShrink: 0
       }
-    }, "Em breve"));
+    }, "Em breve"), testes[chave] && /*#__PURE__*/React.createElement("div", {
+      style: {
+        flexBasis: '100%',
+        fontSize: 12,
+        lineHeight: 1.5,
+        borderRadius: 9,
+        padding: '9px 11px',
+        color: testes[chave].ok ? C.green : C.red,
+        background: testes[chave].ok ? 'rgba(52,211,153,.08)' : 'rgba(248,113,113,.08)'
+      }
+    }, testes[chave].ok ? /*#__PURE__*/React.createElement(React.Fragment, null, "Funcionando: o modelo ", /*#__PURE__*/React.createElement("b", null, testes[chave].respondeu), " respondeu em ", (testes[chave].ms / 1000).toFixed(1), " s", testes[chave].respondeu !== testes[chave].pedido ? ` (pedido: ${testes[chave].pedido})` : '', ".") : /*#__PURE__*/React.createElement(React.Fragment, null, "N\xE3o funcionou", testes[chave].dica ? /*#__PURE__*/React.createElement(React.Fragment, null, " \u2014 ", /*#__PURE__*/React.createElement("b", null, testes[chave].dica)) : '', ". ", testes[chave].erro)));
   }));
 }
 
@@ -14903,7 +14960,13 @@ function LeadDetailPanel({
       margin: 0,
       color: 'var(--text)'
     }
-  }, l.swot.sinal_comercial || l.swot.gancho)), /*#__PURE__*/React.createElement("div", {
+  }, l.swot.sinal_comercial || l.swot.gancho)), l.swot.modelo && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)',
+      marginTop: 4
+    }
+  }, "Gerado por ", l.swot.provedor === 'openrouter' ? 'OpenRouter' : l.swot.provedor === 'openai' ? 'OpenAI' : 'IA', " \xB7 ", l.swot.modelo, Array.isArray(l.swot.reserva_de) && l.swot.reserva_de.length ? ` · reserva (${l.swot.reserva_de.map(p => p === 'openrouter' ? 'OpenRouter' : p).join(', ')} falhou antes)` : ''), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 12,
       display: 'flex',

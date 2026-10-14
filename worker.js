@@ -58,7 +58,7 @@ const workers = {};
 function iniciarWorkers() {
   Object.assign(workers, {
     descoberta: new Worker('hunter-descoberta', job => descobertaFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 2 }),
-    enriquecimento: new Worker('hunter-enriquecimento', job => enriquecimentoFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 5 }),
+    enriquecimento: new Worker('hunter-enriquecimento', (job, token) => enriquecimentoFn(job, pool, queues, token), { connection: REDIS_OPTS, concurrency: 5 }),
     filtroContador: new Worker('hunter-filtro_contador', job => filtroContadorFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 10 }),
     score1: new Worker('hunter-score1', job => score1Fn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 10 }),
     validacao: new Worker('hunter-validacao', job => validacaoFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 4 }),

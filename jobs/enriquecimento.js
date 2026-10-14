@@ -8,9 +8,17 @@
  * Roda ANTES de a empresa virar lead — só empresas que passarem no Score 1
  * ganham uma linha em `leads`. Por isso esta etapa só mexe em `empresas`.
  */
+const { DelayedError } = require('bullmq');
 const cnpja = require('../providers/cnpja');
 
-module.exports = async function enriquecimento(job, pool, queues) {
+// A consulta aberta da CNPJá aceita 5 por minuto. Com várias empresas na fila
+// (e 5 em paralelo), o 429 é rotina, não erro: antes o job gastava as 3
+// tentativas em 35 s, caía na fila de falhas e virava o alerta "Falha em
+// Enriquecimento — CNPJá: limite de taxa atingido". Agora ele espera o tempo
+// que a CNPJá pede e volta pra fila, sem gastar tentativa.
+const MAX_ESPERAS = 30;
+
+module.exports = async function enriquecimento(job, pool, queues, token) {
   const { cnpj, busca_id } = job.data;
 
   const [{ rows: [empresa] }, { rows: [cfg] }] = await Promise.all([
@@ -31,7 +39,19 @@ module.exports = async function enriquecimento(job, pool, queues) {
 
   // Fallback raro: empresa sem dados da busca ou fora do TTL. Usa o endpoint
   // aberto (grátis) — nunca gasta crédito pago.
-  const data = await cnpja.enrichCnpj(cnpj);
+  let data;
+  try {
+    data = await cnpja.enrichCnpj(cnpj);
+  } catch (e) {
+    const esperas = job.data.esperas_cnpja || 0;
+    if (e.code !== 'RATE_LIMIT' || !token || esperas >= MAX_ESPERAS) throw e;
+    // Espalha a volta (até +30 s) pra as 5 consultas em paralelo não baterem
+    // no limite de novo no mesmo segundo.
+    const espera = Math.min(Math.max(e.retryAfter || 60, 15), 300) * 1000 + Math.floor(Math.random() * 30000);
+    await job.updateData({ ...job.data, esperas_cnpja: esperas + 1 });
+    await job.moveToDelayed(Date.now() + espera, token);
+    throw new DelayedError();
+  }
 
   await pool.query(`
     UPDATE empresas SET

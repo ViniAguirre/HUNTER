@@ -2205,7 +2205,7 @@ app.get('/api/leads/:id', requireAuth, async (req, res) => {
     // Qual provedor gerou o quê (modelo de IA, Google/Econodata/scrape) é sigiloso
     // — só o master vê. O cliente só precisa do conteúdo (briefing, contato validado).
     if (!req.user.master) {
-      if (l.swot) l.swot = { ...l.swot, modelo: undefined };
+      if (l.swot) l.swot = { ...l.swot, modelo: undefined, provedor: undefined, reserva_de: undefined };
       if (l.contato_validado) l.contato_validado = { ...l.contato_validado, fonte: undefined, resumo_fonte: undefined };
     }
     res.json(l);
@@ -2685,13 +2685,28 @@ app.get('/api/alertas', requireAuth, async (req, res) => {
     }
 
     if (master && monitorQueues) {
-      for (const [key, label] of [['descoberta','Descoberta'],['enriquecimento','Enriquecimento'],['filtroContador','Filtro Contador'],['score1','Score 1']]) {
+      // O rótulo diz QUAL etapa é: "Enriquecimento" sozinho fazia pensar na IA,
+      // quando é o cadastro da Receita pela CNPJá. E o agente SWOT (a IA), a
+      // validação de contato e o envio ao CRM não apareciam aqui de jeito
+      // nenhum — falha de chave de IA só se via no Monitoramento.
+      const etapas = [
+        ['descoberta', 'Descoberta de empresas (CNPJá)'],
+        ['enriquecimento', 'Cadastro na Receita (CNPJá)'],
+        ['filtroContador', 'Filtro de contador'],
+        ['score1', 'Score 1'],
+        ['validacao', 'Validação de contato'],
+        ['swot', 'Agente SWOT (IA)'],
+        ['crm', 'Envio ao CRM'],
+      ];
+      for (const [key, label] of etapas) {
+        if (!monitorQueues[key]) continue;
         const jobs = await monitorQueues[key].getFailed(0, 4);
         for (const j of jobs) {
+          const ref = j.data?.cnpj ? `CNPJ ${j.data.cnpj} · ` : (j.data?.lead_id ? `lead #${j.data.lead_id} · ` : '');
           alertas.push({
             tipo: 'erro',
             titulo: `Falha em ${label}`,
-            detalhe: (j.failedReason || 'erro desconhecido').slice(0, 120),
+            detalhe: (ref + (j.failedReason || 'erro desconhecido')).slice(0, 220),
             quando: j.finishedOn ? new Date(j.finishedOn).toISOString() : null,
           });
         }
@@ -2954,6 +2969,7 @@ app.post('/api/integracoes/tracking/testar', requireAuth, requireMaster, async (
 const gk = require('./providers/gk');
 const tracking = require('./providers/tracking');
 const afiliadosCrm = require('./providers/afiliados');
+const openai = require('./providers/openai');
 // Filas do CRM usando a integração JÁ salva — sem pedir token e sem exigir
 // master. Serve pra escolher a fila na criação de cada radar. Devolve lista
 // vazia (200) quando não há CRM configurado, pra UI só esconder o campo.
@@ -2968,6 +2984,19 @@ app.get('/api/crm/filas', requireAuth, async (req, res) => {
     const filas = await gk.listarFilas(ig.config.backend, ig.key_cifrada).catch(() => []);
     res.json({ filas, padrao: ig.config.queueId || null });
   } catch (e) { console.error(e); res.json({ filas: [], padrao: null }); }
+});
+
+// Testa a chave de IA salva (OpenRouter ou OpenAI) com o modelo salvo e diz
+// qual modelo de fato respondeu. Não grava nada.
+app.post('/api/integracoes/ia/testar', requireAuth, requireMaster, async (req, res) => {
+  const provedor = String(req.body.provedor || '');
+  if (!openai.PROVEDORES[provedor]) return res.status(400).json({ erro: 'provedor inválido' });
+  try {
+    const { rows: [ig] } = await pool.query(
+      `SELECT key_cifrada, config FROM integracoes WHERE categoria='ia' AND provedor=$1 LIMIT 1`, [provedor]);
+    if (!ig?.key_cifrada) return res.status(400).json({ erro: 'Salve a chave antes de testar.' });
+    res.json(await openai.testarChave(provedor, ig.key_cifrada, ig.config?.modelo));
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
 // CRM dos Afiliados: testa URL + chave (gerada no sistema de afiliados, em
@@ -3662,7 +3691,7 @@ app.post('/api/cnae/sugerir', requireAuth, requireEditor, iaLimiter, async (req,
     const chave = texto.toLowerCase();
     if (_cacheSugestao.has(chave)) return res.json({ sugestoes: _cacheSugestao.get(chave), cache: true });
 
-    const openai = require('./providers/openai');
+
     // Preferência: OpenRouter primeiro (quando ativo); se falhar, cai na OpenAI.
     const igs = await openai.integracoesIA(pool);
     if (!igs.length) return res.json({ sugestoes: [], erro: 'ia_inativa' });
