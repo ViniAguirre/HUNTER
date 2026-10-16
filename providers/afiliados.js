@@ -56,6 +56,8 @@ async function diretorio(url, key) {
     return {
       grupos: (data.groups || []).map(g => ({ id: g.id, nome: g.name, afiliados: g.affiliates || 0 })),
       afiliados: (data.affiliates || []).map(a => ({ id: a.id, nome: a.name, ref: a.ref_code, grupos: a.groups || [] })),
+      // Pacotes/planos liberados para afiliados: o radar pode marcar o produto do lead.
+      produtos: (data.products || []).map(p => ({ codigo: p.code, nome: p.name, tipo: p.kind === 'plan' ? 'plano' : 'pacote' })),
     };
   } catch (err) { throw erroDe(err); }
 }
@@ -70,8 +72,11 @@ function montarPayload(empresa, lead, busca, ref) {
   return p;
 }
 
-// alvo: { tipo: 'grupo'|'afiliado', id, nome }
+// alvo: { tipo: 'grupo'|'afiliado', id, nome, produto?: { codigo, nome } }
 async function enviarLead(url, key, alvo, payload) {
+  // Produto marcado no radar: o lead já nasce com ele no CRM dos Afiliados
+  // (e com isso a sequência, a IA e a proposta daquele pacote).
+  if (alvo.produto) payload = { ...payload, produto: alvo.produto };
   const target = { kind: alvo.tipo === 'afiliado' ? 'affiliate' : 'group', id: alvo.id };
   try {
     const { data, status } = await cliente(url, key).post('/api/integrations/hunter/leads', { target, lead: payload });
@@ -89,7 +94,12 @@ function normalizarAlvo(v) {
   const tipo = v.tipo === 'afiliado' ? 'afiliado' : v.tipo === 'grupo' ? 'grupo' : null;
   const id = String(v.id || '').trim().toLowerCase();
   if (!tipo || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) return null;
-  return { tipo, id, nome: String(v.nome || '').trim().slice(0, 120) || null };
+  const out = { tipo, id, nome: String(v.nome || '').trim().slice(0, 120) || null };
+  const codigo = String(v.produto?.codigo || '').trim();
+  if (codigo && codigo.length <= 120 && /^[\w.:-]+$/.test(codigo)) {
+    out.produto = { codigo, nome: String(v.produto?.nome || '').trim().slice(0, 160) || null };
+  }
+  return out;
 }
 
 module.exports = { normalizarUrl, chaveValida, diretorio, montarPayload, enviarLead, normalizarAlvo };
