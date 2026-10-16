@@ -4519,7 +4519,7 @@ function BuscaDetail({
       color: 'var(--dim)',
       marginTop: 5
     }
-  }, "Destino: ", /*#__PURE__*/React.createElement("b", null, "CRM Afiliados"), " \u2192 ", b.afiliados_alvo?.tipo === 'afiliado' ? 'afiliado' : 'grupo', ' ', /*#__PURE__*/React.createElement("b", null, b.afiliados_alvo?.nome || '—'))), /*#__PURE__*/React.createElement("button", {
+  }, "Destino: ", /*#__PURE__*/React.createElement("b", null, "CRM Afiliados"), " \u2192 ", b.afiliados_alvo?.tipo === 'afiliado' ? 'afiliado' : 'grupo', ' ', /*#__PURE__*/React.createElement("b", null, b.afiliados_alvo?.nome || '—'), b.afiliados_alvo?.produto?.nome && /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 pacote ", /*#__PURE__*/React.createElement("b", null, b.afiliados_alvo.produto.nome)))), /*#__PURE__*/React.createElement("button", {
     onClick: () => trocarCrmAuto(!b.crm_auto),
     disabled: toggling,
     style: {
@@ -8745,6 +8745,8 @@ function NovaBusca({
   const [crmDestino, setCrmDestino] = useState(inicial?.crm_destino === 'afiliados' ? 'afiliados' : 'principal');
   const [alvoTipo, setAlvoTipo] = useState(inicial?.afiliados_alvo?.tipo === 'afiliado' ? 'afiliado' : 'grupo');
   const [alvoId, setAlvoId] = useState(inicial?.afiliados_alvo?.id || '');
+  // Pacote/serviço do lead no CRM Afiliados (opcional): o lead já chega com ele.
+  const [produtoCod, setProdutoCod] = useState(inicial?.afiliados_alvo?.produto?.codigo || '');
   const [diretorioAfil, setDiretorioAfil] = useState(null);
   const [diretorioErro, setDiretorioErro] = useState(null);
   const [listaCnpj, setListaCnpj] = useState(Array.isArray(iniCrit.cnpjs) ? iniCrit.cnpjs.join('\n') : '');
@@ -8811,6 +8813,18 @@ function NovaBusca({
   }, [destinoEfetivo]);
   const opcoesAlvo = alvoTipo === 'grupo' ? diretorioAfil?.grupos || [] : diretorioAfil?.afiliados || [];
   const alvoSel = opcoesAlvo.find(o => o.id === alvoId) || null;
+  const produtoSel = (diretorioAfil?.produtos || []).find(p => p.codigo === produtoCod) || null;
+  const alvoPayload = () => destinoEfetivo === 'afiliados' && alvoSel ? {
+    tipo: alvoTipo,
+    id: alvoSel.id,
+    nome: alvoSel.nome,
+    ...(produtoSel ? {
+      produto: {
+        codigo: produtoSel.codigo,
+        nome: produtoSel.nome
+      }
+    } : {})
+  } : null;
   const cnpjsParsed = useMemo(() => {
     const vistos = new Set();
     for (const item of listaCnpj.split(/[\s,;]+/)) {
@@ -9162,11 +9176,7 @@ function NovaBusca({
           criterios,
           tags: tagsRadar,
           crm_destino: destinoEfetivo,
-          afiliados_alvo: destinoEfetivo === 'afiliados' && alvoSel ? {
-            tipo: alvoTipo,
-            id: alvoSel.id,
-            nome: alvoSel.nome
-          } : null,
+          afiliados_alvo: alvoPayload(),
           regioes,
           semanas,
           meses,
@@ -9190,11 +9200,7 @@ function NovaBusca({
           criterios,
           tags: tagsRadar,
           crm_destino: destinoEfetivo,
-          afiliados_alvo: destinoEfetivo === 'afiliados' && alvoSel ? {
-            tipo: alvoTipo,
-            id: alvoSel.id,
-            nome: alvoSel.nome
-          } : null
+          afiliados_alvo: alvoPayload()
         })
       });
       if (!r.ok) {
@@ -10509,7 +10515,49 @@ function NovaBusca({
       marginTop: 7,
       lineHeight: 1.4
     }
-  }, alvoTipo === 'grupo' ? 'Cada lead vai para o afiliado do grupo que está há mais tempo sem receber lead do Hunter.' : 'Todos os leads deste radar vão para este afiliado.', ' ', "O lead cai na coluna Novo lead, com o briefing completo."))), destinoEfetivo === 'principal' && crmFilas.length > 0 && /*#__PURE__*/React.createElement("div", {
+  }, alvoTipo === 'grupo' ? 'Cada lead vai para o afiliado do grupo que está há mais tempo sem receber lead do Hunter.' : 'Todos os leads deste radar vão para este afiliado.', ' ', "O lead cai na coluna Novo lead, com o briefing completo."), /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'block',
+      fontSize: 11.5,
+      color: 'var(--dim)',
+      marginTop: 12,
+      marginBottom: 6
+    }
+  }, "Pacote ou servi\xE7o do lead (opcional)"), /*#__PURE__*/React.createElement("select", {
+    value: produtoCod,
+    onChange: e => setProdutoCod(e.target.value),
+    "aria-label": "Pacote ou servi\xE7o do lead",
+    style: {
+      width: '100%',
+      height: 40,
+      borderRadius: 9,
+      border: '1px solid var(--border)',
+      background: 'var(--panel)',
+      color: 'var(--text)',
+      padding: '0 10px',
+      fontSize: 13,
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "Sem produto (o afiliado escolhe)"), (diretorioAfil.produtos || []).map(p => /*#__PURE__*/React.createElement("option", {
+    key: p.codigo,
+    value: p.codigo
+  }, p.nome, " \u2014 ", p.tipo))), produtoCod && !produtoSel && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: C.amber,
+      marginTop: 7
+    }
+  }, "O pacote salvo (", inicial?.afiliados_alvo?.produto?.nome || 'anterior', ") n\xE3o est\xE1 mais liberado para afiliados. Escolha outro."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)',
+      marginTop: 7,
+      lineHeight: 1.4
+    }
+  }, "Com o pacote marcado, o lead j\xE1 chega com ele: dispara a sequ\xEAncia de abordagem do pacote, e o atendente de IA e a proposta usam o pacote certo. As tags do radar tamb\xE9m v\xE3o para o card."))), destinoEfetivo === 'principal' && crmFilas.length > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 16
     }
