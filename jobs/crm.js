@@ -13,6 +13,13 @@ const afiliados = require('../providers/afiliados');
 const distribuicao = require('./distribuicao');
 const { registrar } = require('./tracking');
 
+// Lead que já está no CRM não vai de novo: nem ele, nem outro lead com o mesmo
+// CNPJ (a mesma empresa achada por dois radares antes da trava de CNPJ). `a` é
+// o alias da tabela leads na consulta. Usado aqui e pela tela (server.js).
+const jaNoCrmSql = (a) => `(${a}.enviado_crm_em IS NOT NULL OR (COALESCE(${a}.cnpj,'') <> '' AND EXISTS (
+  SELECT 1 FROM leads o WHERE o.id <> ${a}.id AND o.enviado_crm_em IS NOT NULL
+     AND regexp_replace(o.cnpj, '\\D', '', 'g') = regexp_replace(${a}.cnpj, '\\D', '', 'g'))))`;
+
 module.exports = async function crm(job, pool, queues) {
   const { lead_id } = job.data;
 
@@ -44,6 +51,9 @@ module.exports = async function crm(job, pool, queues) {
      FROM leads l LEFT JOIN buscas b ON b.id=l.busca_id WHERE l.id=$1`, [lead_id]
   );
   if (!lead) return { error: 'lead ausente', lead_id };
+  // Trava de reenvio: vale pra todo caminho (botão, lote, decisão, automático).
+  const { rows: [ja] } = await pool.query(`SELECT ${jaNoCrmSql('l')} AS sim FROM leads l WHERE l.id=$1`, [lead_id]);
+  if (ja?.sim) return { skipped: 'ja_no_crm', lead_id };
   const paraAfiliados = lead.busca_crm_destino === 'afiliados';
   if (!paraAfiliados && !ig) return { skipped: 'sem_crm', lead_id };
 
@@ -220,3 +230,5 @@ module.exports = async function crm(job, pool, queues) {
            ...(resultadoGk ? { gk: resultadoGk } : {}),
            ...(resultadoAfiliados ? { afiliados: resultadoAfiliados } : {}) };
 };
+
+module.exports.jaNoCrmSql = jaNoCrmSql;
