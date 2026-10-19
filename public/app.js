@@ -2754,7 +2754,11 @@ function Leads({
   const [page, setPage] = useState(1);
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
-  const [filterStatus, setFilterStatus] = useState('');
+  // Padrão "Em aberto": lead que já teve definição (descartado/negativado ou
+  // enviado) sai da lista de trabalho — senão entra na seleção e no envio em
+  // lote por engano. Os filtros de status mostram esses quando precisa.
+  const [filterStatus, setFilterStatus] = useState('abertos');
+  const [finalizados, setFinalizados] = useState(0);
   const [emailOnly, setEmailOnly] = useState(false);
   const [filterBusca, setFilterBusca] = useState('');
   const [filterLocal, setFilterLocal] = useState('');
@@ -2846,7 +2850,9 @@ function Leads({
     if (debouncedQ) params.set('q', debouncedQ);
     // A opção "Sem contato" não é um status — é a fila de enriquecimento
     // manual (contato_status). Vai num parâmetro próprio.
-    if (filterStatus === 'sem_contato' || filterStatus === 'so_telefone') params.set('contato', filterStatus);else if (filterStatus) params.set('status', filterStatus);
+    // Buscar um lead pelo nome/CNPJ/ID do CRM acha ele mesmo já finalizado.
+    if (filterStatus === 'sem_contato' || filterStatus === 'so_telefone') params.set('contato', filterStatus);else if (filterStatus && filterStatus !== 'abertos') params.set('status', filterStatus);
+    if (['abertos', 'sem_contato', 'so_telefone'].includes(filterStatus) && !debouncedQ) params.set('abertos', '1');
     if (emailOnly) params.set('email_only', 'true');
     if (filterBusca) params.set('busca_id', filterBusca);
     if (debouncedLocal) params.set('local', debouncedLocal);
@@ -2858,6 +2864,7 @@ function Leads({
     }).then(r => r.json()).then(d => {
       setLeads(d.leads || []);
       setTotal(d.total || 0);
+      setFinalizados(d.finalizados || 0);
     }).catch(() => {}).finally(() => setLoading(false));
   }, [debouncedQ, filterStatus, emailOnly, filterBusca, debouncedLocal, filterScore, filterAnalise, page, refreshKey, tick]);
   const allSel = leads.length > 0 && leads.every(l => selected.includes(l.id));
@@ -3088,8 +3095,10 @@ function Leads({
       cursor: 'pointer'
     }
   }, /*#__PURE__*/React.createElement("option", {
+    value: "abertos"
+  }, "Em aberto"), /*#__PURE__*/React.createElement("option", {
     value: ""
-  }, "Status"), /*#__PURE__*/React.createElement("option", {
+  }, "Todos os status"), /*#__PURE__*/React.createElement("option", {
     value: "Novo"
   }, "Novo"), /*#__PURE__*/React.createElement("option", {
     value: "Qualificado"
@@ -3107,7 +3116,7 @@ function Leads({
     value: "Enviado:manual"
   }, "Enviado \xB7 marcado \xE0 m\xE3o"), /*#__PURE__*/React.createElement("option", {
     value: "Descartado"
-  }, "Descartado")), /*#__PURE__*/React.createElement("input", {
+  }, "Descartado / negativado")), /*#__PURE__*/React.createElement("input", {
     value: filterLocal,
     onChange: handleLocal,
     placeholder: "Local (cidade/UF)",
@@ -3635,7 +3644,23 @@ function Leads({
       fontSize: 12,
       color: 'var(--faint)'
     }
-  }, /*#__PURE__*/React.createElement("span", null, "Mostrando ", leads.length, " de ", fmtNum(total), " leads"), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("span", null, "Mostrando ", leads.length, " de ", fmtNum(total), " leads", finalizados > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, " \xB7 ", fmtNum(finalizados), " j\xE1 com defini\xE7\xE3o (enviados ou descartados) fora da lista \u2014", ' ', /*#__PURE__*/React.createElement("button", {
+    onClick: () => {
+      setFilterStatus('');
+      setPage(1);
+      setSelected([]);
+    },
+    style: {
+      background: 'none',
+      border: 'none',
+      padding: 0,
+      color: 'var(--accent)',
+      fontSize: 12,
+      fontFamily: 'inherit',
+      cursor: 'pointer',
+      textDecoration: 'underline'
+    }
+  }, "ver todos"))), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       gap: 6
@@ -15170,7 +15195,23 @@ function LeadDetailPanel({
     w: 15,
     h: 15,
     sw: 2.2
-  }), l.enviado_manual_em ? 'Enviado ao time' : 'Marcar como enviado'), l.enviado_crm_em || l.crm_outro_radar ? (() => {
+  }), l.enviado_manual_em ? 'Enviado ao time' : 'Marcar como enviado'), status === 'Descartado' && !l.enviado_crm_em ? /*#__PURE__*/React.createElement("div", {
+    title: "Lead descartado n\xE3o vai ao CRM. Para enviar, aprove o lead antes.",
+    style: {
+      flex: 1,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      textAlign: 'center',
+      minHeight: 42,
+      padding: '4px 12px',
+      borderRadius: 10,
+      border: '1px solid var(--border)',
+      color: 'var(--dim)',
+      fontSize: 13,
+      lineHeight: 1.3
+    }
+  }, "Descartado \u2014 aprove o lead para poder enviar ao CRM") : l.enviado_crm_em || l.crm_outro_radar ? (() => {
     const em = l.enviado_crm_em || l.crm_outro_radar.em;
     let data = '';
     try {
@@ -15269,6 +15310,7 @@ function CrmModal({
 
   // Quais dos selecionados já estão no CRM: esses não vão de novo.
   const [jaNoCrm, setJaNoCrm] = useState(null); // null=carregando
+  const [descartados, setDescartados] = useState([]); // descartado/negativado: também não vai
   useEffect(() => {
     fetch('/api/crm/status', {
       credentials: 'same-origin'
@@ -15287,10 +15329,14 @@ function CrmModal({
       })
     }).then(r => r.ok ? r.json() : {
       ja_no_crm: []
-    }).then(d => setJaNoCrm(d.ja_no_crm || [])).catch(() => setJaNoCrm([]));
+    }).then(d => {
+      setDescartados(d.descartados || []);
+      setJaNoCrm(d.ja_no_crm || []);
+    }).catch(() => setJaNoCrm([]));
   }, []);
   const qtdJa = jaNoCrm ? jaNoCrm.length : 0;
-  const qtdEnviar = ids.length - qtdJa;
+  const qtdDesc = descartados.length;
+  const qtdEnviar = ids.length - qtdJa - qtdDesc;
   const nadaAEnviar = jaNoCrm !== null && qtdEnviar <= 0;
   const confirmar = async () => {
     setLoading(true);
@@ -15361,14 +15407,27 @@ function CrmModal({
       color: 'var(--dim)',
       margin: 0
     }
-  }, jaNoCrm === null ? 'Conferindo os leads…' : nadaAEnviar ? ids.length === 1 ? 'Este lead já está no CRM.' : 'Todos os leads selecionados já estão no CRM.' : `${qtdEnviar} lead${qtdEnviar !== 1 ? 's' : ''} ${qtdEnviar !== 1 ? 'serão enviados' : 'será enviado'} — ação deliberada, sem automação.`)), /*#__PURE__*/React.createElement("div", {
+  }, jaNoCrm === null ? 'Conferindo os leads…' : nadaAEnviar ? ids.length === 1 ? qtdDesc ? 'Este lead está descartado.' : 'Este lead já está no CRM.' : 'Nenhum dos leads selecionados pode ser enviado.' : `${qtdEnviar} lead${qtdEnviar !== 1 ? 's' : ''} ${qtdEnviar !== 1 ? 'serão enviados' : 'será enviado'} — ação deliberada, sem automação.`)), /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '20px 24px',
       display: 'flex',
       flexDirection: 'column',
       gap: 16
     }
-  }, qtdJa > 0 && /*#__PURE__*/React.createElement("div", {
+  }, qtdDesc > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 11,
+      background: 'rgba(248,113,113,.08)',
+      border: '1px solid rgba(248,113,113,.3)',
+      borderRadius: 10,
+      padding: '12px 14px',
+      fontSize: 12.5,
+      color: C.red,
+      lineHeight: 1.45
+    }
+  }, qtdDesc === 1 && ids.length === 1 ? 'Lead descartado não vai ao CRM. Para enviar, aprove o lead antes.' : `${qtdDesc} ${qtdDesc !== 1 ? 'estão descartados (ou negativados) e ficam' : 'está descartado (ou negativado) e fica'} de fora.`), qtdJa > 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',

@@ -52,8 +52,11 @@ module.exports = async function crm(job, pool, queues) {
   );
   if (!lead) return { error: 'lead ausente', lead_id };
   // Trava de reenvio: vale pra todo caminho (botão, lote, decisão, automático).
-  const { rows: [ja] } = await pool.query(`SELECT ${jaNoCrmSql('l')} AS sim FROM leads l WHERE l.id=$1`, [lead_id]);
+  // Lead descartado (inclui o negativado "fora do perfil") também não vai.
+  const { rows: [ja] } = await pool.query(
+    `SELECT ${jaNoCrmSql('l')} AS sim, l.status = 'Descartado' AS descartado FROM leads l WHERE l.id=$1`, [lead_id]);
   if (ja?.sim) return { skipped: 'ja_no_crm', lead_id };
+  if (ja?.descartado) return { skipped: 'descartado', lead_id };
   const paraAfiliados = lead.busca_crm_destino === 'afiliados';
   if (!paraAfiliados && !ig) return { skipped: 'sem_crm', lead_id };
 
