@@ -1408,6 +1408,7 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
 
   const selBtnStyle = (variant) => ({
     height:34, padding:'0 12px', borderRadius:8, border:'1px solid var(--border)',
+    whiteSpace:'nowrap', flexShrink:0,
     background: variant==='gold' ? 'var(--gold)' : 'transparent',
     color: variant==='gold' ? '#0E1936' : variant==='dim' ? 'var(--dim)' : 'var(--text)',
     fontSize:12.5, fontFamily:'inherit', cursor:'pointer', display:'flex', alignItems:'center', gap:7, fontWeight: variant==='gold'?600:400
@@ -1523,10 +1524,10 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
       )}
 
       {selected.length > 0 && (
-        <div style={{ display:'flex', alignItems:'center', gap:14, background:'var(--panel2)',
+        <div style={{ display:'flex', alignItems:'center', flexWrap:'wrap', gap:'8px 10px', background:'var(--panel2)',
           border:`1px solid ${C.blue}`, borderRadius:11, padding:'10px 14px', marginBottom:14,
           animation:'hfade .2s ease' }}>
-          <span style={{ fontSize:13, fontWeight:600, color:C.blue }}>{selected.length} selecionado{selected.length!==1?'s':''}</span>
+          <span style={{ fontSize:13, fontWeight:600, color:C.blue, whiteSpace:'nowrap' }}>{selected.length} selecionado{selected.length!==1?'s':''}</span>
           <div style={{ width:1, height:20, background:'var(--border)' }}/>
           <button onClick={() => onCrm(selected)} style={selBtnStyle('gold')}>
             <Svg d="M5 12h14M13 5l7 7-7 7" color="#0E1936" w={14} h={14} sw={2}/>
@@ -1563,11 +1564,11 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
           <button onClick={excluirLote}
             style={{ height:34, padding:'0 12px', borderRadius:8, border:`1px solid ${C.red}`,
               background:'transparent', color:C.red, fontSize:12.5, fontFamily:'inherit', cursor:'pointer',
-              display:'flex', alignItems:'center', gap:7 }}>
+              whiteSpace:'nowrap', flexShrink:0, display:'flex', alignItems:'center', gap:7 }}>
             <Svg d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" color={C.red} w={14} h={14} sw={1.7}/>
             Excluir
           </button>
-          <div style={{ flex:1 }}/>
+          <div style={{ flex:1, minWidth:0 }}/>
           <button onClick={() => setSelected([])} style={{ background:'none', border:'none', color:'var(--faint)', fontSize:12, cursor:'pointer', fontFamily:'inherit' }}>Limpar</button>
         </div>
       )}

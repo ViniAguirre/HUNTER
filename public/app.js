@@ -2983,6 +2983,8 @@ function Leads({
     padding: '0 12px',
     borderRadius: 8,
     border: '1px solid var(--border)',
+    whiteSpace: 'nowrap',
+    flexShrink: 0,
     background: variant === 'gold' ? 'var(--gold)' : 'transparent',
     color: variant === 'gold' ? '#0E1936' : variant === 'dim' ? 'var(--dim)' : 'var(--text)',
     fontSize: 12.5,
@@ -3279,7 +3281,8 @@ function Leads({
     style: {
       display: 'flex',
       alignItems: 'center',
-      gap: 14,
+      flexWrap: 'wrap',
+      gap: '8px 10px',
       background: 'var(--panel2)',
       border: `1px solid ${C.blue}`,
       borderRadius: 11,
@@ -3291,7 +3294,8 @@ function Leads({
     style: {
       fontSize: 13,
       fontWeight: 600,
-      color: C.blue
+      color: C.blue,
+      whiteSpace: 'nowrap'
     }
   }, selected.length, " selecionado", selected.length !== 1 ? 's' : ''), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -3376,6 +3380,8 @@ function Leads({
       fontSize: 12.5,
       fontFamily: 'inherit',
       cursor: 'pointer',
+      whiteSpace: 'nowrap',
+      flexShrink: 0,
       display: 'flex',
       alignItems: 'center',
       gap: 7
@@ -3388,7 +3394,8 @@ function Leads({
     sw: 1.7
   }), "Excluir"), /*#__PURE__*/React.createElement("div", {
     style: {
-      flex: 1
+      flex: 1,
+      minWidth: 0
     }
   }), /*#__PURE__*/React.createElement("button", {
     onClick: () => setSelected([]),
