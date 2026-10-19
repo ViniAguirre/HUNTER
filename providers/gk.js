@@ -199,16 +199,36 @@ function mesclarContato(existente, novo) {
 async function upsertContato(backend, token, contato) {
   const existente = await buscarContato(backend, token, contato.number);
   if (existente) {
-    try {
-      await comAuth(backend, token, (c) => c.post('/api/contact/update', mesclarContato(existente, contato)),
-        ['bearer', 'raw']);
-    } catch (err) {
-      // O contato existe: dado desatualizado não pode impedir o ticket. Segue.
-      console.warn('[gk] contato existe, mas a atualização falhou:', traduzErro(err, 'Atualizar contato').message);
-    }
+    await atualizarExistente(backend, token, existente, contato);
     return existente.id;
   }
   return criarContato(backend, token, contato);
+}
+
+// Atualiza (mesclando) um contato que já está no CRM. Só com a lista completa
+// de informações adicionais dele: o update do CRM apaga as que não vierem, e o
+// contato pode ser um cliente com histórico. Sem ela, deixa o contato como
+// está — o hunter_ref vai de qualquer forma na nota do ticket.
+async function atualizarExistente(backend, token, existente, contato) {
+  if (!Array.isArray(existente.extraInfo)) {
+    console.warn(`[gk] contato ${existente.id} já existia no CRM — mantido como está (sem as informações adicionais dele pra mesclar)`);
+    return;
+  }
+  try {
+    await comAuth(backend, token, (c) => c.post('/api/contact/update', mesclarContato(existente, contato)),
+      ['bearer', 'raw']);
+  } catch (err) {
+    // O contato existe: dado desatualizado não pode impedir o ticket. Segue.
+    console.warn('[gk] contato existe, mas a atualização falhou:', traduzErro(err, 'Atualizar contato').message);
+  }
+}
+
+// O CRM recusa criar contato com número que já tem e responde 200 com
+// {alreadyExists:true, existingContact:{id,…}}. Não é erro: é o contato a usar.
+function contatoJaExistente(data) {
+  const alvo = Array.isArray(data) ? data[0] : data;
+  const ex = alvo && typeof alvo === 'object' && alvo.alreadyExists ? alvo.existingContact : null;
+  return ex && typeof ex === 'object' && ex.id != null ? ex : null;
 }
 
 // Cria o contato e devolve o contactId. Bearer primeiro, como manda a doc; se
@@ -239,6 +259,14 @@ async function criarContato(backend, token, contato) {
         );
       }
       throw traduzErro(err, `Criar/atualizar contato (${rota})`);
+    }
+    // A busca por número nem sempre acha (formato do número, conexão), e a
+    // criação devolve o contato que já existe. Usa ele e segue pro ticket.
+    const jaExiste = contatoJaExistente(resp.data);
+    if (jaExiste) {
+      const completo = await buscarContato(backend, token, jaExiste.number || contato.number);
+      await atualizarExistente(backend, token, completo && String(completo.id) === String(jaExiste.id) ? completo : jaExiste, contato);
+      return jaExiste.id;
     }
     const id = extrairContactId(resp.data);
     if (id) return id;
@@ -500,5 +528,5 @@ function montarContato(empresa, lead, extras = {}) {
   return contato;
 }
 
-module.exports = { listarEmpresas, listarFilas, listarConexoes, comConexao, upsertContato, criarContato, buscarContato, mesclarContato,
+module.exports = { listarEmpresas, listarFilas, listarConexoes, comConexao, upsertContato, criarContato, buscarContato, mesclarContato, contatoJaExistente,
   abrirTicket, montarContato, montarBriefing, enviarNotaInterna, checarRotaContato, normalizarNumero, EP_CONTATO, EP_CONTATO_ALT };
