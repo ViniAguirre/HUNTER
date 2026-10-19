@@ -13647,7 +13647,7 @@ function Monitor() {
   }];
   const etapas = [{
     key: 'descoberta',
-    label: '1. Descoberta (CNPJá)'
+    label: '1. Descoberta'
   }, {
     key: 'enriquecimento',
     label: '2. Enriquecimento (Receita)'
@@ -13662,7 +13662,7 @@ function Monitor() {
     label: '5. Validação de contato'
   }, {
     key: 'swot',
-    label: '6. Agente SWOT (OpenAI)'
+    label: '6. Agente SWOT'
   }, {
     key: 'crm',
     label: '7. Envio ao CRM'
@@ -15021,13 +15021,7 @@ function LeadDetailPanel({
       margin: 0,
       color: 'var(--text)'
     }
-  }, l.swot.sinal_comercial || l.swot.gancho)), l.swot.modelo && /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11,
-      color: 'var(--faint)',
-      marginTop: 4
-    }
-  }, "Gerado por ", l.swot.provedor === 'openrouter' ? 'OpenRouter' : l.swot.provedor === 'openai' ? 'OpenAI' : 'IA', " \xB7 ", l.swot.modelo, Array.isArray(l.swot.reserva_de) && l.swot.reserva_de.length ? ` · reserva (${l.swot.reserva_de.map(p => p === 'openrouter' ? 'OpenRouter' : p).join(', ')} falhou antes)` : ''), /*#__PURE__*/React.createElement("div", {
+  }, l.swot.sinal_comercial || l.swot.gancho)), /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 12,
       display: 'flex',

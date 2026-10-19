@@ -10,6 +10,7 @@
  */
 const axios = require('axios');
 const crypto = require('crypto');
+const { swotSemOrigem, contatoSemOrigem } = require('../sigilo');
 
 // Telefone BR no formato que o CRM/WhatsApp espera: só dígitos, sempre com o
 // DDI 55. As fontes de contato variam (site, Places, digitação manual) e nem
@@ -69,12 +70,13 @@ function montarPayload(empresa, lead, busca, ref, crm) {
     },
     decisor: { nome: de('decisor'), cargo: de('cargo') },
     // telefone/whatsapp saem sempre com DDI 55 (o resto do objeto é preservado).
+    // Sem a origem (qual IA/API gerou): sigilo.js.
     contato_validado: lead?.contato_validado ? {
-      ...lead.contato_validado,
+      ...contatoSemOrigem(lead.contato_validado),
       telefone: normalizarTelefoneBR(lead.contato_validado.telefone),
       whatsapp: normalizarTelefoneBR(lead.contato_validado.whatsapp || lead.contato_validado.telefone),
     } : null,
-    swot: lead?.swot || null,
+    swot: swotSemOrigem(lead?.swot),
     busca: busca ? { id: busca.id, nome: busca.nome, tags: Array.isArray(busca.tags) ? busca.tags : [] } : null,
     // Conexão do CRM de destino: quem recebe (n8n) usa pra abrir o ticket.
     // fila_id já respeita a fila configurada no radar, caindo na padrão quando

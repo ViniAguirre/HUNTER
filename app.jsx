@@ -6486,12 +6486,12 @@ function Monitor() {
   ];
 
   const etapas = [
-    { key:'descoberta', label:'1. Descoberta (CNPJá)' },
+    { key:'descoberta', label:'1. Descoberta' },
     { key:'enriquecimento', label:'2. Enriquecimento (Receita)' },
     { key:'filtroContador', label:'3. Filtro de contador' },
     { key:'score1', label:'4. Score 1 + corte' },
     { key:'validacao', label:'5. Validação de contato' },
-    { key:'swot', label:'6. Agente SWOT (OpenAI)' },
+    { key:'swot', label:'6. Agente SWOT' },
     { key:'crm', label:'7. Envio ao CRM' },
     // A lista é fixa: fila nova não aparece sozinha aqui. Sem esta linha, a fila
     // do Tracking Hub entrava nos totais lá de cima mas não tinha linha própria
@@ -7073,14 +7073,6 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                 <div style={{ background:'rgba(58,142,255,.07)', border:'1px solid rgba(58,142,255,.22)', borderRadius:11, padding:14, marginBottom:10 }}>
                   <div style={{ fontSize:10.5, fontWeight:600, color:C.blue, marginBottom:5, textTransform:'uppercase', letterSpacing:'.06em' }}>Sinal comercial</div>
                   <p style={{ fontSize:13, lineHeight:1.55, margin:0, color:'var(--text)' }}>{l.swot.sinal_comercial || l.swot.gancho}</p>
-                </div>
-              )}
-              {/* Só o master recebe esses campos (a API tira pro cliente). */}
-              {l.swot.modelo && (
-                <div style={{ fontSize:11, color:'var(--faint)', marginTop:4 }}>
-                  Gerado por {l.swot.provedor === 'openrouter' ? 'OpenRouter' : l.swot.provedor === 'openai' ? 'OpenAI' : 'IA'} · {l.swot.modelo}
-                  {Array.isArray(l.swot.reserva_de) && l.swot.reserva_de.length
-                    ? ` · reserva (${l.swot.reserva_de.map(p => p === 'openrouter' ? 'OpenRouter' : p).join(', ')} falhou antes)` : ''}
                 </div>
               )}
               <div style={{ marginTop:12, display:'flex', gap:8, flexWrap:'wrap' }}>

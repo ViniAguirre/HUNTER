@@ -15,6 +15,7 @@ const rateLimit = require('express-rate-limit');
 const { Pool } = require('pg');
 const { TENANT_ID, TENANT_LEGADO, ligarTenantNoPool, exigirRlsEnforcavel, tenantizarTabela, migrarSingletonParaTenant } = require('./tenant');
 const { normalizarTags, normalizarListaCrm } = require('./tags');
+const { swotSemOrigem, contatoSemOrigem } = require('./sigilo');
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'troque-este-segredo';
@@ -824,6 +825,14 @@ async function init() {
       AND EXISTS (SELECT 1 FROM sementes s WHERE s.cnpj = l.cnpj AND s.tenant_id = l.tenant_id)
   `).then(r => { if (r.rowCount) console.log(`[migração] ${r.rowCount} lead(s) que já eram clientes saíram da esteira`); })
     .catch(e => console.error('[migração] guardrail sementes:', e.message));
+
+  // Qual IA/modelo gerou o briefing não fica mais no lead (sigilo.js): limpa os
+  // briefings antigos, que ainda guardavam modelo/provedor/reserva_de.
+  await pool.query(`
+    UPDATE leads SET swot = swot - 'modelo' - 'provedor' - 'reserva_de'
+    WHERE jsonb_typeof(swot) = 'object' AND swot ?| array['modelo','provedor','reserva_de']
+  `).then(r => { if (r.rowCount) console.log(`[migração] ${r.rowCount} briefing(s) sem a origem da IA`); })
+    .catch(e => console.error('[migração] sigilo swot:', e.message));
 
   // contadores / contadores_hora: a PK precisa incluir tenant_id — cada cliente
   // tem teto diário/horário PRÓPRIO (senão um cliente estoura a cota do outro).
@@ -2213,12 +2222,10 @@ app.get('/api/leads/:id', requireAuth, async (req, res) => {
       `SELECT l.*, b.nome AS busca_nome FROM leads l
        LEFT JOIN buscas b ON b.id=l.busca_id WHERE l.id=$1`, [id]);
     if (!l) return res.status(404).json({ erro: 'não encontrado' });
-    // Qual provedor gerou o quê (modelo de IA, Google/Econodata/scrape) é sigiloso
-    // — só o master vê. O cliente só precisa do conteúdo (briefing, contato validado).
-    if (!req.user.master) {
-      if (l.swot) l.swot = { ...l.swot, modelo: undefined, provedor: undefined, reserva_de: undefined };
-      if (l.contato_validado) l.contato_validado = { ...l.contato_validado, fonte: undefined, resumo_fonte: undefined };
-    }
+    // Qual IA/modelo gerou o briefing e de qual API veio o contato é sigiloso
+    // pra TODOS, master inclusive (sigilo.js). A tela só precisa do conteúdo.
+    l.swot = swotSemOrigem(l.swot);
+    l.contato_validado = contatoSemOrigem(l.contato_validado);
     res.json(l);
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
@@ -2701,12 +2708,12 @@ app.get('/api/alertas', requireAuth, async (req, res) => {
       // validação de contato e o envio ao CRM não apareciam aqui de jeito
       // nenhum — falha de chave de IA só se via no Monitoramento.
       const etapas = [
-        ['descoberta', 'Descoberta de empresas (CNPJá)'],
-        ['enriquecimento', 'Cadastro na Receita (CNPJá)'],
+        ['descoberta', 'Descoberta de empresas'],
+        ['enriquecimento', 'Cadastro na Receita'],
         ['filtroContador', 'Filtro de contador'],
         ['score1', 'Score 1'],
         ['validacao', 'Validação de contato'],
-        ['swot', 'Agente SWOT (IA)'],
+        ['swot', 'Agente SWOT'],
         ['crm', 'Envio ao CRM'],
       ];
       for (const [key, label] of etapas) {
@@ -3610,7 +3617,7 @@ app.get('/api/listas/:nome/avaliacao', requireAuth, async (req, res) => {
   try {
     const { rows: [av] } = await pool.query(
       `SELECT id, criado_em, concluido_em, proposta_id, proposta_rotulo, status, nota, faixa,
-              resultado, modelo, erro
+              resultado, erro
        FROM avaliacoes_lista WHERE lista=$1 ORDER BY id DESC LIMIT 1`, [String(req.params.nome || '')]);
     if (!av) return res.json(null);
     // Suspeitas já removidas pelo usuário saem da lista mostrada.
