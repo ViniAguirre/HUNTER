@@ -7,6 +7,7 @@
  * gasto, sem erro) — a formulação da abordagem em si é feita no CRM, não aqui.
  */
 const openai = require('../providers/openai');
+const { swotSemOrigem } = require('../sigilo');
 
 // Rótulos do fichamento comercial (tela "Agente SWOT", master). Precisa casar
 // com as perguntas do front — é o que transforma as respostas salvas num bloco
@@ -92,10 +93,11 @@ module.exports = async function swot(job, pool, queues) {
             apiKey: ig.key_cifrada, modelo: ig.config?.modelo, contexto, perfilEmpresa, provedor: ig.provedor,
             instrucoesCliente,
           });
-          briefing.provedor = ig.provedor;
-          if (falhas.length) briefing.reserva_de = falhas.map(f => f.provedor);
+          // Qual IA/modelo gerou fica só no retorno do job e no log — não vai
+          // pro lead (sigilo.js): nem a tela nem o CRM mostram.
           usado = { provedor: ig.provedor, modelo: briefing.modelo,
                     ...(falhas.length ? { caiu_de: falhas } : {}) };
+          briefing = swotSemOrigem(briefing);
           break;
         } catch (e) {
           falhas.push({ provedor: ig.provedor, modelo: ig.config?.modelo || null, erro: e.message.slice(0, 200) });
@@ -108,7 +110,7 @@ module.exports = async function swot(job, pool, queues) {
         `UPDATE leads SET swot=$2::jsonb, estagio='pronto', atualizado_em=now() WHERE id=$1`,
         [lead_id, JSON.stringify(briefing)]
       );
-      console.log(`[swot] lead ${lead_id} (${cnpj}): briefing gerado.`);
+      console.log(`[swot] lead ${lead_id} (${cnpj}): briefing gerado (${usado.provedor} · ${usado.modelo || 'padrão'}).`);
     } else {
       console.warn(`[swot] lead ${lead_id}: empresa ${cnpj} não encontrada na base — briefing não gerado.`);
     }
