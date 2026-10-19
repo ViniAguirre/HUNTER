@@ -1889,11 +1889,22 @@ app.get('/api/estrategia/conexoes', requireAuth, async (req, res) => {
         GROUP BY crm_conexao_id`);
     const enviados = Object.fromEntries(contagem.map(r => [r.id, r.n]));
     let doCrm = [], erro = null;
-    try {
-      // Token da Empresa quando existe; senão o da conexão — a doc diz que essa
-      // rota devolve todas as conexões da empresa com qualquer um dos dois.
-      doCrm = await gk.listarConexoes(ig.config.backend, e?.distrib_token || ig.key_cifrada);
-    } catch (err) { erro = err.message; }
+    // Quem lista as conexões. O Token da Empresa, em algumas instalações do GK,
+    // não vale sozinho em NENHUMA rota — nem nesta, que só lê: o CRM responde
+    // 400 "Informe a conexão nesta chamada: use whatsappId". Então tenta, em
+    // ordem: o Token da Empresa apontado pra uma conexão já salva (vê todas as
+    // conexões da empresa); o token da conexão de Integrações (que já carrega a
+    // conexão); e por último o Token da Empresa sozinho, como era antes. A
+    // listagem só lê, então tentar de novo não tem efeito colateral.
+    const conhecida = salvas.find(c => c.ativo) || salvas[0] || null;
+    const tentativas = [];
+    if (e?.distrib_token && conhecida) tentativas.push(gk.comConexao(e.distrib_token, conhecida.id));
+    if (ig.key_cifrada) tentativas.push(ig.key_cifrada);
+    if (e?.distrib_token) tentativas.push(e.distrib_token);
+    for (const t of tentativas) {
+      try { doCrm = await gk.listarConexoes(ig.config.backend, t); erro = null; break; }
+      catch (err) { erro = erro || err.message; }
+    }
     // Junta o que veio do CRM com o que está salvo. Conexão marcada que sumiu do
     // CRM continua na lista (com aviso) — senão sairia do sorteio sem ninguém ver.
     const porId = new Map(salvas.map(c => [String(c.id), c]));
