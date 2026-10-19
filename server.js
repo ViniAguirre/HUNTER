@@ -109,8 +109,16 @@ const temAnaliseSql = (a) => {
     ...['forcas','fraquezas','oportunidades','ameacas'].map(q => lista(`->'swot'->'${q}'`))].join(' OR ')})`;
 };
 
+// Lead "em aberto" = ainda sem definição. Já tem definição quem foi descartado
+// (inclui o negativado "fora do perfil"), enviado (CRM ou à mão) ou cuja
+// empresa já foi entregue ao CRM por outro radar. NOT EXISTS no topo vira
+// anti-join (uma passada), não uma subconsulta por linha.
+const abertoSql = (a) => `(COALESCE(${a}.status,'') NOT IN ('Descartado','Enviado') AND ${a}.enviado_crm_em IS NULL
+  AND NOT EXISTS (SELECT 1 FROM leads o WHERE o.enviado_crm_em IS NOT NULL
+    AND regexp_replace(o.cnpj, '\\D', '', 'g') = regexp_replace(${a}.cnpj, '\\D', '', 'g')))`;
+
 function buildLeadsFilter(query) {
-  const { q, status, uf, busca_id, email_only, local, score_min, contato, analise } = query;
+  const { q, status, uf, busca_id, email_only, local, score_min, contato, analise, abertos } = query;
   const conditions = [];
   const vals = [];
   if (q && q.trim()) {
@@ -161,6 +169,7 @@ function buildLeadsFilter(query) {
   // sem crédito, radar antigo) pra refazer a análise em lote.
   if (analise === 'sem') conditions.push(`NOT ${temAnaliseSql('l')}`);
   if (analise === 'com') conditions.push(temAnaliseSql('l'));
+  if (abertos === '1' || abertos === 'true') conditions.push(abertoSql('l'));
   return { conditions, vals };
 }
 
@@ -2042,7 +2051,11 @@ app.get('/api/leads', requireAuth, async (req, res) => {
     const perPage = Math.min(100, Math.max(1, parseInt(req.query.per_page, 10) || 50));
     const { conditions, vals } = buildLeadsFilter(req.query);
     const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
-    const [countRes, dataRes] = await Promise.all([
+    // Na visão "em aberto", conta quantos com definição ficaram de fora — a
+    // tela diz isso, senão parece que os leads sumiram.
+    const soAbertos = req.query.abertos === '1' || req.query.abertos === 'true';
+    const semAbertos = soAbertos ? buildLeadsFilter({ ...req.query, abertos: undefined }) : null;
+    const [countRes, dataRes, todosRes] = await Promise.all([
       pool.query(`SELECT COUNT(*)::int AS total FROM leads l ${where}`, vals),
       pool.query(`SELECT l.id, l.fantasia, l.razao, l.setor, l.porte, l.cidade, l.uf,
         l.decisor, l.cargo, l.score, l.tem_email, l.tem_telefone, l.status, l.busca_id, l.contato_validado, l.contato_pendente, l.contato_status,
@@ -2050,8 +2063,11 @@ app.get('/api/leads', requireAuth, async (req, res) => {
         FROM leads l ${where} ORDER BY l.score DESC, l.id
         LIMIT $${vals.length+1} OFFSET $${vals.length+2}`,
         [...vals, perPage, (page-1)*perPage]),
+      semAbertos ? pool.query(`SELECT COUNT(*)::int AS total FROM leads l
+        ${semAbertos.conditions.length ? 'WHERE ' + semAbertos.conditions.join(' AND ') : ''}`, semAbertos.vals) : null,
     ]);
     const total = countRes.rows[0].total;
+    const finalizados = todosRes ? Math.max(0, todosRes.rows[0].total - total) : 0;
     // Expõe o telefone/e-mail REAIS do enriquecimento (contato_validado) pra a
     // lista pintar os ícones (verde=achou, vermelho=não) e mostrar o valor no
     // clique. Não vaza a fonte/provedor — só o valor comercial.
@@ -2065,7 +2081,7 @@ app.get('/api/leads', requireAuth, async (req, res) => {
         tem_email: !!email || !!l.tem_email,
         tem_telefone: !!telefone || !!l.tem_telefone };
     });
-    res.json({ leads, total, page, per_page: perPage, pages: Math.ceil(total/perPage) || 1 });
+    res.json({ leads, total, finalizados, page, per_page: perPage, pages: Math.ceil(total/perPage) || 1 });
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
@@ -2498,25 +2514,30 @@ app.post('/api/leads/acoes', requireAuth, requireEditor, async (req, res) => {
       if (!ig) return res.status(400).json({ erro: 'Nenhum CRM conectado no momento. Fale com o administrador do sistema.' });
       // Quem já está no CRM fica de fora (o job também recusa, mas aqui a tela
       // fica sabendo quantos foram ignorados).
+      // Descartado (inclui o negativado) também não vai: foi uma definição.
       const { rows: jaRows } = await pool.query(
-        `SELECT l.id FROM leads l WHERE l.id = ANY($1::int[]) AND ${jaNoCrmSql('l')}`, [idsInt]);
-      const ja = new Set(jaRows.map(r => r.id));
-      const enviar = idsInt.filter(id => !ja.has(id));
+        `SELECT l.id, ${jaNoCrmSql('l')} AS ja FROM leads l
+          WHERE l.id = ANY($1::int[]) AND (${jaNoCrmSql('l')} OR l.status = 'Descartado')`, [idsInt]);
+      const ja = new Set(jaRows.filter(r => r.ja).map(r => r.id));
+      const desc = new Set(jaRows.filter(r => !r.ja).map(r => r.id));
+      const enviar = idsInt.filter(id => !ja.has(id) && !desc.has(id));
       await Promise.all(enviar.map(id =>
         monitorQueues.crm.add('crm', { lead_id: id },
           // jobId por minuto: clique duplo (ou dois usuários juntos) não
           // enfileira o mesmo lead duas vezes; reenvio depois continua livre.
           { jobId: `crm-manual-${id}-${Math.floor(Date.now() / 60000)}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 4, backoff: { type: 'exponential', delay: 15000 } })
       ));
-      return res.json({ ok: true, enfileirados: enviar.length, ja_no_crm: ja.size });
+      return res.json({ ok: true, enfileirados: enviar.length, ja_no_crm: ja.size, descartados: desc.size });
     }
 
     // Prévia do envio: quais dos selecionados já estão no CRM (o modal avisa e
     // só manda o resto).
     if (acao === 'previa_crm') {
       const { rows } = await pool.query(
-        `SELECT l.id FROM leads l WHERE l.id = ANY($1::int[]) AND ${jaNoCrmSql('l')}`, [idsInt]);
-      return res.json({ ja_no_crm: rows.map(r => r.id) });
+        `SELECT l.id, ${jaNoCrmSql('l')} AS ja FROM leads l
+          WHERE l.id = ANY($1::int[]) AND (${jaNoCrmSql('l')} OR l.status = 'Descartado')`, [idsInt]);
+      return res.json({ ja_no_crm: rows.filter(r => r.ja).map(r => r.id),
+                        descartados: rows.filter(r => !r.ja).map(r => r.id) });
     }
 
     // Aprovar / Descartar em lote. Estavam quebrados: o front mandava

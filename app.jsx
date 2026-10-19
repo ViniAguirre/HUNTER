@@ -1225,7 +1225,11 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
   const [page, setPage] = useState(1);
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
-  const [filterStatus, setFilterStatus] = useState('');
+  // Padrão "Em aberto": lead que já teve definição (descartado/negativado ou
+  // enviado) sai da lista de trabalho — senão entra na seleção e no envio em
+  // lote por engano. Os filtros de status mostram esses quando precisa.
+  const [filterStatus, setFilterStatus] = useState('abertos');
+  const [finalizados, setFinalizados] = useState(0);
   const [emailOnly, setEmailOnly] = useState(false);
   const [filterBusca, setFilterBusca] = useState('');
   const [filterLocal, setFilterLocal] = useState('');
@@ -1303,8 +1307,10 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
     if (debouncedQ) params.set('q', debouncedQ);
     // A opção "Sem contato" não é um status — é a fila de enriquecimento
     // manual (contato_status). Vai num parâmetro próprio.
+    // Buscar um lead pelo nome/CNPJ/ID do CRM acha ele mesmo já finalizado.
     if (filterStatus === 'sem_contato' || filterStatus === 'so_telefone') params.set('contato', filterStatus);
-    else if (filterStatus) params.set('status', filterStatus);
+    else if (filterStatus && filterStatus !== 'abertos') params.set('status', filterStatus);
+    if (['abertos','sem_contato','so_telefone'].includes(filterStatus) && !debouncedQ) params.set('abertos', '1');
     if (emailOnly) params.set('email_only', 'true');
     if (filterBusca) params.set('busca_id', filterBusca);
     if (debouncedLocal) params.set('local', debouncedLocal);
@@ -1313,7 +1319,7 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
     params.set('page', page);
     fetch('/api/leads?' + params, { credentials:'same-origin' })
       .then(r => r.json())
-      .then(d => { setLeads(d.leads || []); setTotal(d.total || 0); })
+      .then(d => { setLeads(d.leads || []); setTotal(d.total || 0); setFinalizados(d.finalizados || 0); })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, [debouncedQ, filterStatus, emailOnly, filterBusca, debouncedLocal, filterScore, filterAnalise, page, refreshKey, tick]);
@@ -1439,7 +1445,8 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
           style={{ height:38, padding:'0 10px', borderRadius:9, border:'1px solid var(--border)', maxWidth:150,
             background:'var(--panel)', color: filterStatus ? 'var(--text)' : 'var(--dim)',
             fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>
-          <option value="">Status</option>
+          <option value="abertos">Em aberto</option>
+          <option value="">Todos os status</option>
           <option value="Novo">Novo</option>
           <option value="Qualificado">Qualificado</option>
           <option value="Incompleto">Incompleto</option>
@@ -1448,7 +1455,7 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
           <option value="Enviado">Enviado (todos)</option>
           <option value="Enviado:crm">Enviado · pelo CRM</option>
           <option value="Enviado:manual">Enviado · marcado à mão</option>
-          <option value="Descartado">Descartado</option>
+          <option value="Descartado">Descartado / negativado</option>
         </select>
         <input value={filterLocal} onChange={handleLocal} placeholder="Local (cidade/UF)"
           style={{ height:38, width:140, maxWidth:'100%', borderRadius:9, border:'1px solid var(--border)',
@@ -1663,7 +1670,16 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
       </div>
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10,
         flexWrap:'wrap', marginTop:14, fontSize:12, color:'var(--faint)' }}>
-        <span>Mostrando {leads.length} de {fmtNum(total)} leads</span>
+        <span>
+          Mostrando {leads.length} de {fmtNum(total)} leads
+          {finalizados > 0 && (
+            <> · {fmtNum(finalizados)} já com definição (enviados ou descartados) fora da lista —{' '}
+              <button onClick={() => { setFilterStatus(''); setPage(1); setSelected([]); }}
+                style={{ background:'none', border:'none', padding:0, color:'var(--accent)', fontSize:12,
+                  fontFamily:'inherit', cursor:'pointer', textDecoration:'underline' }}>ver todos</button>
+            </>
+          )}
+        </span>
         <div style={{ display:'flex', gap:6 }}>
           <button onClick={() => setPage(p => Math.max(1, p-1))} disabled={page <= 1}
             style={{ height:30, width:30, borderRadius:7, border:'1px solid var(--border)',
@@ -7150,7 +7166,14 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
           )}
           {/* Já está no CRM (este lead ou a mesma empresa por outro radar): não
               reenvia — o botão vira um aviso com a data. */}
-          {(l.enviado_crm_em || l.crm_outro_radar) ? (() => {
+          {status === 'Descartado' && !l.enviado_crm_em ? (
+            <div title="Lead descartado não vai ao CRM. Para enviar, aprove o lead antes."
+              style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', textAlign:'center',
+                minHeight:42, padding:'4px 12px', borderRadius:10, border:'1px solid var(--border)',
+                color:'var(--dim)', fontSize:13, lineHeight:1.3 }}>
+              Descartado — aprove o lead para poder enviar ao CRM
+            </div>
+          ) : (l.enviado_crm_em || l.crm_outro_radar) ? (() => {
             const em = l.enviado_crm_em || l.crm_outro_radar.em;
             let data = ''; try { data = new Date(em).toLocaleDateString('pt-BR'); } catch (_) {}
             return (
@@ -7196,16 +7219,19 @@ function CrmModal({ ids, onClose, onConfirm }) {
 
   // Quais dos selecionados já estão no CRM: esses não vão de novo.
   const [jaNoCrm, setJaNoCrm] = useState(null);   // null=carregando
+  const [descartados, setDescartados] = useState([]);   // descartado/negativado: também não vai
   useEffect(() => {
     fetch('/api/crm/status', { credentials:'same-origin' })
       .then(r => r.json()).then(setCrm).catch(() => setCrm({ ativo:false }));
     fetch('/api/leads/acoes', { method:'POST', credentials:'same-origin',
       headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ ids, acao:'previa_crm' }) })
       .then(r => r.ok ? r.json() : { ja_no_crm: [] })
-      .then(d => setJaNoCrm(d.ja_no_crm || [])).catch(() => setJaNoCrm([]));
+      .then(d => { setDescartados(d.descartados || []); setJaNoCrm(d.ja_no_crm || []); })
+      .catch(() => setJaNoCrm([]));
   }, []);
   const qtdJa = jaNoCrm ? jaNoCrm.length : 0;
-  const qtdEnviar = ids.length - qtdJa;
+  const qtdDesc = descartados.length;
+  const qtdEnviar = ids.length - qtdJa - qtdDesc;
   const nadaAEnviar = jaNoCrm !== null && qtdEnviar <= 0;
 
   const confirmar = async () => {
@@ -7237,11 +7263,22 @@ function CrmModal({ ids, onClose, onConfirm }) {
           <h2 style={{ fontSize:17, fontWeight:600, margin:'0 0 4px' }}>Enviar ao CRM</h2>
           <p style={{ fontSize:13, color:'var(--dim)', margin:0 }}>
             {jaNoCrm === null ? 'Conferindo os leads…'
-              : nadaAEnviar ? (ids.length === 1 ? 'Este lead já está no CRM.' : 'Todos os leads selecionados já estão no CRM.')
+              : nadaAEnviar ? (ids.length === 1
+                  ? (qtdDesc ? 'Este lead está descartado.' : 'Este lead já está no CRM.')
+                  : 'Nenhum dos leads selecionados pode ser enviado.')
               : `${qtdEnviar} lead${qtdEnviar!==1?'s':''} ${qtdEnviar!==1?'serão enviados':'será enviado'} — ação deliberada, sem automação.`}
           </p>
         </div>
         <div style={{ padding:'20px 24px', display:'flex', flexDirection:'column', gap:16 }}>
+          {qtdDesc > 0 && (
+            <div style={{ display:'flex', alignItems:'center', gap:11, background:'rgba(248,113,113,.08)',
+              border:'1px solid rgba(248,113,113,.3)', borderRadius:10, padding:'12px 14px',
+              fontSize:12.5, color:C.red, lineHeight:1.45 }}>
+              {qtdDesc === 1 && ids.length === 1
+                ? 'Lead descartado não vai ao CRM. Para enviar, aprove o lead antes.'
+                : `${qtdDesc} ${qtdDesc!==1?'estão descartados (ou negativados) e ficam':'está descartado (ou negativado) e fica'} de fora.`}
+            </div>
+          )}
           {qtdJa > 0 && (
             <div style={{ display:'flex', alignItems:'center', gap:11, background:'rgba(251,191,36,.08)',
               border:'1px solid rgba(251,191,36,.3)', borderRadius:10, padding:'12px 14px',
