@@ -1231,6 +1231,7 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
   const [filterLocal, setFilterLocal] = useState('');
   const [debouncedLocal, setDebouncedLocal] = useState('');
   const [filterScore, setFilterScore] = useState('');
+  const [filterAnalise, setFilterAnalise] = useState('');   // '' | 'sem' | 'com' (briefing SWOT)
   const [buscasOpts, setBuscasOpts] = useState([]);
   const [selected, setSelected] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -1308,13 +1309,14 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
     if (filterBusca) params.set('busca_id', filterBusca);
     if (debouncedLocal) params.set('local', debouncedLocal);
     if (filterScore) params.set('score_min', filterScore);
+    if (filterAnalise) params.set('analise', filterAnalise);
     params.set('page', page);
     fetch('/api/leads?' + params, { credentials:'same-origin' })
       .then(r => r.json())
       .then(d => { setLeads(d.leads || []); setTotal(d.total || 0); })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, [debouncedQ, filterStatus, emailOnly, filterBusca, debouncedLocal, filterScore, page, refreshKey, tick]);
+  }, [debouncedQ, filterStatus, emailOnly, filterBusca, debouncedLocal, filterScore, filterAnalise, page, refreshKey, tick]);
 
   const allSel = leads.length > 0 && leads.every(l => selected.includes(l.id));
   const toggleSel = (id) => setSelected(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id]);
@@ -1460,6 +1462,16 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
           <option value="75">≥ 75</option>
           <option value="60">≥ 60</option>
           <option value="40">≥ 40</option>
+        </select>
+        {/* Sem análise: os leads que ficaram sem briefing (a IA falhou ou não
+            estava ativa). Selecione e use "Refazer análise". */}
+        <select value={filterAnalise} onChange={e => { setFilterAnalise(e.target.value); setPage(1); }}
+          style={{ height:38, padding:'0 10px', borderRadius:9, border:'1px solid var(--border)',
+            background:'var(--panel)', color: filterAnalise ? 'var(--text)' : 'var(--dim)',
+            fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>
+          <option value="">Análise SWOT</option>
+          <option value="sem">Sem análise</option>
+          <option value="com">Com análise</option>
         </select>
         {/* Sem espaçador aqui: um <div flex:1> empurrava o botão pra borda
             direita, mas participava do flex-wrap e ocupava uma linha inteira,
@@ -1626,6 +1638,12 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
                     {e ? e.rotulo : l.status}
                   </span>
                 ); })()}
+                {l.ja_no_crm && !envioDoLead(l, l.status)?.rotulo?.includes('CRM') && (
+                  <span title={l.enviado_crm_em
+                    ? 'Este lead já foi entregue ao CRM — não pode ser enviado de novo.'
+                    : 'Esta empresa já foi entregue ao CRM por outro radar — não pode ser enviada de novo.'}
+                    style={{ ...badgeStyle(C.blue), whiteSpace:'nowrap' }}>já no CRM</span>
+                )}
                 {l.contato_pendente && (
                   <span title={l.contato_status === 'sem_contato'
                     ? 'A busca não achou telefone desta empresa. Clique no lead para preencher à mão.'
@@ -7130,6 +7148,23 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
               {l.enviado_manual_em ? 'Enviado ao time' : 'Marcar como enviado'}
             </button>
           )}
+          {/* Já está no CRM (este lead ou a mesma empresa por outro radar): não
+              reenvia — o botão vira um aviso com a data. */}
+          {(l.enviado_crm_em || l.crm_outro_radar) ? (() => {
+            const em = l.enviado_crm_em || l.crm_outro_radar.em;
+            let data = ''; try { data = new Date(em).toLocaleDateString('pt-BR'); } catch (_) {}
+            return (
+              <div title="Lead já entregue ao CRM. O Hunter não envia a mesma empresa duas vezes."
+                style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', textAlign:'center',
+                  gap:7, minHeight:42, padding:'4px 12px', borderRadius:10, border:`1px solid ${C.green}`,
+                  color:C.green, fontWeight:600, fontSize:13, lineHeight:1.3 }}>
+                <Svg d="M20 6L9 17l-5-5" color={C.green} w={15} h={15} sw={2.2}/>
+                {l.enviado_crm_em
+                  ? `Já enviado ao CRM${data ? ' em ' + data : ''}`
+                  : `Já enviado ao CRM por outro radar${l.crm_outro_radar.radar ? ' (' + l.crm_outro_radar.radar + ')' : ''}${data ? ' em ' + data : ''}`}
+              </div>
+            );
+          })() : (
           <button onClick={() => onCrm([leadId])}
             style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center',
               gap:7, height:42, borderRadius:10, border:'none', background:'var(--gold)', color:'#0E1936',
@@ -7137,6 +7172,7 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
             <Svg d="M5 12h14M13 5l7 7-7 7" color="#0E1936" w={15} h={15} sw={2}/>
             Enviar ao CRM
           </button>
+          )}
           <button onClick={() => patchStatus('Qualificado')} disabled={actioning || status==='Qualificado'}
             style={{ height:42, padding:'0 16px', borderRadius:10, border:'1px solid var(--border)',
               background:'transparent', color: status==='Qualificado' ? C.green : 'var(--text)',
@@ -7158,10 +7194,19 @@ function CrmModal({ ids, onClose, onConfirm }) {
   const [loading, setLoading] = useState(false);
   const [crm, setCrm] = useState(null); // null=carregando
 
+  // Quais dos selecionados já estão no CRM: esses não vão de novo.
+  const [jaNoCrm, setJaNoCrm] = useState(null);   // null=carregando
   useEffect(() => {
     fetch('/api/crm/status', { credentials:'same-origin' })
       .then(r => r.json()).then(setCrm).catch(() => setCrm({ ativo:false }));
+    fetch('/api/leads/acoes', { method:'POST', credentials:'same-origin',
+      headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ ids, acao:'previa_crm' }) })
+      .then(r => r.ok ? r.json() : { ja_no_crm: [] })
+      .then(d => setJaNoCrm(d.ja_no_crm || [])).catch(() => setJaNoCrm([]));
   }, []);
+  const qtdJa = jaNoCrm ? jaNoCrm.length : 0;
+  const qtdEnviar = ids.length - qtdJa;
+  const nadaAEnviar = jaNoCrm !== null && qtdEnviar <= 0;
 
   const confirmar = async () => {
     setLoading(true);
@@ -7171,7 +7216,10 @@ function CrmModal({ ids, onClose, onConfirm }) {
         headers:{ 'Content-Type':'application/json' },
         body: JSON.stringify({ ids, acao:'enviar_crm' })
       });
-      if (!r.ok) { const d = await r.json().catch(()=>({})); throw new Error(d.erro || 'Erro ao enviar ao CRM.'); }
+      const d = await r.json().catch(()=>({}));
+      if (!r.ok) throw new Error(d.erro || 'Erro ao enviar ao CRM.');
+      // Alguém enviou no meio do caminho (outra aba, outro usuário): avisa.
+      if (d.ja_no_crm > qtdJa) alert(`${d.ja_no_crm} lead(s) já estavam no CRM e não foram reenviados.`);
       onConfirm();
     } catch (e) {
       alert(e.message || 'Erro ao enviar ao CRM.');
@@ -7187,9 +7235,22 @@ function CrmModal({ ids, onClose, onConfirm }) {
         border:'1px solid var(--border)', borderRadius:16, overflow:'hidden' }}>
         <div style={{ padding:'22px 24px 18px', borderBottom:'1px solid var(--border)' }}>
           <h2 style={{ fontSize:17, fontWeight:600, margin:'0 0 4px' }}>Enviar ao CRM</h2>
-          <p style={{ fontSize:13, color:'var(--dim)', margin:0 }}>{ids.length} lead{ids.length!==1?'s':''} {ids.length!==1?'serão enviados':'será enviado'} — ação deliberada, sem automação.</p>
+          <p style={{ fontSize:13, color:'var(--dim)', margin:0 }}>
+            {jaNoCrm === null ? 'Conferindo os leads…'
+              : nadaAEnviar ? (ids.length === 1 ? 'Este lead já está no CRM.' : 'Todos os leads selecionados já estão no CRM.')
+              : `${qtdEnviar} lead${qtdEnviar!==1?'s':''} ${qtdEnviar!==1?'serão enviados':'será enviado'} — ação deliberada, sem automação.`}
+          </p>
         </div>
         <div style={{ padding:'20px 24px', display:'flex', flexDirection:'column', gap:16 }}>
+          {qtdJa > 0 && (
+            <div style={{ display:'flex', alignItems:'center', gap:11, background:'rgba(251,191,36,.08)',
+              border:'1px solid rgba(251,191,36,.3)', borderRadius:10, padding:'12px 14px',
+              fontSize:12.5, color:C.amber, lineHeight:1.45 }}>
+              {qtdJa === 1 && ids.length === 1
+                ? 'Já foi enviado ao CRM antes. O Hunter não envia a mesma empresa duas vezes.'
+                : `${qtdJa} ${qtdJa!==1?'já estão':'já está'} no CRM e ${qtdJa!==1?'ficam':'fica'} de fora — o Hunter não envia a mesma empresa duas vezes.`}
+            </div>
+          )}
           <div>
             <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>CRM de destino</label>
             <div style={{ height:42, borderRadius:10, border:'1px solid var(--border)', background:'var(--panel2)',
@@ -7215,11 +7276,11 @@ function CrmModal({ ids, onClose, onConfirm }) {
           <button onClick={onClose} style={{ height:42, padding:'0 18px', borderRadius:10,
             border:'1px solid var(--border)', background:'transparent', color:'var(--text)',
             fontSize:13.5, fontFamily:'inherit', cursor:'pointer' }}>Cancelar</button>
-          <button onClick={confirmar} disabled={loading || semCrm || crm === null}
+          <button onClick={confirmar} disabled={loading || semCrm || crm === null || jaNoCrm === null || nadaAEnviar}
             style={{ height:42, padding:'0 20px', borderRadius:10, border:'none', background:'var(--gold)',
               color:'#0E1936', fontWeight:600, fontSize:13.5, fontFamily:'inherit',
-              cursor:(loading||semCrm||crm===null)?'default':'pointer',
-              opacity:(loading||semCrm||crm===null)?.6:1 }}>
+              cursor:(loading||semCrm||crm===null||jaNoCrm===null||nadaAEnviar)?'default':'pointer',
+              opacity:(loading||semCrm||crm===null||jaNoCrm===null||nadaAEnviar)?.6:1 }}>
             {loading ? 'Enviando…' : 'Confirmar envio'}
           </button>
         </div>

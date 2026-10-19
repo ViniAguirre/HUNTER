@@ -2760,6 +2760,7 @@ function Leads({
   const [filterLocal, setFilterLocal] = useState('');
   const [debouncedLocal, setDebouncedLocal] = useState('');
   const [filterScore, setFilterScore] = useState('');
+  const [filterAnalise, setFilterAnalise] = useState(''); // '' | 'sem' | 'com' (briefing SWOT)
   const [buscasOpts, setBuscasOpts] = useState([]);
   const [selected, setSelected] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -2850,6 +2851,7 @@ function Leads({
     if (filterBusca) params.set('busca_id', filterBusca);
     if (debouncedLocal) params.set('local', debouncedLocal);
     if (filterScore) params.set('score_min', filterScore);
+    if (filterAnalise) params.set('analise', filterAnalise);
     params.set('page', page);
     fetch('/api/leads?' + params, {
       credentials: 'same-origin'
@@ -2857,7 +2859,7 @@ function Leads({
       setLeads(d.leads || []);
       setTotal(d.total || 0);
     }).catch(() => {}).finally(() => setLoading(false));
-  }, [debouncedQ, filterStatus, emailOnly, filterBusca, debouncedLocal, filterScore, page, refreshKey, tick]);
+  }, [debouncedQ, filterStatus, emailOnly, filterBusca, debouncedLocal, filterScore, filterAnalise, page, refreshKey, tick]);
   const allSel = leads.length > 0 && leads.every(l => selected.includes(l.id));
   const toggleSel = id => setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
   const toggleAll = () => setSelected(allSel ? [] : leads.map(l => l.id));
@@ -3148,7 +3150,30 @@ function Leads({
     value: "60"
   }, "\u2265 60"), /*#__PURE__*/React.createElement("option", {
     value: "40"
-  }, "\u2265 40")), /*#__PURE__*/React.createElement("button", {
+  }, "\u2265 40")), /*#__PURE__*/React.createElement("select", {
+    value: filterAnalise,
+    onChange: e => {
+      setFilterAnalise(e.target.value);
+      setPage(1);
+    },
+    style: {
+      height: 38,
+      padding: '0 10px',
+      borderRadius: 9,
+      border: '1px solid var(--border)',
+      background: 'var(--panel)',
+      color: filterAnalise ? 'var(--text)' : 'var(--dim)',
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "An\xE1lise SWOT"), /*#__PURE__*/React.createElement("option", {
+    value: "sem"
+  }, "Sem an\xE1lise"), /*#__PURE__*/React.createElement("option", {
+    value: "com"
+  }, "Com an\xE1lise")), /*#__PURE__*/React.createElement("button", {
     onClick: () => {
       setEmailOnly(e => !e);
       setPage(1);
@@ -3580,7 +3605,13 @@ function Leads({
           whiteSpace: 'nowrap'
         }
       }, e ? e.rotulo : l.status);
-    })(), l.contato_pendente && /*#__PURE__*/React.createElement("span", {
+    })(), l.ja_no_crm && !envioDoLead(l, l.status)?.rotulo?.includes('CRM') && /*#__PURE__*/React.createElement("span", {
+      title: l.enviado_crm_em ? 'Este lead já foi entregue ao CRM — não pode ser enviado de novo.' : 'Esta empresa já foi entregue ao CRM por outro radar — não pode ser enviada de novo.',
+      style: {
+        ...badgeStyle(C.blue),
+        whiteSpace: 'nowrap'
+      }
+    }, "j\xE1 no CRM"), l.contato_pendente && /*#__PURE__*/React.createElement("span", {
       title: l.contato_status === 'sem_contato' ? 'A busca não achou telefone desta empresa. Clique no lead para preencher à mão.' : 'Sem WhatsApp/telefone — não enviado ao CRM automaticamente',
       style: {
         ...badgeStyle(C.red),
@@ -15139,7 +15170,38 @@ function LeadDetailPanel({
     w: 15,
     h: 15,
     sw: 2.2
-  }), l.enviado_manual_em ? 'Enviado ao time' : 'Marcar como enviado'), /*#__PURE__*/React.createElement("button", {
+  }), l.enviado_manual_em ? 'Enviado ao time' : 'Marcar como enviado'), l.enviado_crm_em || l.crm_outro_radar ? (() => {
+    const em = l.enviado_crm_em || l.crm_outro_radar.em;
+    let data = '';
+    try {
+      data = new Date(em).toLocaleDateString('pt-BR');
+    } catch (_) {}
+    return /*#__PURE__*/React.createElement("div", {
+      title: "Lead j\xE1 entregue ao CRM. O Hunter n\xE3o envia a mesma empresa duas vezes.",
+      style: {
+        flex: 1,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        textAlign: 'center',
+        gap: 7,
+        minHeight: 42,
+        padding: '4px 12px',
+        borderRadius: 10,
+        border: `1px solid ${C.green}`,
+        color: C.green,
+        fontWeight: 600,
+        fontSize: 13,
+        lineHeight: 1.3
+      }
+    }, /*#__PURE__*/React.createElement(Svg, {
+      d: "M20 6L9 17l-5-5",
+      color: C.green,
+      w: 15,
+      h: 15,
+      sw: 2.2
+    }), l.enviado_crm_em ? `Já enviado ao CRM${data ? ' em ' + data : ''}` : `Já enviado ao CRM por outro radar${l.crm_outro_radar.radar ? ' (' + l.crm_outro_radar.radar + ')' : ''}${data ? ' em ' + data : ''}`);
+  })() : /*#__PURE__*/React.createElement("button", {
     onClick: () => onCrm([leadId]),
     style: {
       flex: 1,
@@ -15205,13 +15267,31 @@ function CrmModal({
   const [loading, setLoading] = useState(false);
   const [crm, setCrm] = useState(null); // null=carregando
 
+  // Quais dos selecionados já estão no CRM: esses não vão de novo.
+  const [jaNoCrm, setJaNoCrm] = useState(null); // null=carregando
   useEffect(() => {
     fetch('/api/crm/status', {
       credentials: 'same-origin'
     }).then(r => r.json()).then(setCrm).catch(() => setCrm({
       ativo: false
     }));
+    fetch('/api/leads/acoes', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        ids,
+        acao: 'previa_crm'
+      })
+    }).then(r => r.ok ? r.json() : {
+      ja_no_crm: []
+    }).then(d => setJaNoCrm(d.ja_no_crm || [])).catch(() => setJaNoCrm([]));
   }, []);
+  const qtdJa = jaNoCrm ? jaNoCrm.length : 0;
+  const qtdEnviar = ids.length - qtdJa;
+  const nadaAEnviar = jaNoCrm !== null && qtdEnviar <= 0;
   const confirmar = async () => {
     setLoading(true);
     try {
@@ -15226,10 +15306,10 @@ function CrmModal({
           acao: 'enviar_crm'
         })
       });
-      if (!r.ok) {
-        const d = await r.json().catch(() => ({}));
-        throw new Error(d.erro || 'Erro ao enviar ao CRM.');
-      }
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.erro || 'Erro ao enviar ao CRM.');
+      // Alguém enviou no meio do caminho (outra aba, outro usuário): avisa.
+      if (d.ja_no_crm > qtdJa) alert(`${d.ja_no_crm} lead(s) já estavam no CRM e não foram reenviados.`);
       onConfirm();
     } catch (e) {
       alert(e.message || 'Erro ao enviar ao CRM.');
@@ -15281,14 +15361,27 @@ function CrmModal({
       color: 'var(--dim)',
       margin: 0
     }
-  }, ids.length, " lead", ids.length !== 1 ? 's' : '', " ", ids.length !== 1 ? 'serão enviados' : 'será enviado', " \u2014 a\xE7\xE3o deliberada, sem automa\xE7\xE3o.")), /*#__PURE__*/React.createElement("div", {
+  }, jaNoCrm === null ? 'Conferindo os leads…' : nadaAEnviar ? ids.length === 1 ? 'Este lead já está no CRM.' : 'Todos os leads selecionados já estão no CRM.' : `${qtdEnviar} lead${qtdEnviar !== 1 ? 's' : ''} ${qtdEnviar !== 1 ? 'serão enviados' : 'será enviado'} — ação deliberada, sem automação.`)), /*#__PURE__*/React.createElement("div", {
     style: {
       padding: '20px 24px',
       display: 'flex',
       flexDirection: 'column',
       gap: 16
     }
-  }, /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
+  }, qtdJa > 0 && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 11,
+      background: 'rgba(251,191,36,.08)',
+      border: '1px solid rgba(251,191,36,.3)',
+      borderRadius: 10,
+      padding: '12px 14px',
+      fontSize: 12.5,
+      color: C.amber,
+      lineHeight: 1.45
+    }
+  }, qtdJa === 1 && ids.length === 1 ? 'Já foi enviado ao CRM antes. O Hunter não envia a mesma empresa duas vezes.' : `${qtdJa} ${qtdJa !== 1 ? 'já estão' : 'já está'} no CRM e ${qtdJa !== 1 ? 'ficam' : 'fica'} de fora — o Hunter não envia a mesma empresa duas vezes.`), /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("label", {
     style: {
       display: 'block',
       fontSize: 12,
@@ -15356,7 +15449,7 @@ function CrmModal({
     }
   }, "Cancelar"), /*#__PURE__*/React.createElement("button", {
     onClick: confirmar,
-    disabled: loading || semCrm || crm === null,
+    disabled: loading || semCrm || crm === null || jaNoCrm === null || nadaAEnviar,
     style: {
       height: 42,
       padding: '0 20px',
@@ -15367,8 +15460,8 @@ function CrmModal({
       fontWeight: 600,
       fontSize: 13.5,
       fontFamily: 'inherit',
-      cursor: loading || semCrm || crm === null ? 'default' : 'pointer',
-      opacity: loading || semCrm || crm === null ? .6 : 1
+      cursor: loading || semCrm || crm === null || jaNoCrm === null || nadaAEnviar ? 'default' : 'pointer',
+      opacity: loading || semCrm || crm === null || jaNoCrm === null || nadaAEnviar ? .6 : 1
     }
   }, loading ? 'Enviando…' : 'Confirmar envio'))));
 }

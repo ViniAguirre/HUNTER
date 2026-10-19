@@ -16,6 +16,7 @@ const { Pool } = require('pg');
 const { TENANT_ID, TENANT_LEGADO, ligarTenantNoPool, exigirRlsEnforcavel, tenantizarTabela, migrarSingletonParaTenant } = require('./tenant');
 const { normalizarTags, normalizarListaCrm } = require('./tags');
 const { swotSemOrigem, contatoSemOrigem } = require('./sigilo');
+const { jaNoCrmSql } = require('./jobs/crm');
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'troque-este-segredo';
@@ -98,8 +99,18 @@ const estagioContato = (a) => `COALESCE(NULLIF(${a}.contato_status,''), CASE
   WHEN (${a}.tem_telefone OR COALESCE(${a}.contato_validado->>'telefone','') <> '') THEN 'decisao'
   ELSE 'sem_contato' END)`;
 
+// Briefing SWOT com conteúdo de verdade — o mesmo critério do briefingVazio()
+// da tela: um objeto com a forma certa e tudo em branco NÃO conta como análise.
+const temAnaliseSql = (a) => {
+  const txt = k => `COALESCE(${a}.swot->>'${k}','') ~ '\\S'`;
+  const lista = path => `(CASE WHEN jsonb_typeof(${a}.swot${path})='array' THEN jsonb_array_length(${a}.swot${path}) > 0 ELSE false END)`;
+  return `(${[txt('resumo'), txt('sinal_comercial'), txt('gancho'),
+    lista("->'fatos_uteis'"), lista("->'dores_provaveis'"),
+    ...['forcas','fraquezas','oportunidades','ameacas'].map(q => lista(`->'swot'->'${q}'`))].join(' OR ')})`;
+};
+
 function buildLeadsFilter(query) {
-  const { q, status, uf, busca_id, email_only, local, score_min, contato } = query;
+  const { q, status, uf, busca_id, email_only, local, score_min, contato, analise } = query;
   const conditions = [];
   const vals = [];
   if (q && q.trim()) {
@@ -146,6 +157,10 @@ function buildLeadsFilter(query) {
   // Só telefone: dá pra ligar, falta o e-mail. Não é qualificado nem sem
   // contato; sem filtro próprio, essa faixa não tinha como ser trabalhada.
   if (contato === 'so_telefone') conditions.push(`${estagioContato('l')} = 'decisao'`);
+  // Com/sem análise SWOT: acha os leads que ficaram sem briefing (IA falhou,
+  // sem crédito, radar antigo) pra refazer a análise em lote.
+  if (analise === 'sem') conditions.push(`NOT ${temAnaliseSql('l')}`);
+  if (analise === 'com') conditions.push(temAnaliseSql('l'));
   return { conditions, vals };
 }
 
@@ -2031,7 +2046,7 @@ app.get('/api/leads', requireAuth, async (req, res) => {
       pool.query(`SELECT COUNT(*)::int AS total FROM leads l ${where}`, vals),
       pool.query(`SELECT l.id, l.fantasia, l.razao, l.setor, l.porte, l.cidade, l.uf,
         l.decisor, l.cargo, l.score, l.tem_email, l.tem_telefone, l.status, l.busca_id, l.contato_validado, l.contato_pendente, l.contato_status,
-        l.enviado_crm_em, l.enviado_manual_em, l.enviado_por
+        l.enviado_crm_em, l.enviado_manual_em, l.enviado_por, ${jaNoCrmSql('l')} AS ja_no_crm
         FROM leads l ${where} ORDER BY l.score DESC, l.id
         LIMIT $${vals.length+1} OFFSET $${vals.length+2}`,
         [...vals, perPage, (page-1)*perPage]),
@@ -2226,6 +2241,16 @@ app.get('/api/leads/:id', requireAuth, async (req, res) => {
     // pra TODOS, master inclusive (sigilo.js). A tela só precisa do conteúdo.
     l.swot = swotSemOrigem(l.swot);
     l.contato_validado = contatoSemOrigem(l.contato_validado);
+    // Já está no CRM (este lead ou a mesma empresa por outro radar)? A tela
+    // troca o botão de envio por um aviso.
+    if (!l.enviado_crm_em && l.cnpj) {
+      const { rows: [o] } = await pool.query(
+        `SELECT o.enviado_crm_em, b.nome AS radar FROM leads o LEFT JOIN buscas b ON b.id=o.busca_id
+          WHERE o.id <> $1 AND o.enviado_crm_em IS NOT NULL
+            AND regexp_replace(o.cnpj, '\\D', '', 'g') = regexp_replace($2, '\\D', '', 'g')
+          ORDER BY o.enviado_crm_em LIMIT 1`, [l.id, l.cnpj]);
+      if (o) l.crm_outro_radar = { em: o.enviado_crm_em, radar: o.radar || null };
+    }
     res.json(l);
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
@@ -2471,13 +2496,27 @@ app.post('/api/leads/acoes', requireAuth, requireEditor, async (req, res) => {
         `SELECT 1 FROM integracoes WHERE categoria='crm' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> '' LIMIT 1`
       );
       if (!ig) return res.status(400).json({ erro: 'Nenhum CRM conectado no momento. Fale com o administrador do sistema.' });
-      await Promise.all(idsInt.map(id =>
+      // Quem já está no CRM fica de fora (o job também recusa, mas aqui a tela
+      // fica sabendo quantos foram ignorados).
+      const { rows: jaRows } = await pool.query(
+        `SELECT l.id FROM leads l WHERE l.id = ANY($1::int[]) AND ${jaNoCrmSql('l')}`, [idsInt]);
+      const ja = new Set(jaRows.map(r => r.id));
+      const enviar = idsInt.filter(id => !ja.has(id));
+      await Promise.all(enviar.map(id =>
         monitorQueues.crm.add('crm', { lead_id: id },
           // jobId por minuto: clique duplo (ou dois usuários juntos) não
           // enfileira o mesmo lead duas vezes; reenvio depois continua livre.
           { jobId: `crm-manual-${id}-${Math.floor(Date.now() / 60000)}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 4, backoff: { type: 'exponential', delay: 15000 } })
       ));
-      return res.json({ ok: true, enfileirados: idsInt.length });
+      return res.json({ ok: true, enfileirados: enviar.length, ja_no_crm: ja.size });
+    }
+
+    // Prévia do envio: quais dos selecionados já estão no CRM (o modal avisa e
+    // só manda o resto).
+    if (acao === 'previa_crm') {
+      const { rows } = await pool.query(
+        `SELECT l.id FROM leads l WHERE l.id = ANY($1::int[]) AND ${jaNoCrmSql('l')}`, [idsInt]);
+      return res.json({ ja_no_crm: rows.map(r => r.id) });
     }
 
     // Aprovar / Descartar em lote. Estavam quebrados: o front mandava
