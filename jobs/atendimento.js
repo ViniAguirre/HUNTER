@@ -15,6 +15,7 @@
  * conferência periódica cobre quem não avisa.
  */
 const gk = require('../providers/gk');
+const distribuicao = require('./distribuicao');
 
 const LOTE = 40;            // tickets conferidos por ciclo (o scheduler roda a cada 60s)
 const INTERVALO_MIN = 3;    // o mesmo lead não é conferido de novo antes disso
@@ -133,4 +134,22 @@ async function adotarLegado(pool, ig, authDe, limite) {
   return adotados;
 }
 
-module.exports = { verificar, estadoDoStatus };
+// Quantos leads do Hunter estão nas filas do CRM sem atendimento — o mesmo
+// número do cartão da Estratégia. Com a distribuição ligada, só as filas das
+// conexões marcadas; sem ela, todas. null = sem CRM GK ativo (não há contagem
+// própria; o controle cai no aviso do CRM).
+async function pendentesHunter(db) {
+  const { rows: [ig] } = await db.query(
+    `SELECT 1 FROM integracoes WHERE categoria='crm' AND provedor='gk' AND ativo=true
+       AND key_cifrada IS NOT NULL AND key_cifrada <> '' LIMIT 1`);
+  if (!ig) return null;
+  const { rows: [e] } = await db.query(`SELECT distrib_ativo, distrib_conexoes FROM estrategia`);
+  const filas = e?.distrib_ativo
+    ? [...new Set(distribuicao.elegiveis(e.distrib_conexoes).map(c => c.fila).filter(Boolean).map(String))] : [];
+  const { rows: [r] } = filas.length
+    ? await db.query(`SELECT COUNT(*)::int AS n FROM leads WHERE crm_atendimento='aguardando' AND crm_fila_id = ANY($1::text[])`, [filas])
+    : await db.query(`SELECT COUNT(*)::int AS n FROM leads WHERE crm_atendimento='aguardando'`);
+  return r.n;
+}
+
+module.exports = { verificar, estadoDoStatus, pendentesHunter };

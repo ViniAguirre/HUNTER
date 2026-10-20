@@ -7448,9 +7448,11 @@ function ControleCrm({
     });
   };
   const url = (typeof window !== 'undefined' ? window.location.origin : '') + (crm?.caminho_webhook || '/api/webhooks/crm/fila');
-  const n = plano.crm_fila_pendentes,
+  // CRM GK: o número é o do próprio Hunter (cartão de filas), sempre atual.
+  const contaHunter = crm?.fila_hunter != null;
+  const n = contaHunter ? crm.fila_hunter : plano.crm_fila_pendentes,
     g = plano.crm_fila_gatilho ?? 0;
-  const temAviso = plano.crm_fila_em != null && n != null;
+  const temAviso = contaHunter || plano.crm_fila_em != null && n != null;
   const code = {
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
     fontSize: 11.5,
@@ -7497,7 +7499,7 @@ function ControleCrm({
       marginTop: 4,
       lineHeight: 1.45
     }
-  }, "O CRM avisa quantos leads do Hunter est\xE3o na fila ", /*#__PURE__*/React.createElement("b", null, "sem atendimento"), ". Radar novo s\xF3 abre quando essa fila cai para o n\xFAmero abaixo ou menos \u2014 assim o time recebe lead no ritmo em que atende. Os limites de Configura\xE7\xF5es continuam valendo."))), /*#__PURE__*/React.createElement("div", {
+  }, contaHunter ? /*#__PURE__*/React.createElement(React.Fragment, null, "Usa o n\xFAmero de leads do Hunter ", /*#__PURE__*/React.createElement("b", null, "aguardando atendimento"), " nas filas do CRM (o cart\xE3o de filas). Quando um atendente come\xE7a a atender, o lead sai da conta; radar novo s\xF3 abre quando o total cai para o n\xFAmero abaixo ou menos \u2014 assim o time recebe lead no ritmo em que atende. Os limites de Configura\xE7\xF5es continuam valendo.") : /*#__PURE__*/React.createElement(React.Fragment, null, "O CRM avisa quantos leads do Hunter est\xE3o na fila ", /*#__PURE__*/React.createElement("b", null, "sem atendimento"), ". Radar novo s\xF3 abre quando essa fila cai para o n\xFAmero abaixo ou menos \u2014 assim o time recebe lead no ritmo em que atende. Os limites de Configura\xE7\xF5es continuam valendo.")))), /*#__PURE__*/React.createElement("div", {
     style: {
       paddingLeft: 26,
       marginTop: 12
@@ -7556,7 +7558,15 @@ function ControleCrm({
       marginTop: 10,
       color: 'var(--dim)'
     }
-  }, temAviso ? /*#__PURE__*/React.createElement(React.Fragment, null, "\xDAltimo aviso do CRM: ", /*#__PURE__*/React.createElement("b", {
+  }, contaHunter ? /*#__PURE__*/React.createElement(React.Fragment, null, "Agora: ", /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: n <= g ? C.green : C.amber
+    }
+  }, n, " lead", n === 1 ? '' : 's', " aguardando atendimento"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, " \xB7 ", n <= g ? 'libera radar novo' : 'segura radar novo')) : temAviso ? /*#__PURE__*/React.createElement(React.Fragment, null, "\xDAltimo aviso do CRM: ", /*#__PURE__*/React.createElement("b", {
     style: {
       color: n <= g ? C.green : C.amber
     }
@@ -7568,7 +7578,7 @@ function ControleCrm({
     style: {
       color: 'var(--faint)'
     }
-  }, "O CRM ainda n\xE3o enviou nenhum aviso.", plano.crm_controle ? ' Enquanto isso, o piloto não abre radar novo.' : '')), /*#__PURE__*/React.createElement("button", {
+  }, "O CRM ainda n\xE3o enviou nenhum aviso.", plano.crm_controle ? ' Enquanto isso, o piloto não abre radar novo.' : '')), !contaHunter && /*#__PURE__*/React.createElement("button", {
     type: "button",
     onClick: () => setMostrarComo(v => !v),
     style: {
@@ -7581,7 +7591,7 @@ function ControleCrm({
       cursor: 'pointer',
       fontFamily: 'inherit'
     }
-  }, mostrarComo ? 'Esconder' : 'Como o CRM avisa o Hunter', " \u203A"), mostrarComo && /*#__PURE__*/React.createElement("div", {
+  }, mostrarComo ? 'Esconder' : 'Como o CRM avisa o Hunter', " \u203A"), !contaHunter && mostrarComo && /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 10,
       fontSize: 12,

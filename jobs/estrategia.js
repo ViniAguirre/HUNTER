@@ -17,6 +17,7 @@
  */
 const orcamento = require('./orcamento');
 const { normalizarTags } = require('../tags');
+const { pendentesHunter } = require('./atendimento');
 
 // Quantas empresas ainda sem veredito (enriquecimento → filtro → score) seguram
 // a abertura do próximo radar. Uma página da CNPJá são 100 empresas: com a
@@ -345,8 +346,20 @@ async function abrirRegiao(db, p, reg) {
 // radar novo só abre quando a fila cai para o gatilho ou menos — o time
 // comercial dita o ritmo, em vez de receber lead mais rápido do que atende.
 // Sem aviso nenhum ainda, espera: ligar o controle é dizer "quem manda é o CRM".
+//
+// Com o CRM GK conectado, o número é o do próprio Hunter (crm_fila_hunter: os
+// leads dele nas filas sem atendimento, conferidos ticket a ticket — o cartão
+// da Estratégia). Não depende de o CRM avisar.
 function portaoCrm(plano) {
   if (!plano.crm_controle) return { livre: true };
+  if (plano.crm_fila_hunter != null) {
+    const n = plano.crm_fila_hunter, g = plano.crm_fila_gatilho ?? 0;
+    if (n > g) {
+      return { livre: false, motivo: `${n} lead(s) do Hunter sem atendimento nas filas do CRM — radar novo abre ${g === 0
+        ? 'quando todos forem atendidos' : `quando cair para ${g} ou menos`}` };
+    }
+    return { livre: true };
+  }
   if (plano.crm_fila_em == null || plano.crm_fila_pendentes == null) {
     return { livre: false, motivo: 'o CRM ainda não informou quantos leads estão na fila sem atendimento' };
   }
@@ -399,6 +412,7 @@ async function passo(db, pool, queues) {
 
   const gate = await portao(pool, queues);
   if (!gate.livre) return { acoes, estado: `aguardando: ${gate.motivo}` };
+  if (plano.crm_controle) plano.crm_fila_hunter = await pendentesHunter(db);
   const crm = portaoCrm(plano);
   if (!crm.livre) return { acoes, estado: `aguardando: ${crm.motivo}` };
 

@@ -3454,8 +3454,10 @@ function ControleCrm({ plano, crm, salvando, onSalvar }) {
     if (n !== plano.crm_fila_gatilho) onSalvar({ crm_fila_gatilho: n });
   };
   const url = (typeof window !== 'undefined' ? window.location.origin : '') + (crm?.caminho_webhook || '/api/webhooks/crm/fila');
-  const n = plano.crm_fila_pendentes, g = plano.crm_fila_gatilho ?? 0;
-  const temAviso = plano.crm_fila_em != null && n != null;
+  // CRM GK: o número é o do próprio Hunter (cartão de filas), sempre atual.
+  const contaHunter = crm?.fila_hunter != null;
+  const n = contaHunter ? crm.fila_hunter : plano.crm_fila_pendentes, g = plano.crm_fila_gatilho ?? 0;
+  const temAviso = contaHunter || (plano.crm_fila_em != null && n != null);
   const code = { fontFamily:'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize:11.5, background:'var(--panel2)',
     border:'1px solid var(--border)', borderRadius:7, padding:'1px 6px', wordBreak:'break-all' };
   return (
@@ -3466,8 +3468,12 @@ function ControleCrm({ plano, crm, salvando, onSalvar }) {
         <span>
           <span style={{ fontSize:13.5, fontWeight:600 }}>O CRM controla quando abrir radar novo</span>
           <span style={{ display:'block', fontSize:12, color:'var(--faint)', marginTop:4, lineHeight:1.45 }}>
-            O CRM avisa quantos leads do Hunter estão na fila <b>sem atendimento</b>. Radar novo só abre quando essa fila cai para o
-            número abaixo ou menos — assim o time recebe lead no ritmo em que atende. Os limites de Configurações continuam valendo.
+            {contaHunter
+              ? <>Usa o número de leads do Hunter <b>aguardando atendimento</b> nas filas do CRM (o cartão de filas). Quando um atendente
+                  começa a atender, o lead sai da conta; radar novo só abre quando o total cai para o número abaixo ou menos — assim o
+                  time recebe lead no ritmo em que atende. Os limites de Configurações continuam valendo.</>
+              : <>O CRM avisa quantos leads do Hunter estão na fila <b>sem atendimento</b>. Radar novo só abre quando essa fila cai para o
+                  número abaixo ou menos — assim o time recebe lead no ritmo em que atende. Os limites de Configurações continuam valendo.</>}
           </span>
         </span>
       </label>
@@ -3485,16 +3491,21 @@ function ControleCrm({ plano, crm, salvando, onSalvar }) {
           <span style={{ fontSize:12.5, color:'var(--dim)' }}>lead(s) sem atendimento ou menos {g === 0 && <span style={{ color:'var(--faint)' }}>(0 = só quando todos forem atendidos)</span>}</span>
         </div>
         <div style={{ fontSize:12, marginTop:10, color:'var(--dim)' }}>
-          {temAviso
+          {contaHunter
+            ? <>Agora: <b style={{ color: n <= g ? C.green : C.amber }}>{n} lead{n === 1 ? '' : 's'} aguardando atendimento</b>
+                <span style={{ color:'var(--faint)' }}> · {n <= g ? 'libera radar novo' : 'segura radar novo'}</span></>
+            : temAviso
             ? <>Último aviso do CRM: <b style={{ color: n <= g ? C.green : C.amber }}>{n} lead{n === 1 ? '' : 's'} sem atendimento</b>
                 <span style={{ color:'var(--faint)' }}> · {timeAgo(plano.crm_fila_em)} · {n <= g ? 'libera radar novo' : 'segura radar novo'}</span></>
             : <span style={{ color:'var(--faint)' }}>O CRM ainda não enviou nenhum aviso.{plano.crm_controle ? ' Enquanto isso, o piloto não abre radar novo.' : ''}</span>}
         </div>
+        {!contaHunter && (
         <button type="button" onClick={() => setMostrarComo(v => !v)}
           style={{ marginTop:10, background:'none', border:'none', padding:0, color:C.gold, fontSize:12, cursor:'pointer', fontFamily:'inherit' }}>
           {mostrarComo ? 'Esconder' : 'Como o CRM avisa o Hunter'} ›
         </button>
-        {mostrarComo && (
+        )}
+        {!contaHunter && mostrarComo && (
           <div style={{ marginTop:10, fontSize:12, color:'var(--dim)', lineHeight:1.7 }}>
             <div><b>POST</b> <span style={code}>{url}</span></div>
             <div>Cabeçalho <span style={code}>x-hunter-token</span>: o mesmo token do webhook de conversão (Configurações → Webhook de entrada).

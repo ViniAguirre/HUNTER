@@ -17,7 +17,7 @@ const { TENANT_ID, TENANT_LEGADO, ligarTenantNoPool, exigirRlsEnforcavel, tenant
 const { normalizarTags, normalizarListaCrm } = require('./tags');
 const { swotSemOrigem, contatoSemOrigem } = require('./sigilo');
 const { jaNoCrmSql } = require('./jobs/crm');
-const { estadoDoStatus } = require('./jobs/atendimento');
+const { estadoDoStatus, pendentesHunter } = require('./jobs/atendimento');
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'troque-este-segredo';
@@ -1839,10 +1839,13 @@ app.get('/api/estrategia', requireAuth, async (req, res) => {
                   qualificados: soma('qualificados'), enviados: soma('enviados') },
       };
     });
+    // Com o CRM GK, o controle usa a contagem do próprio Hunter (a do cartão
+    // de filas) — a tela mostra esse número no lugar do aviso do CRM.
+    const filaHunter = await pendentesHunter(pool).catch(() => null);
     res.json({
       plano, periodo, pautas: saida, eventos,
       crm: { conectado: !!crmIg, provedor: crmIg?.provedor || null, webhook_configurado: !!cfg?.webhook_ok,
-             caminho_webhook: '/api/webhooks/crm/fila' },
+             caminho_webhook: '/api/webhooks/crm/fila', fila_hunter: filaHunter },
       limites: { limite_diario: cfg?.limite_diario ?? 0, janela_inicio: cfg?.janela_inicio ?? 0,
                  janela_fim: cfg?.janela_fim ?? 24, janela_dias: cfg?.janela_dias || [0,1,2,3,4,5,6] },
       constantes: { max_simultaneos: estrategiaMotor.MAX_SIMULTANEOS, dias_recomeco: estrategiaMotor.DIAS_RECOMECO,
