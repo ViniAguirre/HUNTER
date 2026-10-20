@@ -118,7 +118,18 @@ input:focus,textarea:focus{border-color:var(--blue)!important;outline:none;}
    O corte é 1200px e não 1024px porque entre esses dois valores a sidebar
    expandida deixava só ~808px de conteúdo — pouco pra barra de filtros dos
    Leads, que então quebrava o "Só e-mail válido" pra uma segunda linha. */
+/* Menu recolhido pelo usuário (botão "Recolher menu"): o mesmo trilho de
+   ícones das telas estreitas, em qualquer largura. */
+.h-side.h-side-recolhida{width:64px!important;}
+.h-side.h-side-recolhida .h-side-label{display:none;}
+.h-side.h-side-recolhida .h-nav-item{justify-content:center;padding-left:0;padding-right:0;}
+.h-side.h-side-recolhida .h-side-foot{padding-left:8px!important;padding-right:8px!important;}
+.h-side.h-side-recolhida .h-side-foot-btns{flex-direction:column;}
+.h-side.h-side-recolhida .h-side-sec{font-size:0!important;padding:12px 12px 10px!important;}
+.h-side.h-side-recolhida .h-side-sec::after{content:'';display:block;height:1px;background:var(--border);}
+
 @media(max-width:1200px){
+  .h-side .h-side-toggle{display:none!important;}
   .h-side{width:64px!important;}
   .h-side .h-side-label{display:none;}
   .h-side .h-nav-item{justify-content:center;padding-left:0;padding-right:0;}

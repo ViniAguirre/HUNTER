@@ -882,6 +882,14 @@ async function init() {
   `).then(r => { if (r.rowCount) console.log(`[migração] ${r.rowCount} lead(s) que já eram clientes saíram da esteira`); })
     .catch(e => console.error('[migração] guardrail sementes:', e.message));
 
+  // Lead marcado "fora do perfil" que o envio ao CRM (já na fila) carimbou
+  // depois como 'Enviado': a marcação vale — volta pra descartado.
+  await pool.query(`
+    UPDATE leads SET status='Descartado', atualizado_em=now()
+     WHERE contato_status='fora_do_perfil' AND status='Enviado'
+  `).then(r => { if (r.rowCount) console.log(`[migração] ${r.rowCount} lead(s) fora do perfil voltaram a descartado`); })
+    .catch(e => console.error('[migração] fora do perfil enviado:', e.message));
+
   // Qual IA/modelo gerou o briefing não fica mais no lead (sigilo.js): limpa os
   // briefings antigos, que ainda guardavam modelo/provedor/reserva_de.
   await pool.query(`
@@ -2384,9 +2392,12 @@ app.post('/api/leads/:id/fora-do-perfil', requireAuth, requireEditor, async (req
     if (desfazer) {
       if (l.lista) await pool.query(
         `DELETE FROM sementes WHERE lista=$1 AND cnpj=$2 AND tipo='negativa'`, [l.lista, cnpj]);
-      await pool.query(
-        `UPDATE leads SET status='Novo', contato_status=NULL, atualizado_em=now() WHERE id=$1`, [id]);
-      return res.json({ ok: true, desfeito: true });
+      // Desfazer devolve o lead ao que era: enviado continua enviado.
+      const { rows: [v] } = await pool.query(
+        `UPDATE leads SET status = CASE WHEN enviado_crm_em IS NOT NULL OR enviado_manual_em IS NOT NULL
+                                        THEN 'Enviado' ELSE 'Novo' END,
+                contato_status=NULL, atualizado_em=now() WHERE id=$1 RETURNING status`, [id]);
+      return res.json({ ok: true, desfeito: true, status: v?.status || 'Novo' });
     }
 
     await pool.query(
