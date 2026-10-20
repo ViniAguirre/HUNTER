@@ -119,7 +119,7 @@ const abertoSql = (a) => `(COALESCE(${a}.status,'') NOT IN ('Descartado','Enviad
     AND regexp_replace(o.cnpj, '\\D', '', 'g') = regexp_replace(${a}.cnpj, '\\D', '', 'g')))`;
 
 function buildLeadsFilter(query) {
-  const { q, status, uf, busca_id, email_only, local, score_min, contato, analise, abertos } = query;
+  const { q, status, uf, busca_id, email_only, local, score_min, contato, analise, abertos, de, ate } = query;
   const conditions = [];
   const vals = [];
   if (q && q.trim()) {
@@ -145,19 +145,34 @@ function buildLeadsFilter(query) {
     if (origem === 'manual') conditions.push('l.enviado_crm_em IS NULL AND l.enviado_manual_em IS NOT NULL');
   }
   if (uf) { vals.push(uf); conditions.push(`l.uf = $${vals.length}`); }
-  // Local: casa cidade OU UF (ex.: "Goiânia", "GO", "São Paulo").
+  // Local: cidade OU UF (ex.: "Goiânia", "GO", "São Paulo"). Duas letras é UF
+  // exata — "GO" casava "Santiago" e "Mogi Guaçu" por ser trecho do nome.
   if (local && String(local).trim()) {
-    vals.push(`%${String(local).trim()}%`);
-    const n = vals.length;
-    conditions.push(`(l.cidade ILIKE $${n} OR l.uf ILIKE $${n})`);
+    const loc = String(local).trim();
+    if (/^[A-Za-z]{2}$/.test(loc)) {
+      vals.push(loc.toUpperCase()); conditions.push(`upper(l.uf) = $${vals.length}`);
+    } else {
+      vals.push(`%${loc}%`);
+      const n = vals.length;
+      conditions.push(`(l.cidade ILIKE $${n} OR l.uf ILIKE $${n})`);
+    }
   }
+  // Período em que o lead entrou (dia no fuso de Brasília, de/até inclusivos).
+  const dia = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) && !isNaN(Date.parse(v)) ? String(v) : null;
+  if (dia(de)) { vals.push(dia(de)); conditions.push(`l.criado_em >= ($${vals.length}::date)::timestamp AT TIME ZONE 'America/Sao_Paulo'`); }
+  if (dia(ate)) { vals.push(dia(ate)); conditions.push(`l.criado_em < ($${vals.length}::date + 1)::timestamp AT TIME ZONE 'America/Sao_Paulo'`); }
   if (busca_id) {
     const bid = parseInt(busca_id, 10);
     if (!isNaN(bid)) { vals.push(bid); conditions.push(`l.busca_id = $${vals.length}`); }
   }
   const sMin = parseInt(score_min, 10);
   if (!isNaN(sMin) && sMin > 0) { vals.push(sMin); conditions.push(`l.score >= $${vals.length}`); }
-  if (email_only === 'true' || email_only === '1') conditions.push('l.tem_email = true');
+  // O e-mail achado pelo enriquecimento vive em contato_validado — a coluna
+  // tem_email quase nunca é atualizada, e o filtro sozinho nela escondia
+  // leads com e-mail (a lista pinta o ícone pelos dois).
+  if (email_only === 'true' || email_only === '1') {
+    conditions.push(`(l.tem_email = true OR COALESCE(l.contato_validado->>'email','') <> '')`);
+  }
   // Fila de enriquecimento manual: leads aprovados no score a que só falta o
   // contato. É a mesma lista que a extensão do Google Meu Negócio vai consumir.
   // Vai pelo estágio derivado, e não pela coluna crua, pra casar exatamente com
@@ -2096,8 +2111,8 @@ app.get('/api/leads', requireAuth, async (req, res) => {
       pool.query(`SELECT COUNT(*)::int AS total FROM leads l ${where}`, vals),
       pool.query(`SELECT l.id, l.fantasia, l.razao, l.setor, l.porte, l.cidade, l.uf,
         l.decisor, l.cargo, l.score, l.tem_email, l.tem_telefone, l.status, l.busca_id, l.contato_validado, l.contato_pendente, l.contato_status,
-        l.enviado_crm_em, l.enviado_manual_em, l.enviado_por, ${jaNoCrmSql('l')} AS ja_no_crm
-        FROM leads l ${where} ORDER BY l.score DESC, l.id
+        l.enviado_crm_em, l.enviado_manual_em, l.enviado_por, l.criado_em, ${jaNoCrmSql('l')} AS ja_no_crm
+        FROM leads l ${where} ORDER BY ${req.query.ordem === 'recentes' ? 'l.criado_em DESC, l.id DESC' : 'l.score DESC NULLS LAST, l.id'}
         LIMIT $${vals.length+1} OFFSET $${vals.length+2}`,
         [...vals, perPage, (page-1)*perPage]),
       semAbertos ? pool.query(`SELECT COUNT(*)::int AS total FROM leads l

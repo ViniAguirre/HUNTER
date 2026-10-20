@@ -1219,23 +1219,53 @@ function NovoLeadModal({ buscas, onClose, onCriado }) {
   );
 }
 
+// Filtros da aba Leads ficam guardados no navegador: sair da aba (ou recarregar)
+// e voltar mantém a lista de trabalho como estava. A busca por texto não fica.
+const FILTROS_LEADS_PADRAO = { status:'abertos', busca:'', local:'', score:'', analise:'', email:false,
+  periodo:'', de:'', ate:'', ordem:'score' };
+function lerFiltrosLeads() {
+  try { return { ...FILTROS_LEADS_PADRAO, ...JSON.parse(localStorage.getItem('hunter_leads_filtros') || '{}') }; }
+  catch (_) { return { ...FILTROS_LEADS_PADRAO }; }
+}
+
+// Período → datas (YYYY-MM-DD, no fuso do navegador). 'custom' usa de/até.
+function datasDoPeriodo(periodo, de, ate) {
+  const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const hoje = new Date();
+  if (periodo === 'hoje') return { de: iso(hoje), ate: iso(hoje) };
+  if (periodo === '7d') { const d = new Date(hoje); d.setDate(d.getDate() - 6); return { de: iso(d), ate: iso(hoje) }; }
+  if (periodo === '30d') { const d = new Date(hoje); d.setDate(d.getDate() - 29); return { de: iso(d), ate: iso(hoje) }; }
+  if (periodo === 'mes') return { de: iso(new Date(hoje.getFullYear(), hoje.getMonth(), 1)), ate: iso(hoje) };
+  if (periodo === 'mes_passado') return { de: iso(new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1)),
+                                          ate: iso(new Date(hoje.getFullYear(), hoje.getMonth(), 0)) };
+  if (periodo === 'custom') return { de: de || '', ate: ate || '' };
+  return { de: '', ate: '' };
+}
+
 function Leads({ refreshKey, onOpenLead, onCrm, user }) {
+  const inicial = useMemo(lerFiltrosLeads, []);
   const [leads, setLeads] = useState([]);
   const [total, setTotal] = useState(0);
+  const [pages, setPages] = useState(1);
   const [page, setPage] = useState(1);
   const [q, setQ] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
   // Padrão "Em aberto": lead que já teve definição (descartado/negativado ou
   // enviado) sai da lista de trabalho — senão entra na seleção e no envio em
   // lote por engano. Os filtros de status mostram esses quando precisa.
-  const [filterStatus, setFilterStatus] = useState('abertos');
+  const [filterStatus, setFilterStatus] = useState(inicial.status);
   const [finalizados, setFinalizados] = useState(0);
-  const [emailOnly, setEmailOnly] = useState(false);
-  const [filterBusca, setFilterBusca] = useState('');
-  const [filterLocal, setFilterLocal] = useState('');
-  const [debouncedLocal, setDebouncedLocal] = useState('');
-  const [filterScore, setFilterScore] = useState('');
-  const [filterAnalise, setFilterAnalise] = useState('');   // '' | 'sem' | 'com' (briefing SWOT)
+  const [emailOnly, setEmailOnly] = useState(!!inicial.email);
+  const [filterBusca, setFilterBusca] = useState(inicial.busca);
+  const [filterLocal, setFilterLocal] = useState(inicial.local);
+  const [debouncedLocal, setDebouncedLocal] = useState(inicial.local);
+  const [filterScore, setFilterScore] = useState(inicial.score);
+  const [filterAnalise, setFilterAnalise] = useState(inicial.analise);   // '' | 'sem' | 'com' (briefing SWOT)
+  const [filterPeriodo, setFilterPeriodo] = useState(inicial.periodo);   // '' | hoje | 7d | 30d | mes | mes_passado | custom
+  const [filterDe, setFilterDe] = useState(inicial.de);
+  const [filterAte, setFilterAte] = useState(inicial.ate);
+  const [ordem, setOrdem] = useState(inicial.ordem);   // 'score' | 'recentes'
+  const datas = datasDoPeriodo(filterPeriodo, filterDe, filterAte);
   const [buscasOpts, setBuscasOpts] = useState([]);
   const [selected, setSelected] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -1277,13 +1307,39 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
   };
   const debRef = useRef(null);
   const locRef = useRef(null);
-  const PER_PAGE = 20;
+  const reqRef = useRef(0);   // só a resposta do pedido mais novo vale
+  // Antes a tela calculava as páginas com 20 por página enquanto o servidor
+  // devolvia 50: sobravam páginas vazias no fim. Agora os dois usam o mesmo.
+  const PER_PAGE = 50;
+
+  // Guarda os filtros e, quando eles mudam, limpa a seleção: lead marcado que
+  // saiu da lista não pode continuar valendo pras ações em lote (Enviar ao CRM,
+  // Descartar, Excluir) sem que se veja.
+  const filtrosChave = JSON.stringify({ status:filterStatus, busca:filterBusca, local:debouncedLocal, score:filterScore,
+    analise:filterAnalise, email:emailOnly, periodo:filterPeriodo, de:filterDe, ate:filterAte, ordem });
+  useEffect(() => {
+    try { localStorage.setItem('hunter_leads_filtros', filtrosChave); } catch (_) {}
+    setSelected([]);
+  }, [filtrosChave, debouncedQ]);
+  const temFiltro = filtrosChave !== JSON.stringify(FILTROS_LEADS_PADRAO) || !!debouncedQ;
+  const limparFiltros = () => {
+    const p = FILTROS_LEADS_PADRAO;
+    setFilterStatus(p.status); setFilterBusca(p.busca); setFilterLocal(p.local); setDebouncedLocal(p.local);
+    setFilterScore(p.score); setFilterAnalise(p.analise); setEmailOnly(p.email); setFilterPeriodo(p.periodo);
+    setFilterDe(p.de); setFilterAte(p.ate); setOrdem(p.ordem); setQ(''); setDebouncedQ(''); setPage(1);
+  };
 
   // Lista de buscas pra o filtro (mantém todas, aprovadas ou não).
   useEffect(() => {
     fetch('/api/buscas', { credentials:'same-origin' })
       .then(r => r.json())
-      .then(d => setBuscasOpts(Array.isArray(d) ? d : (d.buscas || [])))
+      .then(d => {
+        const lista = Array.isArray(d) ? d : (d.buscas || []);
+        setBuscasOpts(lista);
+        // Radar guardado no filtro que foi excluído: volta pra "Todos os radares"
+        // em vez de mostrar uma lista vazia sem motivo aparente.
+        setFilterBusca(b => (b && !lista.some(x => String(x.id) === String(b)) ? '' : b));
+      })
       .catch(() => {});
   }, []);
 
@@ -1316,13 +1372,24 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
     if (debouncedLocal) params.set('local', debouncedLocal);
     if (filterScore) params.set('score_min', filterScore);
     if (filterAnalise) params.set('analise', filterAnalise);
+    if (datas.de) params.set('de', datas.de);
+    if (datas.ate) params.set('ate', datas.ate);
+    if (ordem === 'recentes') params.set('ordem', 'recentes');
     params.set('page', page);
+    params.set('per_page', PER_PAGE);
+    // Digitando rápido, uma resposta antiga podia chegar depois da nova e
+    // trocar a lista por um filtro que já não está na tela.
+    const meu = ++reqRef.current;
     fetch('/api/leads?' + params, { credentials:'same-origin' })
       .then(r => r.json())
-      .then(d => { setLeads(d.leads || []); setTotal(d.total || 0); setFinalizados(d.finalizados || 0); })
+      .then(d => {
+        if (meu !== reqRef.current) return;
+        setLeads(d.leads || []); setTotal(d.total || 0); setPages(d.pages || 1); setFinalizados(d.finalizados || 0);
+      })
       .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [debouncedQ, filterStatus, emailOnly, filterBusca, debouncedLocal, filterScore, filterAnalise, page, refreshKey, tick]);
+      .finally(() => { if (meu === reqRef.current) setLoading(false); });
+  }, [debouncedQ, filterStatus, emailOnly, filterBusca, debouncedLocal, filterScore, filterAnalise,
+      datas.de, datas.ate, ordem, page, refreshKey, tick]);
 
   const allSel = leads.length > 0 && leads.every(l => selected.includes(l.id));
   const toggleSel = (id) => setSelected(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id]);
@@ -1412,7 +1479,7 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
     } finally { setGerandoPdf(false); }
   };
 
-  const totalPages = Math.ceil(total / PER_PAGE);
+  const totalPages = pages;
 
   const selBtnStyle = (variant) => ({
     height:34, padding:'0 12px', borderRadius:8, border:'1px solid var(--border)',
@@ -1484,6 +1551,40 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
             direita, mas participava do flex-wrap e ocupava uma linha inteira,
             derrubando "Só e-mail válido" pra linha seguinte mesmo quando havia
             espaço de sobra na primeira. */}
+        {/* Período: quando o lead entrou no Hunter. */}
+        <select value={filterPeriodo} onChange={e => { setFilterPeriodo(e.target.value); setPage(1); }}
+          aria-label="Período de entrada do lead"
+          style={{ height:38, padding:'0 10px', borderRadius:9, border:'1px solid var(--border)',
+            background:'var(--panel)', color: filterPeriodo ? 'var(--text)' : 'var(--dim)',
+            fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>
+          <option value="">Todo o período</option>
+          <option value="hoje">Hoje</option>
+          <option value="7d">Últimos 7 dias</option>
+          <option value="30d">Últimos 30 dias</option>
+          <option value="mes">Este mês</option>
+          <option value="mes_passado">Mês passado</option>
+          <option value="custom">Escolher datas…</option>
+        </select>
+        {filterPeriodo === 'custom' && (
+          <span style={{ display:'flex', alignItems:'center', gap:6, fontSize:12, color:'var(--dim)' }}>
+            de
+            <input type="date" value={filterDe} max={filterAte || undefined} aria-label="Data inicial"
+              onChange={e => { setFilterDe(e.target.value); setPage(1); }}
+              style={{ height:38, borderRadius:9, border:'1px solid var(--border)', background:'var(--panel)',
+                color:'var(--text)', padding:'0 8px', fontSize:12.5, fontFamily:'inherit' }}/>
+            até
+            <input type="date" value={filterAte} min={filterDe || undefined} aria-label="Data final"
+              onChange={e => { setFilterAte(e.target.value); setPage(1); }}
+              style={{ height:38, borderRadius:9, border:'1px solid var(--border)', background:'var(--panel)',
+                color:'var(--text)', padding:'0 8px', fontSize:12.5, fontFamily:'inherit' }}/>
+          </span>
+        )}
+        <select value={ordem} onChange={e => { setOrdem(e.target.value); setPage(1); }} aria-label="Ordenar leads"
+          style={{ height:38, padding:'0 10px', borderRadius:9, border:'1px solid var(--border)',
+            background:'var(--panel)', color:'var(--dim)', fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>
+          <option value="score">Maior score primeiro</option>
+          <option value="recentes">Mais recentes primeiro</option>
+        </select>
         <button onClick={() => { setEmailOnly(e => !e); setPage(1); }}
           style={{ height:38, padding:'0 13px', borderRadius:9, fontSize:12.5, fontFamily:'inherit',
             cursor:'pointer', display:'flex', alignItems:'center', gap:7,
@@ -1493,6 +1594,13 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
           <SvgMulti w={14} h={14} sw={1.8}><rect x={3} y={5} width={18} height={14} rx={2}/><path d="M3 7l9 6 9-6"/></SvgMulti>
           Só e-mail válido
         </button>
+        {temFiltro && (
+          <button onClick={limparFiltros} title="Volta para Em aberto, todo o período, sem os demais filtros"
+            style={{ height:38, padding:'0 12px', borderRadius:9, fontSize:12.5, fontFamily:'inherit', cursor:'pointer',
+              border:'none', background:'transparent', color:C.gold, whiteSpace:'nowrap' }}>
+            Limpar filtros
+          </button>
+        )}
         {user?.master && (
           <button onClick={() => setNovoLead(true)} title="Cadastrar um lead à mão para testes"
             style={{ height:38, padding:'0 13px', borderRadius:9, fontSize:12.5, fontFamily:'inherit',
@@ -1621,7 +1729,9 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
               </div>
               <div className="h-titulo" style={{ minWidth:0 }}>
                 <div style={{ fontSize:13.5, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{l.fantasia}</div>
-                <div style={{ fontSize:11, color:'var(--faint)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{l.razao}</div>
+                <div style={{ fontSize:11, color:'var(--faint)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+                  {l.razao}{l.criado_em && <span title="Quando o lead entrou no Hunter">{l.razao ? ' · ' : ''}entrou {new Date(l.criado_em).toLocaleDateString('pt-BR')}</span>}
+                </div>
               </div>
               <div data-rot="Setor" style={{ minWidth:0 }}>
                 <div style={{ fontSize:12.5, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{l.setor}</div>
