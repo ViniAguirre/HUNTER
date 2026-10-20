@@ -7453,6 +7453,67 @@ function ControleCrm({
   const n = contaHunter ? crm.fila_hunter : plano.crm_fila_pendentes,
     g = plano.crm_fila_gatilho ?? 0;
   const temAviso = contaHunter || plano.crm_fila_em != null && n != null;
+  // Gatilho por fila (só com a contagem do Hunter): abre quando a menor
+  // conexão/fila chega ao mínimo; o total acima do limite segura.
+  const porFila = contaHunter && plano.crm_gatilho_modo === 'fila' && (crm.carga?.unidades || []).length > 0;
+  const minimo = plano.crm_fila_minimo ?? 3,
+    maximo = plano.crm_total_maximo || 0;
+  const menor = porFila ? [...crm.carga.unidades].sort((a, b) => a.n - b.n)[0] : null;
+  const unidadeTxt = crm?.carga?.por === 'conexao' ? 'conexão' : 'fila';
+  const liberaFila = porFila && !(maximo > 0 && n > maximo) && menor.n <= minimo;
+  const campoNum = (valor, chave, rotulo) => /*#__PURE__*/React.createElement("input", {
+    type: "number",
+    min: 0,
+    defaultValue: valor,
+    key: chave + ':' + valor,
+    "aria-label": rotulo,
+    onBlur: e => {
+      const v = parseInt(e.target.value, 10);
+      if (!(v >= 0)) {
+        e.target.value = valor;
+        return;
+      }
+      if (v !== valor) onSalvar({
+        [chave]: v
+      });
+    },
+    onKeyDown: e => {
+      if (e.key === 'Enter') e.currentTarget.blur();
+    },
+    style: {
+      width: 70,
+      height: 32,
+      borderRadius: 8,
+      border: '1px solid var(--border)',
+      background: 'var(--panel2)',
+      color: 'var(--text)',
+      padding: '0 10px',
+      fontSize: 13,
+      fontFamily: 'inherit'
+    }
+  });
+  const opcao = (modo, conteudo) => /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      flexWrap: 'wrap',
+      cursor: 'pointer',
+      fontSize: 12.5,
+      color: 'var(--dim)'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "radio",
+    name: "crm-gatilho-modo",
+    checked: (plano.crm_gatilho_modo || 'total') === modo,
+    disabled: salvando,
+    onChange: () => onSalvar({
+      crm_gatilho_modo: modo
+    }),
+    style: {
+      accentColor: 'var(--accent)'
+    }
+  }), conteudo);
   const code = {
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
     fontSize: 11.5,
@@ -7499,7 +7560,7 @@ function ControleCrm({
       marginTop: 4,
       lineHeight: 1.45
     }
-  }, contaHunter ? /*#__PURE__*/React.createElement(React.Fragment, null, "Usa o n\xFAmero de leads do Hunter ", /*#__PURE__*/React.createElement("b", null, "aguardando atendimento"), " nas filas do CRM (o cart\xE3o de filas). Quando um atendente come\xE7a a atender, o lead sai da conta; radar novo s\xF3 abre quando o total cai para o n\xFAmero abaixo ou menos \u2014 assim o time recebe lead no ritmo em que atende. Os limites de Configura\xE7\xF5es continuam valendo.") : /*#__PURE__*/React.createElement(React.Fragment, null, "O CRM avisa quantos leads do Hunter est\xE3o na fila ", /*#__PURE__*/React.createElement("b", null, "sem atendimento"), ". Radar novo s\xF3 abre quando essa fila cai para o n\xFAmero abaixo ou menos \u2014 assim o time recebe lead no ritmo em que atende. Os limites de Configura\xE7\xF5es continuam valendo.")))), /*#__PURE__*/React.createElement("div", {
+  }, contaHunter ? /*#__PURE__*/React.createElement(React.Fragment, null, "Usa os leads do Hunter ", /*#__PURE__*/React.createElement("b", null, "aguardando atendimento"), " nas filas do CRM (o cart\xE3o de filas). Quando um atendente come\xE7a a atender, o lead sai da conta. Escolha abaixo quando abrir radar novo: assim que algum vendedor estiver perto de ficar sem lead, ou quando o total cair. Os limites de Configura\xE7\xF5es continuam valendo.") : /*#__PURE__*/React.createElement(React.Fragment, null, "O CRM avisa quantos leads do Hunter est\xE3o na fila ", /*#__PURE__*/React.createElement("b", null, "sem atendimento"), ". Radar novo s\xF3 abre quando essa fila cai para o n\xFAmero abaixo ou menos \u2014 assim o time recebe lead no ritmo em que atende. Os limites de Configura\xE7\xF5es continuam valendo.")))), /*#__PURE__*/React.createElement("div", {
     style: {
       paddingLeft: 26,
       marginTop: 12
@@ -7510,7 +7571,17 @@ function ControleCrm({
       color: '#F59E0B',
       marginBottom: 10
     }
-  }, "Nenhum CRM conectado em Integra\xE7\xF5es \u2014 conecte antes de ligar o controle."), /*#__PURE__*/React.createElement("div", {
+  }, "Nenhum CRM conectado em Integra\xE7\xF5es \u2014 conecte antes de ligar o controle."), contaHunter && /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 10
+    }
+  }, opcao('fila', /*#__PURE__*/React.createElement(React.Fragment, null, "Abrir radar novo quando alguma ", unidadeTxt, " tiver ", campoNum(minimo, 'crm_fila_minimo', 'Mínimo por fila'), "ou menos aguardando \u2014 desde que o total n\xE3o passe de ", campoNum(maximo, 'crm_total_maximo', 'Limite do total'), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, "(0 = sem limite)"))), opcao('total', /*#__PURE__*/React.createElement(React.Fragment, null, "Abrir radar novo quando o total cair para ", campoNum(g, 'crm_fila_gatilho', 'Gatilho do total'), " ou menos aguardando"))), !contaHunter && /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -7558,7 +7629,15 @@ function ControleCrm({
       marginTop: 10,
       color: 'var(--dim)'
     }
-  }, contaHunter ? /*#__PURE__*/React.createElement(React.Fragment, null, "Agora: ", /*#__PURE__*/React.createElement("b", {
+  }, porFila ? /*#__PURE__*/React.createElement(React.Fragment, null, "Agora: ", /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: liberaFila ? C.green : C.amber
+    }
+  }, menor.nome, " tem ", menor.n, " aguardando"), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, " (a ", unidadeTxt, " com menos) \xB7 total ", n, maximo > 0 ? ` de no máximo ${maximo}` : '', " \xB7 ", liberaFila ? 'libera radar novo' : 'segura radar novo')) : contaHunter ? /*#__PURE__*/React.createElement(React.Fragment, null, "Agora: ", /*#__PURE__*/React.createElement("b", {
     style: {
       color: n <= g ? C.green : C.amber
     }
@@ -7994,7 +8073,7 @@ function DistribuicaoCrm({
       flexWrap: 'wrap',
       marginTop: 16
     }
-  }, [['rodizio', 'Rodízio', 'Um lead para cada conexão marcada, na ordem da lista, e recomeça.'], ['ponderada', 'Amostragem ponderada', 'Sorteio em que cada conexão tem chance proporcional ao seu peso.']].map(([v, nome, desc]) => {
+  }, [['rodizio', 'Rodízio', 'Um lead para cada conexão marcada, na ordem da lista, e recomeça.'], ['ponderada', 'Amostragem ponderada', 'Sorteio em que cada conexão tem chance proporcional ao seu peso.'], ['demanda', 'Por demanda', 'Quem tem menos leads aguardando atendimento recebe o próximo — quem atende mais rápido recebe mais.']].map(([v, nome, desc]) => {
     const sel = (plano.distrib_modo || 'rodizio') === v;
     return /*#__PURE__*/React.createElement("button", {
       key: v,
@@ -8076,7 +8155,8 @@ function DistribuicaoCrm({
     }
   }, "O CRM n\xE3o devolveu nenhuma conex\xE3o."), conexoes.map(c => {
     const [stTxt, stCor] = STATUS_CONEXAO[c.status] || [c.status ? String(c.status).toLowerCase() : 'status desconhecido', C.gray];
-    const pct = c.ativo && somaPesos ? Math.round(100 * (ponderada ? (c.peso || 1) / somaPesos : 1 / marcadas.length)) : null;
+    // Por demanda não há parte fixa: quem tem menos aguardando recebe.
+    const pct = c.ativo && somaPesos && plano.distrib_modo !== 'demanda' ? Math.round(100 * (ponderada ? (c.peso || 1) / somaPesos : 1 / marcadas.length)) : null;
     return /*#__PURE__*/React.createElement("div", {
       key: c.id,
       style: {

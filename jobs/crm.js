@@ -149,8 +149,8 @@ module.exports = async function crm(job, pool, queues) {
       if (conexao.fila) { queueId = conexao.fila; origemFila = 'conexao'; }
       // Grava antes de enviar: se algo falhar, a retentativa cai na mesma
       // conexão em vez de gastar a vez de outra no rodízio.
-      if (!esc.reuso) {
-        await pool.query(`UPDATE leads SET crm_conexao_id=$2, crm_conexao_nome=$3 WHERE id=$1`,
+      if (!esc.reuso && !esc.gravado) {
+        await pool.query(`UPDATE leads SET crm_conexao_id=$2, crm_conexao_nome=$3, crm_conexao_em=now() WHERE id=$1`,
           [lead_id, conexao.id, conexao.nome]);
       }
     } else if (dcfg?.motivo) {

@@ -139,17 +139,49 @@ async function adotarLegado(pool, ig, authDe, limite) {
 // conexões marcadas; sem ela, todas. null = sem CRM GK ativo (não há contagem
 // própria; o controle cai no aviso do CRM).
 async function pendentesHunter(db) {
+  const c = await cargaHunter(db);
+  return c ? c.total : null;
+}
+
+// O total e a carga de cada "vendedor" (o gatilho por fila olha a menor):
+//   - distribuição ligada: cada conexão marcada (o lead fica com a conexão
+//     sorteada — é ela que diz de quem é o lead);
+//   - sem distribuição: cada fila que o Hunter usa (a padrão, as dos radares
+//     e as que têm lead dele).
+// Conexão/fila sem nenhum lead aguardando entra com 0 — é justamente a que
+// está sem trabalho.
+async function cargaHunter(db) {
   const { rows: [ig] } = await db.query(
-    `SELECT 1 FROM integracoes WHERE categoria='crm' AND provedor='gk' AND ativo=true
+    `SELECT config FROM integracoes WHERE categoria='crm' AND provedor='gk' AND ativo=true
        AND key_cifrada IS NOT NULL AND key_cifrada <> '' LIMIT 1`);
   if (!ig) return null;
   const { rows: [e] } = await db.query(`SELECT distrib_ativo, distrib_conexoes FROM estrategia`);
-  const filas = e?.distrib_ativo
-    ? [...new Set(distribuicao.elegiveis(e.distrib_conexoes).map(c => c.fila).filter(Boolean).map(String))] : [];
+  const marcadas = e?.distrib_ativo ? distribuicao.elegiveis(e.distrib_conexoes) : [];
+  const filas = [...new Set(marcadas.map(c => c.fila).filter(Boolean).map(String))];
   const { rows: [r] } = filas.length
     ? await db.query(`SELECT COUNT(*)::int AS n FROM leads WHERE crm_atendimento='aguardando' AND crm_fila_id = ANY($1::text[])`, [filas])
     : await db.query(`SELECT COUNT(*)::int AS n FROM leads WHERE crm_atendimento='aguardando'`);
-  return r.n;
+
+  let unidades;
+  if (marcadas.length) {
+    const { rows } = await db.query(
+      `SELECT crm_conexao_id AS id, COUNT(*)::int AS n FROM leads
+        WHERE crm_atendimento='aguardando' AND crm_conexao_id = ANY($1::text[]) GROUP BY crm_conexao_id`,
+      [marcadas.map(c => c.id)]);
+    const n = new Map(rows.map(x => [String(x.id), x.n]));
+    unidades = marcadas.map(c => ({ id: c.id, nome: c.nome, n: n.get(c.id) || 0 }));
+  } else {
+    const [{ rows: radares }, { rows }] = await Promise.all([
+      db.query(`SELECT DISTINCT crm_queue_id AS id FROM buscas WHERE crm_queue_id IS NOT NULL AND crm_queue_id <> ''`),
+      db.query(`SELECT crm_fila_id AS id, COUNT(*)::int AS n FROM leads
+                 WHERE crm_atendimento='aguardando' AND crm_fila_id IS NOT NULL GROUP BY crm_fila_id`),
+    ]);
+    const n = new Map(rows.map(x => [String(x.id), x.n]));
+    const ids = new Set([ig.config?.queueId, ...radares.map(x => x.id), ...n.keys()]
+      .filter(x => x != null && x !== '').map(String));
+    unidades = [...ids].map(id => ({ id, nome: `fila ${id}`, n: n.get(id) || 0 }));
+  }
+  return { total: r.n, unidades, por: marcadas.length ? 'conexao' : 'fila' };
 }
 
-module.exports = { verificar, estadoDoStatus, pendentesHunter };
+module.exports = { verificar, estadoDoStatus, pendentesHunter, cargaHunter };

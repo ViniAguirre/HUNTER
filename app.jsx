@@ -3458,6 +3458,29 @@ function ControleCrm({ plano, crm, salvando, onSalvar }) {
   const contaHunter = crm?.fila_hunter != null;
   const n = contaHunter ? crm.fila_hunter : plano.crm_fila_pendentes, g = plano.crm_fila_gatilho ?? 0;
   const temAviso = contaHunter || (plano.crm_fila_em != null && n != null);
+  // Gatilho por fila (só com a contagem do Hunter): abre quando a menor
+  // conexão/fila chega ao mínimo; o total acima do limite segura.
+  const porFila = contaHunter && plano.crm_gatilho_modo === 'fila' && (crm.carga?.unidades || []).length > 0;
+  const minimo = plano.crm_fila_minimo ?? 3, maximo = plano.crm_total_maximo || 0;
+  const menor = porFila ? [...crm.carga.unidades].sort((a, b) => a.n - b.n)[0] : null;
+  const unidadeTxt = crm?.carga?.por === 'conexao' ? 'conexão' : 'fila';
+  const liberaFila = porFila && !(maximo > 0 && n > maximo) && menor.n <= minimo;
+  const campoNum = (valor, chave, rotulo) => (
+    <input type="number" min={0} defaultValue={valor} key={chave + ':' + valor} aria-label={rotulo}
+      onBlur={e => { const v = parseInt(e.target.value, 10);
+        if (!(v >= 0)) { e.target.value = valor; return; }
+        if (v !== valor) onSalvar({ [chave]: v }); }}
+      onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+      style={{ width:70, height:32, borderRadius:8, border:'1px solid var(--border)', background:'var(--panel2)',
+        color:'var(--text)', padding:'0 10px', fontSize:13, fontFamily:'inherit' }}/>
+  );
+  const opcao = (modo, conteudo) => (
+    <label style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap', cursor:'pointer', fontSize:12.5, color:'var(--dim)' }}>
+      <input type="radio" name="crm-gatilho-modo" checked={(plano.crm_gatilho_modo || 'total') === modo} disabled={salvando}
+        onChange={() => onSalvar({ crm_gatilho_modo: modo })} style={{ accentColor:'var(--accent)' }}/>
+      {conteudo}
+    </label>
+  );
   const code = { fontFamily:'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize:11.5, background:'var(--panel2)',
     border:'1px solid var(--border)', borderRadius:7, padding:'1px 6px', wordBreak:'break-all' };
   return (
@@ -3469,9 +3492,9 @@ function ControleCrm({ plano, crm, salvando, onSalvar }) {
           <span style={{ fontSize:13.5, fontWeight:600 }}>O CRM controla quando abrir radar novo</span>
           <span style={{ display:'block', fontSize:12, color:'var(--faint)', marginTop:4, lineHeight:1.45 }}>
             {contaHunter
-              ? <>Usa o número de leads do Hunter <b>aguardando atendimento</b> nas filas do CRM (o cartão de filas). Quando um atendente
-                  começa a atender, o lead sai da conta; radar novo só abre quando o total cai para o número abaixo ou menos — assim o
-                  time recebe lead no ritmo em que atende. Os limites de Configurações continuam valendo.</>
+              ? <>Usa os leads do Hunter <b>aguardando atendimento</b> nas filas do CRM (o cartão de filas). Quando um atendente
+                  começa a atender, o lead sai da conta. Escolha abaixo quando abrir radar novo: assim que algum vendedor estiver
+                  perto de ficar sem lead, ou quando o total cair. Os limites de Configurações continuam valendo.</>
               : <>O CRM avisa quantos leads do Hunter estão na fila <b>sem atendimento</b>. Radar novo só abre quando essa fila cai para o
                   número abaixo ou menos — assim o time recebe lead no ritmo em que atende. Os limites de Configurações continuam valendo.</>}
           </span>
@@ -3482,6 +3505,15 @@ function ControleCrm({ plano, crm, salvando, onSalvar }) {
         {!crm?.conectado && (
           <div style={{ fontSize:12, color:'#F59E0B', marginBottom:10 }}>Nenhum CRM conectado em Integrações — conecte antes de ligar o controle.</div>
         )}
+        {contaHunter && (
+          <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
+            {opcao('fila', <>Abrir radar novo quando alguma {unidadeTxt} tiver {campoNum(minimo, 'crm_fila_minimo', 'Mínimo por fila')}
+              ou menos aguardando — desde que o total não passe de {campoNum(maximo, 'crm_total_maximo', 'Limite do total')}
+              <span style={{ color:'var(--faint)' }}>(0 = sem limite)</span></>)}
+            {opcao('total', <>Abrir radar novo quando o total cair para {campoNum(g, 'crm_fila_gatilho', 'Gatilho do total')} ou menos aguardando</>)}
+          </div>
+        )}
+        {!contaHunter && (
         <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
           <span style={{ fontSize:12.5, color:'var(--dim)' }}>Abrir radar novo quando a fila tiver</span>
           <input type="number" min={0} value={gatilho} onChange={e => setGatilho(e.target.value)} onBlur={salvarGatilho}
@@ -3490,8 +3522,12 @@ function ControleCrm({ plano, crm, salvando, onSalvar }) {
               color:'var(--text)', padding:'0 10px', fontSize:13, fontFamily:'inherit' }}/>
           <span style={{ fontSize:12.5, color:'var(--dim)' }}>lead(s) sem atendimento ou menos {g === 0 && <span style={{ color:'var(--faint)' }}>(0 = só quando todos forem atendidos)</span>}</span>
         </div>
+        )}
         <div style={{ fontSize:12, marginTop:10, color:'var(--dim)' }}>
-          {contaHunter
+          {porFila
+            ? <>Agora: <b style={{ color: liberaFila ? C.green : C.amber }}>{menor.nome} tem {menor.n} aguardando</b>
+                <span style={{ color:'var(--faint)' }}> (a {unidadeTxt} com menos) · total {n}{maximo > 0 ? ` de no máximo ${maximo}` : ''} · {liberaFila ? 'libera radar novo' : 'segura radar novo'}</span></>
+            : contaHunter
             ? <>Agora: <b style={{ color: n <= g ? C.green : C.amber }}>{n} lead{n === 1 ? '' : 's'} aguardando atendimento</b>
                 <span style={{ color:'var(--faint)' }}> · {n <= g ? 'libera radar novo' : 'segura radar novo'}</span></>
             : temAviso
@@ -3686,7 +3722,8 @@ function DistribuicaoCrm({ plano, user, salvando, onSalvar }) {
 
       <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginTop:16 }}>
         {[['rodizio', 'Rodízio', 'Um lead para cada conexão marcada, na ordem da lista, e recomeça.'],
-          ['ponderada', 'Amostragem ponderada', 'Sorteio em que cada conexão tem chance proporcional ao seu peso.']].map(([v, nome, desc]) => {
+          ['ponderada', 'Amostragem ponderada', 'Sorteio em que cada conexão tem chance proporcional ao seu peso.'],
+          ['demanda', 'Por demanda', 'Quem tem menos leads aguardando atendimento recebe o próximo — quem atende mais rápido recebe mais.']].map(([v, nome, desc]) => {
           const sel = (plano.distrib_modo || 'rodizio') === v;
           return (
             <button key={v} type="button" disabled={salvando} onClick={() => !sel && onSalvar({ distrib_modo: v })}
@@ -3717,7 +3754,9 @@ function DistribuicaoCrm({ plano, user, salvando, onSalvar }) {
         )}
         {conexoes.map(c => {
           const [stTxt, stCor] = STATUS_CONEXAO[c.status] || [c.status ? String(c.status).toLowerCase() : 'status desconhecido', C.gray];
-          const pct = c.ativo && somaPesos ? Math.round(100 * (ponderada ? (c.peso || 1) / somaPesos : 1 / marcadas.length)) : null;
+          // Por demanda não há parte fixa: quem tem menos aguardando recebe.
+          const pct = c.ativo && somaPesos && plano.distrib_modo !== 'demanda'
+            ? Math.round(100 * (ponderada ? (c.peso || 1) / somaPesos : 1 / marcadas.length)) : null;
           return (
             <div key={c.id} style={{ display:'flex', alignItems:'center', gap:12, padding:'10px 0', borderTop:'1px solid var(--border)', flexWrap:'wrap' }}>
               <Interruptor ligado={c.ativo} disabled={salvando} rotulo={`Receber leads na conexão ${c.nome}`}

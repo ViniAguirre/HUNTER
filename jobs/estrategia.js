@@ -17,7 +17,7 @@
  */
 const orcamento = require('./orcamento');
 const { normalizarTags } = require('../tags');
-const { pendentesHunter } = require('./atendimento');
+const { cargaHunter } = require('./atendimento');
 
 // Quantas empresas ainda sem veredito (enriquecimento → filtro → score) seguram
 // a abertura do próximo radar. Uma página da CNPJá são 100 empresas: com a
@@ -350,8 +350,23 @@ async function abrirRegiao(db, p, reg) {
 // Com o CRM GK conectado, o número é o do próprio Hunter (crm_fila_hunter: os
 // leads dele nas filas sem atendimento, conferidos ticket a ticket — o cartão
 // da Estratégia). Não depende de o CRM avisar.
+//
+// Gatilho "por fila" (crm_gatilho_modo='fila'): abre quando ALGUMA conexão/fila
+// tem crm_fila_minimo ou menos aguardando — o vendedor que atende rápido não
+// fica parado esperando os outros. crm_total_maximo (>0) segura mesmo assim
+// quando o total passa dele, pra não afogar o time.
 function portaoCrm(plano) {
   if (!plano.crm_controle) return { livre: true };
+  const carga = plano.crm_carga;
+  if (plano.crm_gatilho_modo === 'fila' && carga?.unidades?.length) {
+    const max = plano.crm_total_maximo || 0, min = plano.crm_fila_minimo ?? 0;
+    if (max > 0 && carga.total > max) {
+      return { livre: false, motivo: `${carga.total} lead(s) do Hunter sem atendimento — acima do limite de ${max}` };
+    }
+    const menor = [...carga.unidades].sort((a, b) => a.n - b.n)[0];
+    if (menor.n <= min) return { livre: true, menor };
+    return { livre: false, motivo: `nenhuma ${carga.por === 'conexao' ? 'conexão' : 'fila'} chegou a ${min} ou menos aguardando (a menor, ${menor.nome}, tem ${menor.n})` };
+  }
   if (plano.crm_fila_hunter != null) {
     const n = plano.crm_fila_hunter, g = plano.crm_fila_gatilho ?? 0;
     if (n > g) {
@@ -412,7 +427,10 @@ async function passo(db, pool, queues) {
 
   const gate = await portao(pool, queues);
   if (!gate.livre) return { acoes, estado: `aguardando: ${gate.motivo}` };
-  if (plano.crm_controle) plano.crm_fila_hunter = await pendentesHunter(db);
+  if (plano.crm_controle) {
+    plano.crm_carga = await cargaHunter(db);
+    plano.crm_fila_hunter = plano.crm_carga ? plano.crm_carga.total : null;
+  }
   const crm = portaoCrm(plano);
   if (!crm.livre) return { acoes, estado: `aguardando: ${crm.motivo}` };
 

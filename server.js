@@ -17,7 +17,7 @@ const { TENANT_ID, TENANT_LEGADO, ligarTenantNoPool, exigirRlsEnforcavel, tenant
 const { normalizarTags, normalizarListaCrm } = require('./tags');
 const { swotSemOrigem, contatoSemOrigem } = require('./sigilo');
 const { jaNoCrmSql } = require('./jobs/crm');
-const { estadoDoStatus, pendentesHunter } = require('./jobs/atendimento');
+const { estadoDoStatus, cargaHunter } = require('./jobs/atendimento');
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'troque-este-segredo';
@@ -709,6 +709,11 @@ async function init() {
     ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_fila_gatilho   INTEGER NOT NULL DEFAULT 5;
     ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_fila_pendentes INTEGER;
     ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_fila_em        TIMESTAMPTZ;
+    -- Gatilho: 'total' (o total cai pro crm_fila_gatilho) ou 'fila' (alguma
+    -- conexão/fila chega a crm_fila_minimo; crm_total_maximo > 0 segura).
+    ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_gatilho_modo   TEXT NOT NULL DEFAULT 'total';
+    ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_fila_minimo    INTEGER NOT NULL DEFAULT 3;
+    ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_total_maximo   INTEGER NOT NULL DEFAULT 0;
     -- Distribuição dos leads entre as conexões (números de WhatsApp) do CRM GK.
     -- distrib_conexoes: [{id, nome, ativo, peso}]; distrib_pos: ponteiro do
     -- rodízio; distrib_token: Token da Empresa do CRM (nunca volta pra tela).
@@ -720,6 +725,7 @@ async function init() {
     -- Conexão do CRM que recebeu o lead (distribuição).
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS crm_conexao_id   TEXT;
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS crm_conexao_nome TEXT;
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS crm_conexao_em   TIMESTAMPTZ;
     -- Atendimento no CRM GK: o ticket aberto pro lead, a fila em que ele está e
     -- se alguém já pegou (aguardando → em_atendimento → finalizado). É o que a
     -- Estratégia mostra por fila (jobs/atendimento.js atualiza).
@@ -1784,6 +1790,7 @@ async function planoEstrategia() {
   const { rows: [p] } = await pool.query(
     `SELECT ativo, simultaneos, ao_concluir, estado, estado_em,
             crm_controle, crm_fila_gatilho, crm_fila_pendentes, crm_fila_em,
+            crm_gatilho_modo, crm_fila_minimo, crm_total_maximo,
             distrib_ativo, distrib_modo, distrib_conexoes,
             (distrib_token IS NOT NULL AND distrib_token <> '') AS distrib_tem_token FROM estrategia`);
   return p;
@@ -1841,11 +1848,12 @@ app.get('/api/estrategia', requireAuth, async (req, res) => {
     });
     // Com o CRM GK, o controle usa a contagem do próprio Hunter (a do cartão
     // de filas) — a tela mostra esse número no lugar do aviso do CRM.
-    const filaHunter = await pendentesHunter(pool).catch(() => null);
+    const carga = await cargaHunter(pool).catch(() => null);
     res.json({
       plano, periodo, pautas: saida, eventos,
       crm: { conectado: !!crmIg, provedor: crmIg?.provedor || null, webhook_configurado: !!cfg?.webhook_ok,
-             caminho_webhook: '/api/webhooks/crm/fila', fila_hunter: filaHunter },
+             caminho_webhook: '/api/webhooks/crm/fila', fila_hunter: carga ? carga.total : null,
+             carga: carga ? { por: carga.por, unidades: carga.unidades } : null },
       limites: { limite_diario: cfg?.limite_diario ?? 0, janela_inicio: cfg?.janela_inicio ?? 0,
                  janela_fim: cfg?.janela_fim ?? 24, janela_dias: cfg?.janela_dias || [0,1,2,3,4,5,6] },
       constantes: { max_simultaneos: estrategiaMotor.MAX_SIMULTANEOS, dias_recomeco: estrategiaMotor.DIAS_RECOMECO,
@@ -1876,6 +1884,16 @@ app.patch('/api/estrategia', requireAuth, requireEditor, async (req, res) => {
       const n = parseInt(b.crm_fila_gatilho, 10);
       if (!(n >= 0 && n <= 100000)) return res.status(400).json({ erro: 'gatilho da fila: um número de 0 em diante' });
       vals.push(n); sets.push(`crm_fila_gatilho=$${vals.length}`);
+    }
+    if (b.crm_gatilho_modo != null) {
+      if (!['total', 'fila'].includes(b.crm_gatilho_modo)) return res.status(400).json({ erro: 'gatilho: "total" ou "fila"' });
+      vals.push(b.crm_gatilho_modo); sets.push(`crm_gatilho_modo=$${vals.length}`);
+    }
+    for (const k of ['crm_fila_minimo', 'crm_total_maximo']) {
+      if (b[k] == null) continue;
+      const n = parseInt(b[k], 10);
+      if (!(n >= 0 && n <= 100000)) return res.status(400).json({ erro: `${k === 'crm_fila_minimo' ? 'mínimo por fila' : 'limite do total'}: um número de 0 em diante` });
+      vals.push(n); sets.push(`${k}=$${vals.length}`);
     }
     // Distribuição entre conexões do CRM GK.
     if (typeof b.distrib_ativo === 'boolean') { vals.push(b.distrib_ativo); sets.push(`distrib_ativo=$${vals.length}`); }
@@ -1911,7 +1929,7 @@ app.patch('/api/estrategia', requireAuth, requireEditor, async (req, res) => {
       const { rows: [e] } = await pool.query(`SELECT distrib_ativo, distrib_modo, distrib_conexoes FROM estrategia`);
       const n = distribuicao.elegiveis(e.distrib_conexoes).length;
       await pool.query(`INSERT INTO estrategia_eventos (acao, detalhe) VALUES ('crm', $1)`,
-        [`distribuição entre conexões ${e.distrib_ativo ? `ligada (${e.distrib_modo === 'ponderada' ? 'amostragem ponderada' : 'rodízio'}, ${n} conexão(ões))` : 'desligada'} por ${req.user.nome || req.user.email}`]);
+        [`distribuição entre conexões ${e.distrib_ativo ? `ligada (${({ ponderada: 'amostragem ponderada', demanda: 'por demanda' })[e.distrib_modo] || 'rodízio'}, ${n} conexão(ões))` : 'desligada'} por ${req.user.nome || req.user.email}`]);
     }
     res.json(await planoEstrategia());
   } catch (e) { erroEstrategia(res, e); }
@@ -1967,7 +1985,7 @@ app.get('/api/estrategia/conexoes', requireAuth, async (req, res) => {
     for (const s of salvas) {
       if (!doCrm.some(c => c.id === String(s.id))) {
         conexoes.push({ id: String(s.id), nome: s.nome, status: null, ativo: !!s.ativo, peso: s.peso || 1, fila: s.fila || null,
-                        enviados_30d: enviados[String(s.id)] || 0, sumiu: !erro });
+                        enviados_30d: enviados[String(s.id)] || 0, aguardando: aguardando[String(s.id)] || 0, sumiu: !erro });
       }
     }
     res.json({ gk: true, conexoes, erro });

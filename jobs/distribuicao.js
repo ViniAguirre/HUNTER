@@ -10,6 +10,10 @@
  *                mesma vez.
  *   - ponderada: sorteio em que a chance de cada conexão é o peso dela dividido
  *                pela soma dos pesos (peso 3 e peso 1 → ~75% / ~25%).
+ *   - demanda:   o lead vai pra conexão com MENOS leads aguardando atendimento
+ *                (jobs/atendimento.js). Quem atende rápido esvazia a fila e
+ *                recebe mais; quem atende devagar recebe menos. Empate: a que
+ *                recebeu lead há mais tempo.
  *
  * Cada conexão pode ter a própria fila (Setor) no CRM. A fila do lead segue,
  * nesta ordem: a da conexão sorteada → a do radar → a padrão de Integrações.
@@ -19,7 +23,7 @@
  */
 const crypto = require('crypto');
 
-const MODOS = ['rodizio', 'ponderada'];
+const MODOS = ['rodizio', 'ponderada', 'demanda'];
 const PESO_MAX = 100;
 
 // Normaliza o que vem da tela: só id/nome/ativo/peso, peso inteiro de 1 a 100.
@@ -74,6 +78,7 @@ async function config(pool) {
 async function escolher(pool, cfg, lead) {
   const ja = lead?.crm_conexao_id != null ? cfg.lista.find(c => c.id === String(lead.crm_conexao_id)) : null;
   if (ja) return { conexao: ja, reuso: true };
+  if (cfg.modo === 'demanda') return escolherPorDemanda(pool, cfg, lead);
   let conexao;
   if (cfg.modo === 'ponderada') {
     conexao = escolherPonderada(cfg.lista);
@@ -86,4 +91,45 @@ async function escolher(pool, cfg, lead) {
   return { conexao, reuso: false };
 }
 
-module.exports = { MODOS, PESO_MAX, normalizarConexoes, elegiveis, escolherPonderada, config, escolher };
+// Carga de cada conexão: os leads aguardando atendimento mais os que acabaram
+// de ser atribuídos e ainda estão a caminho do CRM (o worker manda vários em
+// paralelo — sem contar esses, uma rajada inteira cairia na mesma conexão).
+// A trava serializa a escolha: a contagem e a gravação valem juntas.
+const A_CAMINHO_MIN = 15;
+async function escolherPorDemanda(pool, cfg, lead) {
+  const db = await pool.connect();
+  try {
+    await db.query('BEGIN');
+    await db.query(`SELECT pg_advisory_xact_lock(hashtext('hunter:distrib-demanda'))`);
+    const ids = cfg.lista.map(c => c.id);
+    const { rows } = await db.query(
+      `SELECT crm_conexao_id AS id,
+              COUNT(*) FILTER (WHERE crm_atendimento = 'aguardando'
+                 OR (crm_atendimento IS NULL AND enviado_crm_em IS NULL
+                     AND crm_conexao_em > now() - make_interval(mins => $2)))::int AS carga,
+              max(crm_conexao_em) AS ultimo
+         FROM leads WHERE crm_conexao_id = ANY($1::text[]) GROUP BY crm_conexao_id`, [ids, A_CAMINHO_MIN]);
+    const porId = new Map(rows.map(r => [String(r.id), r]));
+    const conexao = escolherMenorCarga(cfg.lista, porId);
+    if (lead?.id != null) {
+      await db.query(`UPDATE leads SET crm_conexao_id=$2, crm_conexao_nome=$3, crm_conexao_em=now() WHERE id=$1`,
+        [lead.id, conexao.id, conexao.nome]);
+    }
+    await db.query('COMMIT');
+    return { conexao, reuso: false, gravado: lead?.id != null };
+  } catch (e) {
+    await db.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally { db.release(); }
+}
+
+// Menor carga; empate → a que recebeu lead há mais tempo (nunca recebeu = primeiro).
+function escolherMenorCarga(lista, porId) {
+  const t = d => (d ? new Date(d).getTime() : 0);
+  return [...lista].sort((a, b) => {
+    const ca = porId.get(a.id), cb = porId.get(b.id);
+    return ((ca?.carga || 0) - (cb?.carga || 0)) || (t(ca?.ultimo) - t(cb?.ultimo));
+  })[0];
+}
+
+module.exports = { MODOS, PESO_MAX, normalizarConexoes, elegiveis, escolherPonderada, escolherMenorCarga, config, escolher };
