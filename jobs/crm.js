@@ -172,6 +172,18 @@ module.exports = async function crm(job, pool, queues) {
       await gk.enviarNotaInterna(backend, auth, tk.ticketId, gk.montarBriefing(empresa, lead, extras));
       nota = true;
     }
+    // Acompanhamento do atendimento (jobs/atendimento.js): com o ticket em
+    // mãos, o Hunter sabe em que fila o lead está e se alguém já pegou. Ticket
+    // que já estava em atendimento entra como tal; sem ticket, não há o que
+    // acompanhar.
+    if (tk.ticketId) {
+      const emAtendimento = tk.motivo === 'ticket_open';
+      await pool.query(
+        `UPDATE leads SET crm_ticket_id=$2, crm_fila_id=$3, crm_numero=$4, crm_atendimento=$5,
+                crm_atendimento_em=now(), crm_checado_em=now() WHERE id=$1`,
+        [lead_id, String(tk.ticketId), emAtendimento ? null : String(queueId), contato.number || null,
+         emAtendimento ? 'em_atendimento' : 'aguardando']);
+    }
     resultadoGk = { contactId, ticketId: tk.ticketId, fila_aplicada: tk.filaAplicada, nota_briefing: nota,
                     fila: { id: String(queueId), origem: origemFila },
                     ...(conexao ? { conexao: { id: conexao.id, nome: conexao.nome } } : {}),

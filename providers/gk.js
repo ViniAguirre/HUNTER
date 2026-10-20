@@ -328,13 +328,20 @@ function extrairTicket(data) {
 // ticket nesta conexão, nada acontece"), acha o ticket pelos tickets do
 // contato. Devolve o ticket ainda aberto mais recente (Aguardando primeiro); quem
 // chama decide se mexe — um em atendimento é de alguém e fica como está.
+// Todos os tickets do contato, em todas as conexões (doc: GET
+// /api/contacts/alltickets, com o número no corpo). Erro sobe pra quem chama.
+async function ticketsDoContato(backend, token, number) {
+  const { data } = await comAuth(backend, token, (c) =>
+    c.request({ method: 'GET', url: '/api/contacts/alltickets', data: { number } }), ['bearer', 'raw']);
+  const lista = Array.isArray(data) ? data : (data?.tickets || data?.data || []);
+  return lista.map(extrairTicket).filter(Boolean);
+}
+
 async function acharTicketPendente(backend, token, { contactId, number, whatsappId }) {
   if (!number) return null;
   try {
-    const { data } = await comAuth(backend, token, (c) =>
-      c.request({ method: 'GET', url: '/api/contacts/alltickets', data: { number } }), ['bearer', 'raw']);
-    const lista = Array.isArray(data) ? data : (data?.tickets || data?.data || []);
-    const candidatos = lista.map(extrairTicket).filter(t => t && t.status !== 'closed'
+    const lista = await ticketsDoContato(backend, token, number);
+    const candidatos = lista.filter(t => t && t.status !== 'closed'
       && (t.contactId == null || String(t.contactId) === String(contactId))
       // A lista traz os tickets do contato em TODAS as conexões; com a
       // distribuição, só serve o da conexão sorteada.
@@ -528,5 +535,5 @@ function montarContato(empresa, lead, extras = {}) {
   return contato;
 }
 
-module.exports = { listarEmpresas, listarFilas, listarConexoes, comConexao, upsertContato, criarContato, buscarContato, mesclarContato, contatoJaExistente,
+module.exports = { listarEmpresas, listarFilas, listarConexoes, comConexao, upsertContato, criarContato, buscarContato, mesclarContato, contatoJaExistente, ticketsDoContato,
   abrirTicket, montarContato, montarBriefing, enviarNotaInterna, checarRotaContato, normalizarNumero, EP_CONTATO, EP_CONTATO_ALT };

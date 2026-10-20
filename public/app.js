@@ -7657,6 +7657,191 @@ const STATUS_CONEXAO = {
 // Distribuição dos leads entre as conexões (números de WhatsApp) do CRM GK.
 // Só aparece com o CRM GK ativo. Cada lead enviado vai pra uma conexão marcada,
 // em rodízio ou por sorteio ponderado.
+// Quantos leads do Hunter cada fila do CRM ainda tem sem atendimento. O lead
+// sai da conta quando alguém começa a atender no CRM (o servidor confere o
+// ticket a cada poucos minutos, ou o CRM avisa na hora).
+function FilasAtendimento() {
+  const [d, setD] = useState(null);
+  const [carregando, setCarregando] = useState(false);
+  const carregar = () => {
+    setCarregando(true);
+    return fetch('/api/estrategia/filas-atendimento', {
+      credentials: 'same-origin'
+    }).then(r => r.ok ? r.json() : null).then(x => x && setD(x)).catch(() => {}).finally(() => setCarregando(false));
+  };
+  useEffect(() => {
+    carregar();
+    const t = setInterval(carregar, 60000);
+    return () => clearInterval(t);
+  }, []);
+  if (!d?.gk) return null;
+  const filas = d.filas || [];
+  const max = Math.max(1, ...filas.map(f => f.aguardando));
+  let conferido = null;
+  if (d.conferido_em) {
+    const min = Math.max(0, Math.round((Date.now() - new Date(d.conferido_em).getTime()) / 60000));
+    conferido = min < 1 ? 'agora há pouco' : min < 60 ? `há ${min} min` : `há ${Math.round(min / 60)} h`;
+  }
+  return /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'var(--panel)',
+      border: '1px solid var(--border)',
+      borderRadius: 14,
+      padding: 20,
+      marginBottom: 18
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'flex-start',
+      gap: 14,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: '1 1 320px',
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 15,
+      fontWeight: 600,
+      marginBottom: 6
+    }
+  }, "Leads aguardando atendimento, por fila do CRM"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: 'var(--dim)',
+      lineHeight: 1.5
+    }
+  }, "Quantos leads enviados pelo Hunter ainda est\xE3o em cada fila sem ningu\xE9m atendendo. Quando algu\xE9m come\xE7a o atendimento no CRM, o lead sai da conta.")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      textAlign: 'right'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 26,
+      fontWeight: 700,
+      color: d.total_aguardando ? C.gold : 'var(--dim)',
+      lineHeight: 1
+    }
+  }, d.total_aguardando), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--faint)',
+      marginTop: 4
+    }
+  }, "aguardando no total"))), d.erro_filas && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: C.amber,
+      marginTop: 10
+    }
+  }, "N\xE3o consegui buscar os nomes das filas no CRM agora."), /*#__PURE__*/React.createElement("div", {
+    style: {
+      marginTop: 14
+    }
+  }, !filas.length && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--faint)'
+    }
+  }, "O CRM n\xE3o devolveu nenhuma fila."), filas.map(f => /*#__PURE__*/React.createElement("div", {
+    key: f.id,
+    "data-fila": f.id,
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 12,
+      padding: '9px 0',
+      borderTop: '1px solid var(--border)',
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: '1 1 180px',
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 13,
+      fontWeight: 500,
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap'
+    },
+    title: f.nome
+  }, f.nome, f.sumiu && /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: C.red,
+      fontWeight: 400
+    }
+  }, " \xB7 n\xE3o existe mais no CRM")), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--faint)',
+      marginTop: 2
+    }
+  }, f.atendidos_24h ? `${f.atendidos_24h} começaram a ser atendidos nas últimas 24 h` : 'nenhum atendimento iniciado nas últimas 24 h')), /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: '0 1 180px',
+      height: 6,
+      borderRadius: 3,
+      background: 'var(--panel2)',
+      overflow: 'hidden',
+      minWidth: 80
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      width: `${Math.round(100 * f.aguardando / max)}%`,
+      height: '100%',
+      background: C.gold
+    }
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      minWidth: 110,
+      textAlign: 'right',
+      fontSize: 13
+    }
+  }, /*#__PURE__*/React.createElement("b", {
+    style: {
+      fontSize: 16,
+      color: f.aguardando ? 'var(--text)' : 'var(--faint)'
+    }
+  }, f.aguardando), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)',
+      fontSize: 12
+    }
+  }, " aguardando"))))), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      marginTop: 10,
+      fontSize: 11.5,
+      color: 'var(--faint)',
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      flex: 1
+    }
+  }, conferido ? `Última conferência no CRM ${conferido}.` : 'Ainda sem conferência no CRM.', " O Hunter confere os tickets a cada poucos minutos."), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: carregar,
+    disabled: carregando,
+    style: {
+      background: 'none',
+      border: 'none',
+      padding: 0,
+      color: C.gold,
+      fontSize: 12,
+      cursor: 'pointer',
+      fontFamily: 'inherit'
+    }
+  }, carregando ? 'Atualizando…' : 'Atualizar')));
+}
 function DistribuicaoCrm({
   plano,
   user,
@@ -7927,7 +8112,11 @@ function DistribuicaoCrm({
       style: {
         color: c.sumiu ? C.red : stCor
       }
-    }, "\u25CF ", c.sumiu ? 'não existe mais no CRM' : stTxt), c.numero && /*#__PURE__*/React.createElement("span", null, "\xB7 ", c.numero), /*#__PURE__*/React.createElement("span", null, "\xB7 ", c.enviados_30d, " lead(s) em 30 dias"))), c.ativo && filas.length > 0 && /*#__PURE__*/React.createElement("label", {
+    }, "\u25CF ", c.sumiu ? 'não existe mais no CRM' : stTxt), c.numero && /*#__PURE__*/React.createElement("span", null, "\xB7 ", c.numero), /*#__PURE__*/React.createElement("span", null, "\xB7 ", c.enviados_30d, " lead(s) em 30 dias"), c.aguardando > 0 && /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: C.gold
+      }
+    }, "\xB7 ", c.aguardando, " aguardando atendimento"))), c.ativo && filas.length > 0 && /*#__PURE__*/React.createElement("label", {
       style: {
         display: 'flex',
         alignItems: 'center',
@@ -8329,7 +8518,7 @@ function Estrategia({
     crm: d.crm,
     salvando: salvando,
     onSalvar: corpo => enviar('/api/estrategia', 'PATCH', corpo)
-  })), d.crm?.provedor === 'gk' && /*#__PURE__*/React.createElement(DistribuicaoCrm, {
+  })), d.crm?.provedor === 'gk' && /*#__PURE__*/React.createElement(FilasAtendimento, null), d.crm?.provedor === 'gk' && /*#__PURE__*/React.createElement(DistribuicaoCrm, {
     plano: plano,
     user: user,
     salvando: salvando,

@@ -50,6 +50,7 @@ const crmFn = require('./jobs/crm');
 const trackingFn = require('./jobs/tracking');
 const avaliacaoListaFn = require('./jobs/avaliacao-lista');
 const estrategia = require('./jobs/estrategia');
+const atendimento = require('./jobs/atendimento');
 
 // Preenchido só DEPOIS da trava anti-superuser passar (ver boot() no fim) —
 // nenhum job é consumido antes de confirmar que o RLS vale pro usuário do banco.
@@ -104,6 +105,9 @@ async function runScheduler() {
   } catch (err) {
     console.error('[estrategia] erro:', err.message);
   }
+  // Atendimento no CRM: confere uma leva de leads enviados que ainda estão
+  // aguardando. Não espera — uma consulta lenta ao CRM não atrasa o disparo.
+  atendimento.verificar(pool).catch(err => console.error('[atendimento] erro:', err.message));
   try {
     const { rows: buscas } = await pool.query(
       `SELECT id, criterios, ultimo_heartbeat FROM buscas WHERE status='Ativa'`

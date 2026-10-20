@@ -3530,6 +3530,82 @@ const STATUS_CONEXAO = { CONNECTED: ['conectada', C.green], OPENING: ['abrindo',
 // Distribuição dos leads entre as conexões (números de WhatsApp) do CRM GK.
 // Só aparece com o CRM GK ativo. Cada lead enviado vai pra uma conexão marcada,
 // em rodízio ou por sorteio ponderado.
+// Quantos leads do Hunter cada fila do CRM ainda tem sem atendimento. O lead
+// sai da conta quando alguém começa a atender no CRM (o servidor confere o
+// ticket a cada poucos minutos, ou o CRM avisa na hora).
+function FilasAtendimento() {
+  const [d, setD] = useState(null);
+  const [carregando, setCarregando] = useState(false);
+  const carregar = () => {
+    setCarregando(true);
+    return fetch('/api/estrategia/filas-atendimento', { credentials:'same-origin' })
+      .then(r => r.ok ? r.json() : null).then(x => x && setD(x)).catch(() => {})
+      .finally(() => setCarregando(false));
+  };
+  useEffect(() => {
+    carregar();
+    const t = setInterval(carregar, 60000);
+    return () => clearInterval(t);
+  }, []);
+  if (!d?.gk) return null;
+  const filas = d.filas || [];
+  const max = Math.max(1, ...filas.map(f => f.aguardando));
+  let conferido = null;
+  if (d.conferido_em) {
+    const min = Math.max(0, Math.round((Date.now() - new Date(d.conferido_em).getTime()) / 60000));
+    conferido = min < 1 ? 'agora há pouco' : min < 60 ? `há ${min} min` : `há ${Math.round(min / 60)} h`;
+  }
+  return (
+    <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:20, marginBottom:18 }}>
+      <div style={{ display:'flex', alignItems:'flex-start', gap:14, flexWrap:'wrap' }}>
+        <div style={{ flex:'1 1 320px', minWidth:0 }}>
+          <div style={{ fontSize:15, fontWeight:600, marginBottom:6 }}>Leads aguardando atendimento, por fila do CRM</div>
+          <div style={{ fontSize:12.5, color:'var(--dim)', lineHeight:1.5 }}>
+            Quantos leads enviados pelo Hunter ainda estão em cada fila sem ninguém atendendo.
+            Quando alguém começa o atendimento no CRM, o lead sai da conta.
+          </div>
+        </div>
+        <div style={{ textAlign:'right' }}>
+          <div style={{ fontSize:26, fontWeight:700, color: d.total_aguardando ? C.gold : 'var(--dim)', lineHeight:1 }}>{d.total_aguardando}</div>
+          <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:4 }}>aguardando no total</div>
+        </div>
+      </div>
+      {d.erro_filas && <div style={{ fontSize:12, color:C.amber, marginTop:10 }}>Não consegui buscar os nomes das filas no CRM agora.</div>}
+      <div style={{ marginTop:14 }}>
+        {!filas.length && <div style={{ fontSize:12, color:'var(--faint)' }}>O CRM não devolveu nenhuma fila.</div>}
+        {filas.map(f => (
+          <div key={f.id} data-fila={f.id} style={{ display:'flex', alignItems:'center', gap:12, padding:'9px 0', borderTop:'1px solid var(--border)', flexWrap:'wrap' }}>
+            <div style={{ flex:'1 1 180px', minWidth:0 }}>
+              <div style={{ fontSize:13, fontWeight:500, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }} title={f.nome}>
+                {f.nome}{f.sumiu && <span style={{ color:C.red, fontWeight:400 }}> · não existe mais no CRM</span>}
+              </div>
+              <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:2 }}>
+                {f.atendidos_24h ? `${f.atendidos_24h} começaram a ser atendidos nas últimas 24 h` : 'nenhum atendimento iniciado nas últimas 24 h'}
+              </div>
+            </div>
+            <div style={{ flex:'0 1 180px', height:6, borderRadius:3, background:'var(--panel2)', overflow:'hidden', minWidth:80 }}>
+              <div style={{ width:`${Math.round(100 * f.aguardando / max)}%`, height:'100%', background:C.gold }}/>
+            </div>
+            <div style={{ minWidth:110, textAlign:'right', fontSize:13 }}>
+              <b style={{ fontSize:16, color: f.aguardando ? 'var(--text)' : 'var(--faint)' }}>{f.aguardando}</b>
+              <span style={{ color:'var(--faint)', fontSize:12 }}> aguardando</span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{ display:'flex', alignItems:'center', gap:10, marginTop:10, fontSize:11.5, color:'var(--faint)', flexWrap:'wrap' }}>
+        <span style={{ flex:1 }}>
+          {conferido ? `Última conferência no CRM ${conferido}.` : 'Ainda sem conferência no CRM.'} O Hunter confere os tickets a cada poucos minutos.
+        </span>
+        <button type="button" onClick={carregar} disabled={carregando}
+          style={{ background:'none', border:'none', padding:0, color:C.gold, fontSize:12, cursor:'pointer', fontFamily:'inherit' }}>
+          {carregando ? 'Atualizando…' : 'Atualizar'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function DistribuicaoCrm({ plano, user, salvando, onSalvar }) {
   const [dados, setDados] = useState(null);
   const [carregando, setCarregando] = useState(true);
@@ -3637,6 +3713,7 @@ function DistribuicaoCrm({ plano, user, salvando, onSalvar }) {
                   <span style={{ color: c.sumiu ? C.red : stCor }}>● {c.sumiu ? 'não existe mais no CRM' : stTxt}</span>
                   {c.numero && <span>· {c.numero}</span>}
                   <span>· {c.enviados_30d} lead(s) em 30 dias</span>
+                  {c.aguardando > 0 && <span style={{ color:C.gold }}>· {c.aguardando} aguardando atendimento</span>}
                 </div>
               </div>
               {c.ativo && filas.length > 0 && (
@@ -3820,6 +3897,9 @@ function Estrategia({ onNovaPauta, onEditarPauta, onUsarRadar, onAbrirRadar, use
         <ControleCrm plano={plano} crm={d.crm} salvando={salvando}
           onSalvar={corpo => enviar('/api/estrategia', 'PATCH', corpo)}/>
       </div>
+
+      {/* ── Filas do CRM: leads aguardando atendimento (só CRM GK) ─────── */}
+      {d.crm?.provedor === 'gk' && <FilasAtendimento/>}
 
       {/* ── Distribuição entre conexões (só CRM GK) ────────────────────── */}
       {d.crm?.provedor === 'gk' && (
