@@ -17,6 +17,7 @@ const { TENANT_ID, TENANT_LEGADO, ligarTenantNoPool, exigirRlsEnforcavel, tenant
 const { normalizarTags, normalizarListaCrm } = require('./tags');
 const { swotSemOrigem, contatoSemOrigem } = require('./sigilo');
 const { jaNoCrmSql } = require('./jobs/crm');
+const { estadoDoStatus } = require('./jobs/atendimento');
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'troque-este-segredo';
@@ -719,6 +720,16 @@ async function init() {
     -- Conexão do CRM que recebeu o lead (distribuição).
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS crm_conexao_id   TEXT;
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS crm_conexao_nome TEXT;
+    -- Atendimento no CRM GK: o ticket aberto pro lead, a fila em que ele está e
+    -- se alguém já pegou (aguardando → em_atendimento → finalizado). É o que a
+    -- Estratégia mostra por fila (jobs/atendimento.js atualiza).
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS crm_ticket_id      TEXT;
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS crm_fila_id        TEXT;
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS crm_numero         TEXT;
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS crm_atendimento    TEXT;
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS crm_atendimento_em TIMESTAMPTZ;
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS crm_checado_em     TIMESTAMPTZ;
+    CREATE INDEX IF NOT EXISTS idx_leads_crm_aguardando ON leads(crm_fila_id) WHERE crm_atendimento = 'aguardando';
     -- Expansão automática: acabadas as regiões, o piloto escolhe a próxima.
     ALTER TABLE estrategia_pautas ADD COLUMN IF NOT EXISTS expandir         BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE estrategia_pautas ADD COLUMN IF NOT EXISTS expandir_max     INTEGER NOT NULL DEFAULT 5;
@@ -1921,6 +1932,10 @@ app.get('/api/estrategia/conexoes', requireAuth, async (req, res) => {
         WHERE crm_conexao_id IS NOT NULL AND enviado_crm_em >= now() - interval '30 days'
         GROUP BY crm_conexao_id`);
     const enviados = Object.fromEntries(contagem.map(r => [r.id, r.n]));
+    const { rows: espera } = await pool.query(
+      `SELECT crm_conexao_id AS id, COUNT(*)::int AS n FROM leads
+        WHERE crm_conexao_id IS NOT NULL AND crm_atendimento = 'aguardando' GROUP BY crm_conexao_id`);
+    const aguardando = Object.fromEntries(espera.map(r => [r.id, r.n]));
     let doCrm = [], erro = null;
     // Quem lista as conexões. O Token da Empresa, em algumas instalações do GK,
     // não vale sozinho em NENHUMA rota — nem nesta, que só lê: o CRM responde
@@ -1943,7 +1958,8 @@ app.get('/api/estrategia/conexoes', requireAuth, async (req, res) => {
     const porId = new Map(salvas.map(c => [String(c.id), c]));
     const conexoes = doCrm.map(c => {
       const s = porId.get(c.id);
-      return { ...c, ativo: !!s?.ativo, peso: s?.peso || 1, fila: s?.fila || null, enviados_30d: enviados[c.id] || 0 };
+      return { ...c, ativo: !!s?.ativo, peso: s?.peso || 1, fila: s?.fila || null, enviados_30d: enviados[c.id] || 0,
+               aguardando: aguardando[c.id] || 0 };
     });
     for (const s of salvas) {
       if (!doCrm.some(c => c.id === String(s.id))) {
@@ -3277,6 +3293,73 @@ app.post('/api/webhooks/crm/tags', webhookLimiter, async (req, res) => {
     const { tags, ignoradas } = normalizarListaCrm(b.tags);
     await pool.query(`UPDATE config SET crm_tags_regras=$1::text[], crm_tags_regras_em=now()`, [tags]);
     res.json({ ok: true, total: tags.length, tags, ...(ignoradas.length ? { ignoradas } : {}) });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// Leads do Hunter em cada fila do CRM GK que ainda não começaram a ser
+// atendidos (jobs/atendimento.js confere no CRM; o webhook abaixo adianta).
+// Lista todas as filas do CRM, inclusive as zeradas — é assim que se vê se a
+// divisão entre elas está equilibrada.
+app.get('/api/estrategia/filas-atendimento', requireAuth, async (req, res) => {
+  try {
+    const { rows: [ig] } = await pool.query(
+      `SELECT key_cifrada, config FROM integracoes
+        WHERE categoria='crm' AND provedor='gk' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> '' LIMIT 1`);
+    if (!ig?.config?.backend) return res.json({ gk: false, filas: [] });
+    const [doCrm, { rows: cont }, { rows: [ult] }] = await Promise.all([
+      gk.listarFilas(ig.config.backend, ig.key_cifrada).catch(() => null),
+      pool.query(
+        `SELECT crm_fila_id AS id,
+                COUNT(*) FILTER (WHERE crm_atendimento = 'aguardando')::int AS aguardando,
+                COUNT(*) FILTER (WHERE crm_atendimento IN ('em_atendimento','finalizado')
+                                   AND crm_atendimento_em >= now() - interval '24 hours')::int AS atendidos_24h
+           FROM leads WHERE crm_fila_id IS NOT NULL GROUP BY crm_fila_id`),
+      pool.query(`SELECT max(crm_checado_em) AS em,
+                         COUNT(*) FILTER (WHERE crm_atendimento = 'aguardando' AND crm_fila_id IS NULL)::int AS sem_fila
+                    FROM leads WHERE crm_ticket_id IS NOT NULL`),
+    ]);
+    const porId = new Map(cont.map(r => [String(r.id), r]));
+    const filas = (doCrm || []).map(f => {
+      const c = porId.get(String(f.id)); porId.delete(String(f.id));
+      return { id: String(f.id), nome: f.queue, aguardando: c?.aguardando || 0, atendidos_24h: c?.atendidos_24h || 0 };
+    });
+    // Fila que tem lead do Hunter mas não veio do CRM (apagada, ou o CRM não
+    // respondeu): continua na conta, senão os números não fechariam.
+    for (const [id, c] of porId) {
+      if (c.aguardando || c.atendidos_24h) filas.push({ id, nome: `Fila ${id}`, aguardando: c.aguardando, atendidos_24h: c.atendidos_24h, sumiu: !!doCrm });
+    }
+    res.json({ gk: true, filas, total_aguardando: filas.reduce((t, f) => t + f.aguardando, 0),
+               conferido_em: ult?.em || null, erro_filas: doCrm ? null : 'não consegui listar as filas no CRM' });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// O CRM avisa na hora que um ticket do Hunter mudou (alguém pegou, resolveu,
+// trocou de fila). Opcional: sem ele, a conferência periódica pega a mudança
+// em poucos minutos. Identifica o lead pelo hunter_ref ou pelo id do ticket.
+app.post('/api/webhooks/crm/atendimento', webhookLimiter, async (req, res) => {
+  try {
+    const { rows: [cfg] } = await pool.query(`SELECT webhook_entrada_secret FROM config`);
+    const secret = cfg?.webhook_entrada_secret;
+    if (!secret) return res.status(503).json({ erro: 'webhook de entrada não configurado' });
+    const token = req.get('x-hunter-token') || req.query.token;
+    if (token !== secret) return res.status(401).json({ erro: 'token inválido' });
+
+    const b = req.body || {};
+    const ref = String(b.hunter_ref || '').trim();
+    const ticket = String(b.ticket_id ?? b.ticketId ?? '').trim();
+    const estado = estadoDoStatus(b.status);
+    if (!ref && !ticket) return res.status(400).json({ erro: 'envie "hunter_ref" ou "ticket_id"' });
+    if (!estado) return res.status(400).json({ erro: 'envie "status": pending, open ou closed' });
+    const fila = b.fila_id ?? b.queueId ?? b.queue_id;
+    const { rowCount } = await pool.query(
+      `UPDATE leads SET crm_atendimento_em = CASE WHEN crm_atendimento IS DISTINCT FROM $3 THEN now() ELSE crm_atendimento_em END,
+              crm_atendimento=$3, crm_checado_em=now(),
+              crm_fila_id = COALESCE($4, crm_fila_id),
+              crm_ticket_id = COALESCE(crm_ticket_id, NULLIF($2, ''))
+        WHERE enviado_crm_em IS NOT NULL
+          AND (($1 <> '' AND crm_ref = $1) OR ($2 <> '' AND crm_ticket_id = $2))`,
+      [ref, ticket, estado, fila != null && String(fila).trim() !== '' ? String(fila).trim().slice(0, 40) : null]);
+    res.json({ ok: true, atualizados: rowCount, estado });
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
