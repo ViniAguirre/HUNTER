@@ -3563,6 +3563,9 @@ function FilasAtendimento() {
           <div style={{ fontSize:12.5, color:'var(--dim)', lineHeight:1.5 }}>
             Quantos leads enviados pelo Hunter ainda estão em cada fila sem ninguém atendendo.
             Quando alguém começa o atendimento no CRM, o lead sai da conta.
+            {d.origem === 'distribuicao'
+              ? ' Mostra as filas das conexões marcadas na distribuição.'
+              : ' Mostra as filas que o Hunter usa (a padrão e as dos radares).'}
           </div>
         </div>
         <div style={{ textAlign:'right' }}>
@@ -3572,7 +3575,7 @@ function FilasAtendimento() {
       </div>
       {d.erro_filas && <div style={{ fontSize:12, color:C.amber, marginTop:10 }}>Não consegui buscar os nomes das filas no CRM agora.</div>}
       <div style={{ marginTop:14 }}>
-        {!filas.length && <div style={{ fontSize:12, color:'var(--faint)' }}>O CRM não devolveu nenhuma fila.</div>}
+        {!filas.length && <div style={{ fontSize:12, color:'var(--faint)' }}>Nenhuma fila definida para os leads do Hunter.</div>}
         {filas.map(f => (
           <div key={f.id} data-fila={f.id} style={{ display:'flex', alignItems:'center', gap:12, padding:'9px 0', borderTop:'1px solid var(--border)', flexWrap:'wrap' }}>
             <div style={{ flex:'1 1 180px', minWidth:0 }}>
@@ -3595,6 +3598,7 @@ function FilasAtendimento() {
       </div>
       <div style={{ display:'flex', alignItems:'center', gap:10, marginTop:10, fontSize:11.5, color:'var(--faint)', flexWrap:'wrap' }}>
         <span style={{ flex:1 }}>
+          {d.outras_filas_aguardando > 0 && <>Mais {d.outras_filas_aguardando} aguardando em filas fora desta lista. </>}
           {conferido ? `Última conferência no CRM ${conferido}.` : 'Ainda sem conferência no CRM.'} O Hunter confere os tickets a cada poucos minutos.
         </span>
         <button type="button" onClick={carregar} disabled={carregando}
