@@ -3298,15 +3298,18 @@ app.post('/api/webhooks/crm/tags', webhookLimiter, async (req, res) => {
 
 // Leads do Hunter em cada fila do CRM GK que ainda não começaram a ser
 // atendidos (jobs/atendimento.js confere no CRM; o webhook abaixo adianta).
-// Lista todas as filas do CRM, inclusive as zeradas — é assim que se vê se a
-// divisão entre elas está equilibrada.
+// Só as filas do Hunter: com a distribuição ligada, as das conexões marcadas
+// (na ordem delas, inclusive as zeradas — é assim que se vê se a divisão está
+// equilibrada); sem ela, a padrão de Integrações, as dos radares e as que têm
+// lead do Hunter. Os setores do CRM que o Hunter não usa ficam de fora.
 app.get('/api/estrategia/filas-atendimento', requireAuth, async (req, res) => {
   try {
     const { rows: [ig] } = await pool.query(
       `SELECT key_cifrada, config FROM integracoes
         WHERE categoria='crm' AND provedor='gk' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> '' LIMIT 1`);
     if (!ig?.config?.backend) return res.json({ gk: false, filas: [] });
-    const [doCrm, { rows: cont }, { rows: [ult] }] = await Promise.all([
+    await planoEstrategia();
+    const [doCrm, { rows: cont }, { rows: [ult] }, { rows: [est] }, { rows: radares }] = await Promise.all([
       gk.listarFilas(ig.config.backend, ig.key_cifrada).catch(() => null),
       pool.query(
         `SELECT crm_fila_id AS id,
@@ -3317,18 +3320,35 @@ app.get('/api/estrategia/filas-atendimento', requireAuth, async (req, res) => {
       pool.query(`SELECT max(crm_checado_em) AS em,
                          COUNT(*) FILTER (WHERE crm_atendimento = 'aguardando' AND crm_fila_id IS NULL)::int AS sem_fila
                     FROM leads WHERE crm_ticket_id IS NOT NULL`),
+      pool.query(`SELECT distrib_ativo, distrib_conexoes FROM estrategia`),
+      pool.query(`SELECT DISTINCT crm_queue_id AS id FROM buscas WHERE crm_queue_id IS NOT NULL AND crm_queue_id <> ''`),
     ]);
     const porId = new Map(cont.map(r => [String(r.id), r]));
-    const filas = (doCrm || []).map(f => {
-      const c = porId.get(String(f.id)); porId.delete(String(f.id));
-      return { id: String(f.id), nome: f.queue, aguardando: c?.aguardando || 0, atendidos_24h: c?.atendidos_24h || 0 };
-    });
-    // Fila que tem lead do Hunter mas não veio do CRM (apagada, ou o CRM não
-    // respondeu): continua na conta, senão os números não fechariam.
-    for (const [id, c] of porId) {
-      if (c.aguardando || c.atendidos_24h) filas.push({ id, nome: `Fila ${id}`, aguardando: c.aguardando, atendidos_24h: c.atendidos_24h, sumiu: !!doCrm });
+    const nomeDe = new Map((doCrm || []).map(f => [String(f.id), f.queue]));
+
+    // Quais filas entram, e em que ordem.
+    const daDistrib = est?.distrib_ativo
+      ? distribuicao.elegiveis(est.distrib_conexoes).map(c => c.fila).filter(Boolean).map(String) : [];
+    let ids;
+    if (daDistrib.length) {
+      ids = [...new Set(daDistrib)];
+    } else {
+      const usadas = new Set([ig.config.queueId, ...radares.map(r => r.id)].filter(x => x != null && x !== '').map(String));
+      for (const [id, c] of porId) if (c.aguardando || c.atendidos_24h) usadas.add(id);
+      ids = (doCrm || []).map(f => String(f.id)).filter(id => usadas.has(id));
+      for (const id of usadas) if (!ids.includes(id)) ids.push(id);
     }
+    const filas = ids.map(id => {
+      const c = porId.get(id);
+      return { id, nome: nomeDe.get(id) || `Fila ${id}`, aguardando: c?.aguardando || 0, atendidos_24h: c?.atendidos_24h || 0,
+               ...(doCrm && !nomeDe.has(id) ? { sumiu: true } : {}) };
+    });
+    // Lead do Hunter aguardando numa fila que não está na lista (ex.: conexão
+    // desmarcada da distribuição): não some sem aviso.
+    const naLista = new Set(ids);
+    const outras = cont.filter(r => !naLista.has(String(r.id))).reduce((t, r) => t + r.aguardando, 0);
     res.json({ gk: true, filas, total_aguardando: filas.reduce((t, f) => t + f.aguardando, 0),
+               outras_filas_aguardando: outras, origem: daDistrib.length ? 'distribuicao' : 'hunter',
                conferido_em: ult?.em || null, erro_filas: doCrm ? null : 'não consegui listar as filas no CRM' });
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });

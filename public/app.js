@@ -7714,7 +7714,7 @@ function FilasAtendimento() {
       color: 'var(--dim)',
       lineHeight: 1.5
     }
-  }, "Quantos leads enviados pelo Hunter ainda est\xE3o em cada fila sem ningu\xE9m atendendo. Quando algu\xE9m come\xE7a o atendimento no CRM, o lead sai da conta.")), /*#__PURE__*/React.createElement("div", {
+  }, "Quantos leads enviados pelo Hunter ainda est\xE3o em cada fila sem ningu\xE9m atendendo. Quando algu\xE9m come\xE7a o atendimento no CRM, o lead sai da conta.", d.origem === 'distribuicao' ? ' Mostra as filas das conexões marcadas na distribuição.' : ' Mostra as filas que o Hunter usa (a padrão e as dos radares).')), /*#__PURE__*/React.createElement("div", {
     style: {
       textAlign: 'right'
     }
@@ -7746,7 +7746,7 @@ function FilasAtendimento() {
       fontSize: 12,
       color: 'var(--faint)'
     }
-  }, "O CRM n\xE3o devolveu nenhuma fila."), filas.map(f => /*#__PURE__*/React.createElement("div", {
+  }, "Nenhuma fila definida para os leads do Hunter."), filas.map(f => /*#__PURE__*/React.createElement("div", {
     key: f.id,
     "data-fila": f.id,
     style: {
@@ -7827,7 +7827,7 @@ function FilasAtendimento() {
     style: {
       flex: 1
     }
-  }, conferido ? `Última conferência no CRM ${conferido}.` : 'Ainda sem conferência no CRM.', " O Hunter confere os tickets a cada poucos minutos."), /*#__PURE__*/React.createElement("button", {
+  }, d.outras_filas_aguardando > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, "Mais ", d.outras_filas_aguardando, " aguardando em filas fora desta lista. "), conferido ? `Última conferência no CRM ${conferido}.` : 'Ainda sem conferência no CRM.', " O Hunter confere os tickets a cada poucos minutos."), /*#__PURE__*/React.createElement("button", {
     type: "button",
     onClick: carregar,
     disabled: carregando,
