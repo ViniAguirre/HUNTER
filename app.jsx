@@ -301,6 +301,7 @@ const MOTIVO_SWOT = {
   ia_tempo: 'a IA demorou demais para responder. Tente de novo.',
   ia_falhou: 'a IA não respondeu. Tente de novo em alguns minutos.',
   sem_firmografia: 'faltam os dados de cadastro desta empresa. Use “Re-enriquecer” e tente de novo.',
+  sem_material: 'não há material sobre a empresa (site ou perfil) para a IA analisar — só com o cadastro a análise sairia genérica. Use “Re-enriquecer” para buscar de novo, ou cadastre o site em “Editar” e clique em “Refazer análise”.',
 };
 function briefingVazio(sw) {
   if (!sw || typeof sw !== 'object') return true;
@@ -7601,12 +7602,15 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                   automática (economia de IA) — isso não é falha. Falha de verdade
                   vem gravada pelo job, em categoria (sem nome de provedor). */}
               {briefingVazio(l.swot) && (
-                <p style={{ fontSize:12.5, lineHeight:1.55, margin:'0 0 12px', color: l.swot_erro ? C.red : 'var(--dim)' }}>
-                  {l.swot_erro
+                <p style={{ fontSize:12.5, lineHeight:1.55, margin:'0 0 12px', color: l.swot_erro && l.swot_erro !== 'sem_material' ? C.red : 'var(--dim)' }}>
+                  {l.swot_erro === 'sem_material'
+                    ? <>Análise não gerada: {MOTIVO_SWOT.sem_material}</>
+                    : l.swot_erro
                     ? <>A última tentativa de análise falhou{l.swot_erro_em ? ` (${timeAgo(l.swot_erro_em)})` : ''}: {MOTIVO_SWOT[l.swot_erro] || MOTIVO_SWOT.ia_falhou}</>
                     : l.contato_status === 'sem_contato'
-                    ? <>A análise não é gerada automaticamente para lead sem contato — economiza IA em empresa que ainda não dá pra abordar.
-                        Ela sai sozinha quando o contato for encontrado, ou clique em “Refazer análise” para gerar agora.</>
+                    ? <>A análise é feita com o material encontrado sobre a empresa (site ou perfil), e ainda não encontramos contato nem site
+                        deste lead. Ela sai sozinha quando o contato e o material forem encontrados — use “Re-enriquecer”, ou cadastre o site
+                        em “Editar” e clique em “Refazer análise”.</>
                     : <>A análise ainda não foi gerada para este lead. Clique em “Refazer análise” abaixo. Os contatos não são alterados.</>}
                 </p>
               )}

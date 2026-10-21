@@ -628,7 +628,8 @@ const MOTIVO_SWOT = {
   ia_resposta_invalida: 'a IA respondeu num formato inválido. Tente de novo.',
   ia_tempo: 'a IA demorou demais para responder. Tente de novo.',
   ia_falhou: 'a IA não respondeu. Tente de novo em alguns minutos.',
-  sem_firmografia: 'faltam os dados de cadastro desta empresa. Use “Re-enriquecer” e tente de novo.'
+  sem_firmografia: 'faltam os dados de cadastro desta empresa. Use “Re-enriquecer” e tente de novo.',
+  sem_material: 'não há material sobre a empresa (site ou perfil) para a IA analisar — só com o cadastro a análise sairia genérica. Use “Re-enriquecer” para buscar de novo, ou cadastre o site em “Editar” e clique em “Refazer análise”.'
 };
 function briefingVazio(sw) {
   if (!sw || typeof sw !== 'object') return true;
@@ -16051,9 +16052,9 @@ function LeadDetailPanel({
       fontSize: 12.5,
       lineHeight: 1.55,
       margin: '0 0 12px',
-      color: l.swot_erro ? C.red : 'var(--dim)'
+      color: l.swot_erro && l.swot_erro !== 'sem_material' ? C.red : 'var(--dim)'
     }
-  }, l.swot_erro ? /*#__PURE__*/React.createElement(React.Fragment, null, "A \xFAltima tentativa de an\xE1lise falhou", l.swot_erro_em ? ` (${timeAgo(l.swot_erro_em)})` : '', ": ", MOTIVO_SWOT[l.swot_erro] || MOTIVO_SWOT.ia_falhou) : l.contato_status === 'sem_contato' ? /*#__PURE__*/React.createElement(React.Fragment, null, "A an\xE1lise n\xE3o \xE9 gerada automaticamente para lead sem contato \u2014 economiza IA em empresa que ainda n\xE3o d\xE1 pra abordar. Ela sai sozinha quando o contato for encontrado, ou clique em \u201CRefazer an\xE1lise\u201D para gerar agora.") : /*#__PURE__*/React.createElement(React.Fragment, null, "A an\xE1lise ainda n\xE3o foi gerada para este lead. Clique em \u201CRefazer an\xE1lise\u201D abaixo. Os contatos n\xE3o s\xE3o alterados.")), l.swot.resumo && /*#__PURE__*/React.createElement("p", {
+  }, l.swot_erro === 'sem_material' ? /*#__PURE__*/React.createElement(React.Fragment, null, "An\xE1lise n\xE3o gerada: ", MOTIVO_SWOT.sem_material) : l.swot_erro ? /*#__PURE__*/React.createElement(React.Fragment, null, "A \xFAltima tentativa de an\xE1lise falhou", l.swot_erro_em ? ` (${timeAgo(l.swot_erro_em)})` : '', ": ", MOTIVO_SWOT[l.swot_erro] || MOTIVO_SWOT.ia_falhou) : l.contato_status === 'sem_contato' ? /*#__PURE__*/React.createElement(React.Fragment, null, "A an\xE1lise \xE9 feita com o material encontrado sobre a empresa (site ou perfil), e ainda n\xE3o encontramos contato nem site deste lead. Ela sai sozinha quando o contato e o material forem encontrados \u2014 use \u201CRe-enriquecer\u201D, ou cadastre o site em \u201CEditar\u201D e clique em \u201CRefazer an\xE1lise\u201D.") : /*#__PURE__*/React.createElement(React.Fragment, null, "A an\xE1lise ainda n\xE3o foi gerada para este lead. Clique em \u201CRefazer an\xE1lise\u201D abaixo. Os contatos n\xE3o s\xE3o alterados.")), l.swot.resumo && /*#__PURE__*/React.createElement("p", {
     style: {
       fontSize: 13,
       lineHeight: 1.6,

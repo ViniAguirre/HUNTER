@@ -7,6 +7,13 @@
  * gasto, sem erro) — a formulação da abordagem em si é feita no CRM, não aqui.
  */
 const openai = require('../providers/openai');
+const google = require('../providers/google');
+
+// O agente só analisa com MATERIAL sobre a empresa: o texto do site dela (ou do
+// perfil na rede social). Só com o cadastro da Receita, a análise sai genérica
+// — e um closer não confia em SWOT que serve pra qualquer empresa do ramo.
+const MATERIAL_MIN = 40;
+const temMaterial = cv => String(cv?.resumo_site || '').trim().length >= MATERIAL_MIN;
 const { swotSemOrigem } = require('../sigilo');
 
 // Rótulos do fichamento comercial (tela "Agente SWOT", master). Precisa casar
@@ -90,13 +97,25 @@ module.exports = async function swot(job, pool, queues) {
       pool.query(`SELECT prova FROM decisoes_jev WHERE tipo='score1' AND busca_id=$1 AND cnpj=$2
                   AND prova IS NOT NULL ORDER BY id DESC LIMIT 1`, [busca_id, cnpj]).catch(() => ({ rows: [] })),
     ]);
-    if (empresa) {
+    let cvLead = lead?.contato_validado || {};
+    // Site cadastrado à mão (ou achado sem texto): lê agora pra ter material.
+    if (empresa && !temMaterial(cvLead) && cvLead.website) {
+      const s = await google.scrapeSite(cvLead.website).catch(() => null);
+      if (s?.resumo && s.resumo.trim().length >= MATERIAL_MIN) {
+        cvLead = { ...cvLead, resumo_site: s.resumo, resumo_fonte: s.resumo_fonte || 'home' };
+        await pool.query(`UPDATE leads SET contato_validado=$2::jsonb WHERE id=$1`, [lead_id, JSON.stringify(cvLead)]);
+      }
+    }
+    if (empresa && !temMaterial(cvLead)) {
+      console.log(`[swot] lead ${lead_id} (${cnpj}): sem material da empresa (site/perfil) — análise não gerada.`);
+      await registrarFalha(pool, lead_id, 'sem_material');
+    } else if (empresa) {
       const crit = busca?.criterios || {};
       const contexto = crit.params?.proposta_valor || crit.proposta_valor || crit.texto || '';
       // Contato validado (Google/Econodata) traz o resumo REAL do site da empresa
       // — dá ao agente algo específico pra falar, além do CNAE genérico. O
       // breakdown do Score 1 fundamenta a análise em POR QUE essa empresa deu match.
-      const cv = lead?.contato_validado || {};
+      const cv = cvLead;
       const perfilEmpresa = {
         resumoSite: cv.resumo_site || null, siteValidado: !!cv.validado, fonteContato: cv.fonte || null,
         score: lead?.score ?? null, breakdown: Array.isArray(lead?.breakdown) ? lead.breakdown : [],
