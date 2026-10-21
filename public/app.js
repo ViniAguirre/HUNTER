@@ -8173,7 +8173,20 @@ function ControleCrm({
     style: {
       color: 'var(--faint)'
     }
-  }, "O CRM ainda n\xE3o enviou nenhum aviso.", plano.crm_controle ? ' Enquanto isso, o piloto não abre radar novo.' : '')), !contaHunter && /*#__PURE__*/React.createElement("button", {
+  }, "O CRM ainda n\xE3o enviou nenhum aviso.", plano.crm_controle ? ' Enquanto isso, o piloto não abre radar novo.' : '')), plano.crm_controle && (porFila ? liberaFila : temAviso && n <= g) && (() => {
+    const est = String(plano.estado || '');
+    const abrindo = /^(abriu|retomou|continuou|expandiu|recome[cç]ou)/.test(est);
+    if (plano.ativo && (abrindo || !est)) return null;
+    const dica = !plano.ativo ? 'Ligue o piloto automático no topo desta tela.' : /linha editorial conclu/.test(est) ? 'Todas as regiões das pautas já foram varridas: adicione regiões, ligue a expansão automática na pauta ou escolha "Recomeçar" em "Quando a linha editorial acabar".' : /rodando/.test(est) ? 'O limite de "Radares rodando ao mesmo tempo" está cheio: aumente o número ou espere um radar esgotar.' : /nenhuma pauta/.test(est) ? 'Nenhuma pauta vale neste período: confira as semanas/meses das pautas.' : null;
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        marginTop: 8,
+        color: C.amber,
+        lineHeight: 1.5
+      }
+    }, plano.ativo ? /*#__PURE__*/React.createElement(React.Fragment, null, "A fila libera, mas o piloto n\xE3o abriu radar: ", /*#__PURE__*/React.createElement("b", null, est.replace(/^aguardando:\s*/, '')), ".") : /*#__PURE__*/React.createElement(React.Fragment, null, "A fila libera, mas o piloto autom\xE1tico est\xE1 desligado."), dica && /*#__PURE__*/React.createElement(React.Fragment, null, " ", dica));
+  })(), !contaHunter && /*#__PURE__*/React.createElement("button", {
     type: "button",
     onClick: () => setMostrarComo(v => !v),
     style: {

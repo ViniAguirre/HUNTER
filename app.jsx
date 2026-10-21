@@ -3796,6 +3796,26 @@ function ControleCrm({ plano, crm, salvando, onSalvar }) {
                 <span style={{ color:'var(--faint)' }}> · {timeAgo(plano.crm_fila_em)} · {n <= g ? 'libera radar novo' : 'segura radar novo'}</span></>
             : <span style={{ color:'var(--faint)' }}>O CRM ainda não enviou nenhum aviso.{plano.crm_controle ? ' Enquanto isso, o piloto não abre radar novo.' : ''}</span>}
         </div>
+        {/* A fila libera, mas outro portão do piloto segura: diz qual. Sem isso
+            a tela dizia "libera radar novo" e nada acontecia. */}
+        {plano.crm_controle && (porFila ? liberaFila : (temAviso && n <= g)) && (() => {
+          const est = String(plano.estado || '');
+          const abrindo = /^(abriu|retomou|continuou|expandiu|recome[cç]ou)/.test(est);
+          if (plano.ativo && (abrindo || !est)) return null;
+          const dica = !plano.ativo ? 'Ligue o piloto automático no topo desta tela.'
+            : /linha editorial conclu/.test(est) ? 'Todas as regiões das pautas já foram varridas: adicione regiões, ligue a expansão automática na pauta ou escolha "Recomeçar" em "Quando a linha editorial acabar".'
+            : /rodando/.test(est) ? 'O limite de "Radares rodando ao mesmo tempo" está cheio: aumente o número ou espere um radar esgotar.'
+            : /nenhuma pauta/.test(est) ? 'Nenhuma pauta vale neste período: confira as semanas/meses das pautas.'
+            : null;
+          return (
+            <div style={{ fontSize:12, marginTop:8, color:C.amber, lineHeight:1.5 }}>
+              {plano.ativo
+                ? <>A fila libera, mas o piloto não abriu radar: <b>{est.replace(/^aguardando:\s*/, '')}</b>.</>
+                : <>A fila libera, mas o piloto automático está desligado.</>}
+              {dica && <> {dica}</>}
+            </div>
+          );
+        })()}
         {!contaHunter && (
         <button type="button" onClick={() => setMostrarComo(v => !v)}
           style={{ marginTop:10, background:'none', border:'none', padding:0, color:C.gold, fontSize:12, cursor:'pointer', fontFamily:'inherit' }}>
