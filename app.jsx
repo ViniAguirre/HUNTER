@@ -3609,7 +3609,7 @@ function RegioesEditor({ regioes, setRegioes, municData, tipo, onRemoverAuto }) 
   );
 }
 
-function ExpansaoPauta({ expandir, setExpandir, max, setMax, excluir, setExcluir, temRegioes }) {
+function ExpansaoPauta({ expandir, setExpandir, max, setMax, excluir, setExcluir, temRegioes, modo = 'estados', setModo }) {
   const alterna = uf => setExcluir(excluir.includes(uf) ? excluir.filter(x => x !== uf) : [...excluir, uf].sort());
   return (
     <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:20, marginBottom:18 }}>
@@ -3620,21 +3620,39 @@ function ExpansaoPauta({ expandir, setExpandir, max, setMax, excluir, setExcluir
           <span style={{ fontSize:13, fontWeight:600 }}>Quando as regiões acabarem, o Hunter escolhe a próxima sozinho</span>
           <span style={{ display:'block', fontSize:12, color:'var(--faint)', marginTop:4, lineHeight:1.45 }}>
             {temRegioes
-              ? <>Cidade varrida → o estado inteiro dela. Depois, estados vizinhos, começando pelo vizinho da região que mais virou lead
-                  (empate: o maior mercado). Cada escolha aparece na lista de regiões e no diário, com o motivo. Se a pauta varreu
-                  200+ empresas sem virar nenhum lead, ele não expande — o problema é o filtro, não a região.</>
+              ? <>Cada escolha aparece na lista de regiões e no diário, com o motivo. Se a pauta varreu 200+ empresas sem virar
+                  nenhum lead, ele não expande — o problema é o filtro, não a região.</>
               : 'Adicione pelo menos uma região acima para ligar a expansão.'}
           </span>
         </span>
       </label>
       {expandir && temRegioes && (
         <div style={{ marginTop:16, paddingLeft:26 }}>
+          {/* Por cidades: um radar por cidade, da maior pra menor, sem teto —
+              quem dita o ritmo é o limite diário de leads (Configurações). */}
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:14 }}>
+            {[['cidades', 'Por cidades', 'Um radar por cidade, da maior para a menor (população do IBGE). Acabou o estado, segue para os vizinhos. Sem limite de regiões: vai até bater o limite diário de leads e continua no dia seguinte.'],
+              ['estados', 'Por estados', 'Cidade varrida → o estado inteiro dela. Depois, estados vizinhos, começando pelo vizinho da região que mais virou lead (empate: o maior mercado).']].map(([v, nome, desc]) => {
+              const sel = modo === v;
+              return (
+                <button key={v} type="button" aria-pressed={sel} onClick={() => setModo && setModo(v)}
+                  style={{ flex:'1 1 240px', textAlign:'left', padding:'10px 12px', borderRadius:10, cursor:'pointer', fontFamily:'inherit',
+                    border: sel ? `1.5px solid ${C.gold}` : '1px solid var(--border)',
+                    background: sel ? 'color-mix(in srgb, var(--accent) 7%, transparent)' : 'var(--panel2)', color:'var(--text)' }}>
+                  <div style={{ fontSize:13, fontWeight:600, color: sel ? C.gold : 'var(--text)' }}>{nome}</div>
+                  <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:3, lineHeight:1.4 }}>{desc}</div>
+                </button>
+              );
+            })}
+          </div>
+          {modo !== 'cidades' && <>
           <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>Até quantas regiões ele pode acrescentar</label>
           <select value={max} onChange={e => setMax(+e.target.value)}
             style={{ height:38, borderRadius:9, border:'1px solid var(--border)', background:'var(--panel2)',
               color:'var(--text)', padding:'0 10px', fontSize:13, fontFamily:'inherit', cursor:'pointer' }}>
             {[1,2,3,5,8,10,15,27].map(n => <option key={n} value={n}>{n === 27 ? 'sem limite (o Brasil todo)' : n}</option>)}
           </select>
+          </>}
           <label style={{ display:'block', fontSize:12, color:'var(--dim)', margin:'14px 0 7px' }}>
             Nunca expandir para <span style={{ color:'var(--faint)' }}>(opcional)</span>
           </label>
@@ -4325,7 +4343,9 @@ function Estrategia({ onNovaPauta, onEditarPauta, onUsarRadar, onAbrirRadar, use
                         : p.no_periodo ? <span style={badgeStyle(C.green)}>No período</span>
                         : <span style={badgeStyle(C.amber)}>Fora do período</span>}
                       {p.crm_auto && <span style={badgeStyle(C.gold)}>CRM automático</span>}
-                      {p.expandir && <span style={badgeStyle(C.cyan)} title={`Acrescenta até ${p.expandir_max} regiões sozinho`}>Expande sozinho</span>}
+                      {p.expandir && <span style={badgeStyle(C.cyan)} title={p.expandir_modo === 'cidades'
+                        ? 'Abre um radar por cidade, da maior para a menor, até o limite diário de leads'
+                        : `Acrescenta até ${p.expandir_max} regiões sozinho`}>{p.expandir_modo === 'cidades' ? 'Expande por cidades' : 'Expande sozinho'}</span>}
                       {(p.tags || []).map(t => (
                         <span key={t} title="Tag enviada ao CRM com cada lead"
                           style={{ padding:'2px 8px', borderRadius:6, fontSize:11, border:`1px solid ${C.cyan}`, color:C.cyan }}>{t}</span>
@@ -4420,6 +4440,7 @@ function NovaBusca({ onSalvar, inicial, modoPauta = false, pautaId = null, onCan
   const [meses, setMeses] = useState(Array.isArray(inicial?.meses) ? inicial.meses : []);
   const [expandir, setExpandir] = useState(!!inicial?.expandir);
   const [expandirMax, setExpandirMax] = useState(inicial?.expandir_max || 5);
+  const [expandirModo, setExpandirModo] = useState(inicial?.expandir_modo === 'cidades' ? 'cidades' : 'estados');
   const [expandirExcluir, setExpandirExcluir] = useState(Array.isArray(inicial?.expandir_excluir) ? inicial.expandir_excluir : []);
   const [corte, setCorte] = useState(inicial?.corte_score ?? 60);
   const [saving, setSaving] = useState(false);
@@ -4789,7 +4810,8 @@ function NovaBusca({ onSalvar, inicial, modoPauta = false, pautaId = null, onCan
               crm_destino: destinoEfetivo,
               afiliados_alvo: alvoPayload(),
               regioes, semanas, meses,
-              expandir: expandir && regioes.length > 0, expandir_max: expandirMax, expandir_excluir: expandirExcluir })
+              expandir: expandir && regioes.length > 0, expandir_max: expandirMax, expandir_excluir: expandirExcluir,
+              expandir_modo: expandirModo })
           })
         : await fetch('/api/buscas', {
             method:'POST', credentials:'same-origin',
@@ -5254,6 +5276,7 @@ function NovaBusca({ onSalvar, inicial, modoPauta = false, pautaId = null, onCan
       )}
       {modoPauta && (
         <ExpansaoPauta expandir={expandir} setExpandir={setExpandir} max={expandirMax} setMax={setExpandirMax}
+          modo={expandirModo} setModo={setExpandirModo}
           excluir={expandirExcluir} setExcluir={setExpandirExcluir} temRegioes={regioes.length > 0}/>
       )}
       {modoPauta && (
