@@ -4760,7 +4760,7 @@ function NovaBusca({ onSalvar, inicial, modoPauta = false, pautaId = null, onCan
     else fetch('/municipios.json', { credentials:'same-origin' }).then(r => r.json())
       .then(d => { _municCache = d; setMunicData(d); }).catch(() => {});
     // Puxa os padrões da tela de Configurações como valores iniciais.
-    fetch('/api/config', { credentials:'same-origin' }).then(r => r.json())
+    fetch('/api/config/padroes', { credentials:'same-origin' }).then(r => r.json())
       // Só pra formulário em branco: ao duplicar um radar ou editar uma pauta,
       // o padrão atropelava o corte e o modo que vieram dela.
       .then(c => { if (inicial) return; if (c?.corte_padrao != null) setCorte(c.corte_padrao); if (c?.descoberta_modo_padrao) setModoDesc(c.descoberta_modo_padrao); })
@@ -6622,6 +6622,11 @@ function Config() {
   const set = (k, v) => { setCfg(c => ({ ...c, [k]: v })); setMsg(null); };
 
   const salvar = async () => {
+    // Campo numérico apagado ia vazio e o servidor ignorava em silêncio — a
+    // tela dizia "salvas" com o valor antigo ainda valendo.
+    const vazio = [['limite_diario', 'Limite diário de leads'], ['corte_padrao', 'Corte de score'],
+      ['ttl_cache_dias', 'TTL de cache']].find(([k]) => cfg[k] === '' || cfg[k] == null || isNaN(+cfg[k]));
+    if (vazio) { setMsg({ ok:false, txt:`Preencha "${vazio[1]}".` }); return; }
     setSalvando(true); setMsg(null);
     try {
       const r = await fetch('/api/config', {
@@ -6675,6 +6680,9 @@ function Config() {
           orçamento. Cada lead captado consome uma vaga <b>na hora em que nasce</b>: se ele for descartado depois (por
           exemplo, quando o enriquecimento não acha telefone), a vaga <b>não</b> volta — a consulta paga já foi feita.
           Ao atingir o teto, a captação pausa e retoma no dia seguinte. 0 = sem teto.
+          {' '}O <b>corte de score</b> é a nota mínima que vem marcada ao criar um radar ou pauta (cada um pode mudar a sua;
+          os que já existem não mudam). O <b>TTL de cache</b> é por quantos dias os dados de uma empresa já consultada são
+          reaproveitados sem consultar de novo.
         </div>
 
         <div style={{ borderTop:'1px solid var(--border)', marginTop:16, paddingTop:16 }}>
@@ -6751,7 +6759,9 @@ function Config() {
                 {nDias < 7 && <> Funciona <b>{nDias} {nDias === 1 ? 'dia' : 'dias'} por semana</b> (parado:
                   {' '}{fechadosTxt}).</>}
                 {lim > 0 && <> O teto de {lim} leads/dia é dividido pelas horas da janela: <b>~{porHora} leads por hora</b>
-                  {nDias < 7 && <>, até <b>{lim * nDias} por semana</b></>}. Sobra de um dia não acumula pro dia seguinte.</>}
+                  {nDias < 7 && <>, até <b>{lim * nDias} por semana</b></>}. Sobra de um dia não acumula pro dia seguinte.
+                  {' '}Com o controle pelo CRM ligado (Estratégia) e a fila livre, a cota por hora não segura: o motor
+                  segue até o teto do dia.</>}
                 {' '}Empresa aprovada fora do horário não se perde: espera a próxima abertura.
               </div>
             );

@@ -10113,7 +10113,7 @@ function NovaBusca({
       setMunicData(d);
     }).catch(() => {});
     // Puxa os padrões da tela de Configurações como valores iniciais.
-    fetch('/api/config', {
+    fetch('/api/config/padroes', {
       credentials: 'same-origin'
     }).then(r => r.json())
     // Só pra formulário em branco: ao duplicar um radar ou editar uma pauta,
@@ -13827,6 +13827,16 @@ function Config() {
     setMsg(null);
   };
   const salvar = async () => {
+    // Campo numérico apagado ia vazio e o servidor ignorava em silêncio — a
+    // tela dizia "salvas" com o valor antigo ainda valendo.
+    const vazio = [['limite_diario', 'Limite diário de leads'], ['corte_padrao', 'Corte de score'], ['ttl_cache_dias', 'TTL de cache']].find(([k]) => cfg[k] === '' || cfg[k] == null || isNaN(+cfg[k]));
+    if (vazio) {
+      setMsg({
+        ok: false,
+        txt: `Preencha "${vazio[1]}".`
+      });
+      return;
+    }
     setSalvando(true);
     setMsg(null);
     try {
@@ -13952,7 +13962,7 @@ function Config() {
       marginTop: 12,
       lineHeight: 1.5
     }
-  }, "O ", /*#__PURE__*/React.createElement("b", null, "limite di\xE1rio"), " \xE9 o teto de leads novos que o motor capta por dia somando todos os radares \u2014 protege o or\xE7amento. Cada lead captado consome uma vaga ", /*#__PURE__*/React.createElement("b", null, "na hora em que nasce"), ": se ele for descartado depois (por exemplo, quando o enriquecimento n\xE3o acha telefone), a vaga ", /*#__PURE__*/React.createElement("b", null, "n\xE3o"), " volta \u2014 a consulta paga j\xE1 foi feita. Ao atingir o teto, a capta\xE7\xE3o pausa e retoma no dia seguinte. 0 = sem teto."), /*#__PURE__*/React.createElement("div", {
+  }, "O ", /*#__PURE__*/React.createElement("b", null, "limite di\xE1rio"), " \xE9 o teto de leads novos que o motor capta por dia somando todos os radares \u2014 protege o or\xE7amento. Cada lead captado consome uma vaga ", /*#__PURE__*/React.createElement("b", null, "na hora em que nasce"), ": se ele for descartado depois (por exemplo, quando o enriquecimento n\xE3o acha telefone), a vaga ", /*#__PURE__*/React.createElement("b", null, "n\xE3o"), " volta \u2014 a consulta paga j\xE1 foi feita. Ao atingir o teto, a capta\xE7\xE3o pausa e retoma no dia seguinte. 0 = sem teto.", ' ', "O ", /*#__PURE__*/React.createElement("b", null, "corte de score"), " \xE9 a nota m\xEDnima que vem marcada ao criar um radar ou pauta (cada um pode mudar a sua; os que j\xE1 existem n\xE3o mudam). O ", /*#__PURE__*/React.createElement("b", null, "TTL de cache"), " \xE9 por quantos dias os dados de uma empresa j\xE1 consultada s\xE3o reaproveitados sem consultar de novo."), /*#__PURE__*/React.createElement("div", {
     style: {
       borderTop: '1px solid var(--border)',
       marginTop: 16,
@@ -14072,7 +14082,7 @@ function Config() {
         marginTop: 10,
         lineHeight: 1.5
       }
-    }, ini === 0 && fim >= 24 ? /*#__PURE__*/React.createElement(React.Fragment, null, "O motor est\xE1 trabalhando ", /*#__PURE__*/React.createElement("b", null, "24 horas por dia"), ". Defina uma janela pra concentrar a capta\xE7\xE3o no hor\xE1rio comercial.") : /*#__PURE__*/React.createElement(React.Fragment, null, "O motor trabalha ", /*#__PURE__*/React.createElement("b", null, horas, "h por dia"), " (", String(ini).padStart(2, '0'), ":00 \xE0s ", String(fim).padStart(2, '0'), ":00", fim <= ini ? ' do dia seguinte' : '', ") e fica parado fora desse per\xEDodo."), nDias < 7 && /*#__PURE__*/React.createElement(React.Fragment, null, " Funciona ", /*#__PURE__*/React.createElement("b", null, nDias, " ", nDias === 1 ? 'dia' : 'dias', " por semana"), " (parado:", ' ', fechadosTxt, ")."), lim > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, " O teto de ", lim, " leads/dia \xE9 dividido pelas horas da janela: ", /*#__PURE__*/React.createElement("b", null, "~", porHora, " leads por hora"), nDias < 7 && /*#__PURE__*/React.createElement(React.Fragment, null, ", at\xE9 ", /*#__PURE__*/React.createElement("b", null, lim * nDias, " por semana")), ". Sobra de um dia n\xE3o acumula pro dia seguinte."), ' ', "Empresa aprovada fora do hor\xE1rio n\xE3o se perde: espera a pr\xF3xima abertura.");
+    }, ini === 0 && fim >= 24 ? /*#__PURE__*/React.createElement(React.Fragment, null, "O motor est\xE1 trabalhando ", /*#__PURE__*/React.createElement("b", null, "24 horas por dia"), ". Defina uma janela pra concentrar a capta\xE7\xE3o no hor\xE1rio comercial.") : /*#__PURE__*/React.createElement(React.Fragment, null, "O motor trabalha ", /*#__PURE__*/React.createElement("b", null, horas, "h por dia"), " (", String(ini).padStart(2, '0'), ":00 \xE0s ", String(fim).padStart(2, '0'), ":00", fim <= ini ? ' do dia seguinte' : '', ") e fica parado fora desse per\xEDodo."), nDias < 7 && /*#__PURE__*/React.createElement(React.Fragment, null, " Funciona ", /*#__PURE__*/React.createElement("b", null, nDias, " ", nDias === 1 ? 'dia' : 'dias', " por semana"), " (parado:", ' ', fechadosTxt, ")."), lim > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, " O teto de ", lim, " leads/dia \xE9 dividido pelas horas da janela: ", /*#__PURE__*/React.createElement("b", null, "~", porHora, " leads por hora"), nDias < 7 && /*#__PURE__*/React.createElement(React.Fragment, null, ", at\xE9 ", /*#__PURE__*/React.createElement("b", null, lim * nDias, " por semana")), ". Sobra de um dia n\xE3o acumula pro dia seguinte.", ' ', "Com o controle pelo CRM ligado (Estrat\xE9gia) e a fila livre, a cota por hora n\xE3o segura: o motor segue at\xE9 o teto do dia."), ' ', "Empresa aprovada fora do hor\xE1rio n\xE3o se perde: espera a pr\xF3xima abertura.");
   })()), DESCOBERTA_WEB_HABILITADA && /*#__PURE__*/React.createElement("div", {
     style: {
       borderTop: '1px solid var(--border)',
