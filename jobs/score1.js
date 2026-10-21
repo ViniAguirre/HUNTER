@@ -108,12 +108,22 @@ async function observarScore(pool, { empresa, busca_id, criterios, score, corte,
      r?.segmento ?? null, prova ? JSON.stringify(prova) : null]);
 }
 
+// Corte em uso: o do radar, mas nunca abaixo do mínimo geral (Configurações →
+// Corte mínimo de score). Radar em 30 com mínimo 40 roda em 40; radar em 70
+// roda em 70.
+async function corteMinimo(pool) {
+  const { rows: [c] } = await pool.query(`SELECT corte_padrao FROM config`).catch(() => ({ rows: [] }));
+  return Number.isInteger(c?.corte_padrao) ? c.corte_padrao : 0;
+}
+const corteEfetivo = (corteRadar, minimo) => Math.max(corteRadar ?? 60, minimo || 0);
+
 module.exports = async function score1(job, pool, queues) {
   const { cnpj, busca_id } = job.data;
 
-  const [empresaRes, buscaRes] = await Promise.all([
+  const [empresaRes, buscaRes, minimo] = await Promise.all([
     pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [cnpj]),
     pool.query(`SELECT tipo, criterios, corte_score, lista FROM buscas WHERE id=$1`, [busca_id]),
+    corteMinimo(pool),
   ]);
   const empresa = empresaRes.rows[0];
   const busca = buscaRes.rows[0];
@@ -134,7 +144,7 @@ module.exports = async function score1(job, pool, queues) {
     return { cnpj, passou: false, motivo: 'radar_sem_perfil' };
   }
   let { score, breakdown } = computeScore1(empresa, params);
-  const corte = busca.corte_score ?? 60;
+  const corte = corteEfetivo(busca.corte_score, minimo);
   // Importação por CNPJ: o usuário pediu explicitamente ESTA empresa — qualifica
   // por intenção, sem corte de score. Com lista curta (sem perfil médio), o score
   // proximidade nem existe; marca o motivo real no breakdown.
@@ -363,6 +373,7 @@ async function recalcularNotasFalsas(pool) {
         AND jsonb_typeof(l.breakdown) = 'array' AND jsonb_array_length(l.breakdown) = 1
         AND l.breakdown->0->>'item' ILIKE 'Situação ativa%'`);
   const r = { analisados: rows.length, descartados: 0, mantidos: 0, enviados: 0, sem_perfil: 0 };
+  const minimo = rows.length ? await corteMinimo(pool) : 0;
   for (const l of rows) {
     if (l.status === 'Enviado') { r.enviados++; continue; }
     if (l.status === 'Descartado') continue;
@@ -371,7 +382,7 @@ async function recalcularNotasFalsas(pool) {
     const { rows: [emp] } = await pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [l.cnpj]);
     if (!emp) continue;
     const { score, breakdown } = computeScore1(emp, params);
-    const passa = score >= (l.corte_score ?? 60);
+    const passa = score >= corteEfetivo(l.corte_score, minimo);
     await pool.query(
       `UPDATE leads SET score=$2, breakdown=$3::jsonb,
               status = CASE WHEN $4 THEN status ELSE 'Descartado' END,
@@ -384,3 +395,4 @@ async function recalcularNotasFalsas(pool) {
   return r;
 }
 module.exports.recalcularNotasFalsas = recalcularNotasFalsas;
+module.exports.corteEfetivo = corteEfetivo;

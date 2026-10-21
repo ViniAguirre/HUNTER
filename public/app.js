@@ -9906,6 +9906,8 @@ function NovaBusca({
   const [expandirModo, setExpandirModo] = useState(inicial?.expandir_modo === 'cidades' ? 'cidades' : 'estados');
   const [expandirExcluir, setExpandirExcluir] = useState(Array.isArray(inicial?.expandir_excluir) ? inicial.expandir_excluir : []);
   const [corte, setCorte] = useState(inicial?.corte_score ?? 60);
+  // Mínimo geral (Configurações): abaixo dele o radar roda no mínimo.
+  const [corteMin, setCorteMin] = useState(0);
   const [saving, setSaving] = useState(false);
   const [ufs, setUfs] = useState(!modoPauta && Array.isArray(iniP.ufs) ? iniP.ufs : []);
   const [portes, setPortes] = useState(Array.isArray(iniP.portes) ? iniP.portes : []);
@@ -10119,6 +10121,7 @@ function NovaBusca({
     // Só pra formulário em branco: ao duplicar um radar ou editar uma pauta,
     // o padrão atropelava o corte e o modo que vieram dela.
     .then(c => {
+      if (c?.corte_padrao != null) setCorteMin(c.corte_padrao);
       if (inicial) return;
       if (c?.corte_padrao != null) setCorte(c.corte_padrao);
       if (c?.descoberta_modo_padrao) setModoDesc(c.descoberta_modo_padrao);
@@ -11494,7 +11497,14 @@ function NovaBusca({
       color: 'var(--faint)',
       marginTop: 5
     }
-  }, /*#__PURE__*/React.createElement("span", null, "permissivo"), /*#__PURE__*/React.createElement("span", null, "rigoroso")), /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("span", null, "permissivo"), /*#__PURE__*/React.createElement("span", null, "rigoroso")), corte < corteMin && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: C.amber,
+      marginTop: 8,
+      lineHeight: 1.4
+    }
+  }, "Abaixo do corte m\xEDnimo geral (", corteMin, " pts, em Configura\xE7\xF5es): este radar vai rodar em ", /*#__PURE__*/React.createElement("b", null, corteMin, " pts"), "."), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       color: 'var(--faint)',
@@ -13829,7 +13839,7 @@ function Config() {
   const salvar = async () => {
     // Campo numérico apagado ia vazio e o servidor ignorava em silêncio — a
     // tela dizia "salvas" com o valor antigo ainda valendo.
-    const vazio = [['limite_diario', 'Limite diário de leads'], ['corte_padrao', 'Corte de score'], ['ttl_cache_dias', 'TTL de cache']].find(([k]) => cfg[k] === '' || cfg[k] == null || isNaN(+cfg[k]));
+    const vazio = [['limite_diario', 'Limite diário de leads'], ['corte_padrao', 'Corte mínimo de score'], ['ttl_cache_dias', 'TTL de cache']].find(([k]) => cfg[k] === '' || cfg[k] == null || isNaN(+cfg[k]));
     if (vazio) {
       setMsg({
         ok: false,
@@ -13955,14 +13965,14 @@ function Config() {
       '--card': '200px',
       gap: 16
     }
-  }, numField('Limite diário de leads', 'limite_diario', 'leads/dia'), numField('Corte de score', 'corte_padrao', 'pts'), numField('TTL de cache', 'ttl_cache_dias', 'dias')), /*#__PURE__*/React.createElement("div", {
+  }, numField('Limite diário de leads', 'limite_diario', 'leads/dia'), numField('Corte mínimo de score', 'corte_padrao', 'pts'), numField('TTL de cache', 'ttl_cache_dias', 'dias')), /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11.5,
       color: 'var(--faint)',
       marginTop: 12,
       lineHeight: 1.5
     }
-  }, "O ", /*#__PURE__*/React.createElement("b", null, "limite di\xE1rio"), " \xE9 o teto de leads novos que o motor capta por dia somando todos os radares \u2014 protege o or\xE7amento. Cada lead captado consome uma vaga ", /*#__PURE__*/React.createElement("b", null, "na hora em que nasce"), ": se ele for descartado depois (por exemplo, quando o enriquecimento n\xE3o acha telefone), a vaga ", /*#__PURE__*/React.createElement("b", null, "n\xE3o"), " volta \u2014 a consulta paga j\xE1 foi feita. Ao atingir o teto, a capta\xE7\xE3o pausa e retoma no dia seguinte. 0 = sem teto.", ' ', "O ", /*#__PURE__*/React.createElement("b", null, "corte de score"), " \xE9 a nota m\xEDnima que vem marcada ao criar um radar ou pauta (cada um pode mudar a sua; os que j\xE1 existem n\xE3o mudam). O ", /*#__PURE__*/React.createElement("b", null, "TTL de cache"), " \xE9 por quantos dias os dados de uma empresa j\xE1 consultada s\xE3o reaproveitados sem consultar de novo."), /*#__PURE__*/React.createElement("div", {
+  }, "O ", /*#__PURE__*/React.createElement("b", null, "limite di\xE1rio"), " \xE9 o teto de leads novos que o motor capta por dia somando todos os radares \u2014 protege o or\xE7amento. Cada lead captado consome uma vaga ", /*#__PURE__*/React.createElement("b", null, "na hora em que nasce"), ": se ele for descartado depois (por exemplo, quando o enriquecimento n\xE3o acha telefone), a vaga ", /*#__PURE__*/React.createElement("b", null, "n\xE3o"), " volta \u2014 a consulta paga j\xE1 foi feita. Ao atingir o teto, a capta\xE7\xE3o pausa e retoma no dia seguinte. 0 = sem teto.", ' ', "O ", /*#__PURE__*/React.createElement("b", null, "corte m\xEDnimo de score"), " vale pra todos os radares, inclusive os que j\xE1 existem: radar com corte mais baixo roda no m\xEDnimo (m\xEDnimo 40, radar em 30 \u2192 roda em 40); radar com corte mais alto mant\xE9m o dele (radar em 70 \u2192 roda em 70). Tamb\xE9m \xE9 o valor que vem marcado ao criar um radar ou pauta. O ", /*#__PURE__*/React.createElement("b", null, "TTL de cache"), " \xE9 por quantos dias os dados de uma empresa j\xE1 consultada s\xE3o reaproveitados sem consultar de novo."), /*#__PURE__*/React.createElement("div", {
     style: {
       borderTop: '1px solid var(--border)',
       marginTop: 16,
