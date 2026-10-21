@@ -1942,12 +1942,27 @@ function RadaresFunil({
   // (Leads). Aqui são 5 colunas curtas que cabem em 520px — dividindo a linha com
   // o funil, o modo cartão disparava já no desktop e empilhava rótulo e número
   // sem necessidade. Se estreitar demais, rola na horizontal.
+  // A altura do cartão acompanha a do funil ao lado (o miolo é absoluto e não
+  // empurra a linha da grade): com muitos radares, a lista rola por dentro em
+  // vez de esticar a linha e deixar um vão vazio embaixo do funil. Em tela
+  // estreita (um embaixo do outro) volta ao normal, com altura máxima.
   return /*#__PURE__*/React.createElement("div", {
+    className: "h-radares-funil",
     style: {
       background: 'var(--panel)',
       border: '1px solid var(--border)',
       borderRadius: 14,
-      overflow: 'hidden'
+      overflow: 'hidden',
+      position: 'relative',
+      minHeight: 300
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "h-radares-funil-in",
+    style: {
+      position: 'absolute',
+      inset: 0,
+      display: 'flex',
+      flexDirection: 'column'
     }
   }, /*#__PURE__*/React.createElement("div", {
     style: {
@@ -1963,7 +1978,13 @@ function RadaresFunil({
       fontWeight: 600,
       margin: 0
     }
-  }, "Radares no funil"), selecionado != null && /*#__PURE__*/React.createElement("button", {
+  }, "Radares no funil", !carregando && radares.length > 0 && /*#__PURE__*/React.createElement("span", {
+    style: {
+      fontSize: 11.5,
+      fontWeight: 400,
+      color: 'var(--faint)'
+    }
+  }, " \xB7 ", radares.length)), selecionado != null && /*#__PURE__*/React.createElement("button", {
     onClick: () => onSelecionar(null),
     style: {
       background: 'none',
@@ -1975,7 +1996,12 @@ function RadaresFunil({
       padding: 0
     }
   }, "Ver todos")), /*#__PURE__*/React.createElement("div", {
-    className: "h-scroll"
+    className: "h-scroll",
+    style: {
+      flex: 1,
+      minHeight: 0,
+      overflow: 'auto'
+    }
   }, /*#__PURE__*/React.createElement("div", {
     className: "h-tw",
     style: {
@@ -1995,7 +2021,11 @@ function RadaresFunil({
       fontWeight: 600,
       letterSpacing: '.04em',
       color: 'var(--faint)',
-      textTransform: 'uppercase'
+      textTransform: 'uppercase',
+      position: 'sticky',
+      top: 0,
+      zIndex: 1,
+      background: 'var(--panel)'
     }
   }, /*#__PURE__*/React.createElement("div", null, "Radar"), /*#__PURE__*/React.createElement("div", {
     style: {
@@ -2099,7 +2129,7 @@ function RadaresFunil({
         fontWeight: 600
       }
     }, fmtNum(r.enviados)));
-  }))));
+  })))));
 }
 function Dashboard({
   onOpenBusca

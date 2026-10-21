@@ -36,6 +36,13 @@ input:focus,textarea:focus{border-color:var(--blue)!important;outline:none;}
    --split (ex.: style={{'--split':'1.55fr 1fr'}}); abaixo de 900px empilha. */
 .h-split{display:grid;gap:16px;grid-template-columns:var(--split,1fr 1fr);}
 @media(max-width:900px){.h-split{grid-template-columns:1fr;}}
+/* Radares no funil (Dashboard): ao lado do funil, o cartão tem a altura dele e
+   a lista rola por dentro. Empilhado, volta a crescer — até 420px. */
+@media(max-width:900px){
+  .h-radares-funil{min-height:0!important;}
+  .h-radares-funil-in{position:static!important;}
+  .h-radares-funil .h-scroll{max-height:420px;}
+}
 
 /* Tabelas. Entre ~900px e a largura cheia o corpo rola na horizontal e cada
    coluna mantém a largura mínima de leitura (--tw). */
