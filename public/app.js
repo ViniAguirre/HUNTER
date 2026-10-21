@@ -2990,6 +2990,53 @@ function Leads({
     setSelected([]);
   }, [filtrosChave, debouncedQ]);
   const temFiltro = filtrosChave !== JSON.stringify(FILTROS_LEADS_PADRAO) || !!debouncedQ;
+  // Painel "Filtros": os secundários. O número no botão conta os ligados.
+  const [painelFiltros, setPainelFiltros] = useState(false);
+  const painelRef = useRef(null);
+  useEffect(() => {
+    if (!painelFiltros) return;
+    const fora = e => {
+      if (painelRef.current && !painelRef.current.contains(e.target)) setPainelFiltros(false);
+    };
+    const esc = e => {
+      if (e.key === 'Escape') setPainelFiltros(false);
+    };
+    document.addEventListener('mousedown', fora);
+    document.addEventListener('keydown', esc);
+    return () => {
+      document.removeEventListener('mousedown', fora);
+      document.removeEventListener('keydown', esc);
+    };
+  }, [painelFiltros]);
+  const extrasAtivos = [filterLocal.trim(), filterScore, filterAnalise, emailOnly, ordem !== 'score', filterPeriodo === 'custom' && (filterDe || filterAte)].filter(Boolean).length;
+  const selFiltro = {
+    height: 38,
+    padding: '0 10px',
+    borderRadius: 9,
+    border: '1px solid var(--border)',
+    background: 'var(--panel)',
+    fontSize: 12.5,
+    fontFamily: 'inherit',
+    cursor: 'pointer'
+  };
+  const rotFiltro = {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 5,
+    fontSize: 11.5,
+    color: 'var(--dim)'
+  };
+  const campoFiltro = {
+    height: 34,
+    borderRadius: 8,
+    border: '1px solid var(--border)',
+    background: 'var(--panel2)',
+    color: 'var(--text)',
+    padding: '0 10px',
+    fontSize: 12.5,
+    fontFamily: 'inherit',
+    minWidth: 0
+  };
   const limparFiltros = () => {
     const p = FILTROS_LEADS_PADRAO;
     setFilterStatus(p.status);
@@ -3223,9 +3270,9 @@ function Leads({
   }, /*#__PURE__*/React.createElement("div", {
     style: {
       position: 'relative',
-      flex: '1 1 150px',
-      minWidth: 150,
-      maxWidth: 320
+      flex: '1 1 200px',
+      minWidth: 180,
+      maxWidth: 340
     }
   }, /*#__PURE__*/React.createElement("svg", {
     width: 16,
@@ -3250,6 +3297,7 @@ function Leads({
     value: q,
     onChange: handleQ,
     placeholder: "Empresa, decisor, CNPJ ou ID do CRM\u2026",
+    "aria-label": "Buscar lead",
     style: {
       width: '100%',
       height: 38,
@@ -3267,17 +3315,11 @@ function Leads({
       setFilterBusca(e.target.value);
       setPage(1);
     },
+    "aria-label": "Radar",
     style: {
-      height: 38,
-      padding: '0 10px',
-      borderRadius: 9,
-      border: '1px solid var(--border)',
-      maxWidth: 170,
-      background: 'var(--panel)',
-      color: filterBusca ? 'var(--text)' : 'var(--dim)',
-      fontSize: 12.5,
-      fontFamily: 'inherit',
-      cursor: 'pointer'
+      ...selFiltro,
+      maxWidth: 180,
+      color: filterBusca ? 'var(--text)' : 'var(--dim)'
     }
   }, /*#__PURE__*/React.createElement("option", {
     value: ""
@@ -3290,17 +3332,11 @@ function Leads({
       setFilterStatus(e.target.value);
       setPage(1);
     },
+    "aria-label": "Status",
     style: {
-      height: 38,
-      padding: '0 10px',
-      borderRadius: 9,
-      border: '1px solid var(--border)',
-      maxWidth: 150,
-      background: 'var(--panel)',
-      color: filterStatus ? 'var(--text)' : 'var(--dim)',
-      fontSize: 12.5,
-      fontFamily: 'inherit',
-      cursor: 'pointer'
+      ...selFiltro,
+      maxWidth: 170,
+      color: filterStatus ? 'var(--text)' : 'var(--dim)'
     }
   }, /*#__PURE__*/React.createElement("option", {
     value: "abertos"
@@ -3324,89 +3360,18 @@ function Leads({
     value: "Enviado:manual"
   }, "Enviado \xB7 marcado \xE0 m\xE3o"), /*#__PURE__*/React.createElement("option", {
     value: "Descartado"
-  }, "Descartado / negativado")), /*#__PURE__*/React.createElement("input", {
-    value: filterLocal,
-    onChange: handleLocal,
-    placeholder: "Local (cidade/UF)",
-    style: {
-      height: 38,
-      width: 140,
-      maxWidth: '100%',
-      borderRadius: 9,
-      border: '1px solid var(--border)',
-      background: 'var(--panel)',
-      color: 'var(--text)',
-      padding: '0 12px',
-      fontSize: 12.5,
-      fontFamily: 'inherit'
-    }
-  }), /*#__PURE__*/React.createElement("select", {
-    value: filterScore,
-    onChange: e => {
-      setFilterScore(e.target.value);
-      setPage(1);
-    },
-    style: {
-      height: 38,
-      padding: '0 10px',
-      borderRadius: 9,
-      border: '1px solid var(--border)',
-      background: 'var(--panel)',
-      color: filterScore ? 'var(--text)' : 'var(--dim)',
-      fontSize: 12.5,
-      fontFamily: 'inherit',
-      cursor: 'pointer'
-    }
-  }, /*#__PURE__*/React.createElement("option", {
-    value: ""
-  }, "Score"), /*#__PURE__*/React.createElement("option", {
-    value: "90"
-  }, "\u2265 90"), /*#__PURE__*/React.createElement("option", {
-    value: "75"
-  }, "\u2265 75"), /*#__PURE__*/React.createElement("option", {
-    value: "60"
-  }, "\u2265 60"), /*#__PURE__*/React.createElement("option", {
-    value: "40"
-  }, "\u2265 40")), /*#__PURE__*/React.createElement("select", {
-    value: filterAnalise,
-    onChange: e => {
-      setFilterAnalise(e.target.value);
-      setPage(1);
-    },
-    style: {
-      height: 38,
-      padding: '0 10px',
-      borderRadius: 9,
-      border: '1px solid var(--border)',
-      background: 'var(--panel)',
-      color: filterAnalise ? 'var(--text)' : 'var(--dim)',
-      fontSize: 12.5,
-      fontFamily: 'inherit',
-      cursor: 'pointer'
-    }
-  }, /*#__PURE__*/React.createElement("option", {
-    value: ""
-  }, "An\xE1lise SWOT"), /*#__PURE__*/React.createElement("option", {
-    value: "sem"
-  }, "Sem an\xE1lise"), /*#__PURE__*/React.createElement("option", {
-    value: "com"
-  }, "Com an\xE1lise")), /*#__PURE__*/React.createElement("select", {
+  }, "Descartado / negativado")), /*#__PURE__*/React.createElement("select", {
     value: filterPeriodo,
+    "aria-label": "Per\xEDodo de entrada do lead",
     onChange: e => {
       setFilterPeriodo(e.target.value);
       setPage(1);
+      if (e.target.value === 'custom') setPainelFiltros(true);
     },
-    "aria-label": "Per\xEDodo de entrada do lead",
     style: {
-      height: 38,
-      padding: '0 10px',
-      borderRadius: 9,
-      border: '1px solid var(--border)',
-      background: 'var(--panel)',
-      color: filterPeriodo ? 'var(--text)' : 'var(--dim)',
-      fontSize: 12.5,
-      fontFamily: 'inherit',
-      cursor: 'pointer'
+      ...selFiltro,
+      maxWidth: 180,
+      color: filterPeriodo ? 'var(--text)' : 'var(--dim)'
     }
   }, /*#__PURE__*/React.createElement("option", {
     value: ""
@@ -3422,79 +3387,16 @@ function Leads({
     value: "mes_passado"
   }, "M\xEAs passado"), /*#__PURE__*/React.createElement("option", {
     value: "custom"
-  }, "Escolher datas\u2026")), filterPeriodo === 'custom' && /*#__PURE__*/React.createElement("span", {
+  }, filterPeriodo === 'custom' && (filterDe || filterAte) ? `${filterDe ? filterDe.split('-').reverse().slice(0, 2).join('/') : '…'} a ${filterAte ? filterAte.split('-').reverse().slice(0, 2).join('/') : '…'}` : 'Escolher datas…')), /*#__PURE__*/React.createElement("div", {
+    ref: painelRef,
     style: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: 6,
-      fontSize: 12,
-      color: 'var(--dim)'
+      position: 'relative'
     }
-  }, "de", /*#__PURE__*/React.createElement("input", {
-    type: "date",
-    value: filterDe,
-    max: filterAte || undefined,
-    "aria-label": "Data inicial",
-    onChange: e => {
-      setFilterDe(e.target.value);
-      setPage(1);
-    },
-    style: {
-      height: 38,
-      borderRadius: 9,
-      border: '1px solid var(--border)',
-      background: 'var(--panel)',
-      color: 'var(--text)',
-      padding: '0 8px',
-      fontSize: 12.5,
-      fontFamily: 'inherit'
-    }
-  }), "at\xE9", /*#__PURE__*/React.createElement("input", {
-    type: "date",
-    value: filterAte,
-    min: filterDe || undefined,
-    "aria-label": "Data final",
-    onChange: e => {
-      setFilterAte(e.target.value);
-      setPage(1);
-    },
-    style: {
-      height: 38,
-      borderRadius: 9,
-      border: '1px solid var(--border)',
-      background: 'var(--panel)',
-      color: 'var(--text)',
-      padding: '0 8px',
-      fontSize: 12.5,
-      fontFamily: 'inherit'
-    }
-  })), /*#__PURE__*/React.createElement("select", {
-    value: ordem,
-    onChange: e => {
-      setOrdem(e.target.value);
-      setPage(1);
-    },
-    "aria-label": "Ordenar leads",
-    style: {
-      height: 38,
-      padding: '0 10px',
-      borderRadius: 9,
-      border: '1px solid var(--border)',
-      background: 'var(--panel)',
-      color: 'var(--dim)',
-      fontSize: 12.5,
-      fontFamily: 'inherit',
-      cursor: 'pointer'
-    }
-  }, /*#__PURE__*/React.createElement("option", {
-    value: "score"
-  }, "Maior score primeiro"), /*#__PURE__*/React.createElement("option", {
-    value: "recentes"
-  }, "Mais recentes primeiro")), /*#__PURE__*/React.createElement("button", {
-    onClick: () => {
-      setEmailOnly(e => !e);
-      setPage(1);
-    },
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => setPainelFiltros(v => !v),
+    "aria-expanded": painelFiltros,
+    "aria-haspopup": "dialog",
     style: {
       height: 38,
       padding: '0 13px',
@@ -3505,44 +3407,226 @@ function Leads({
       display: 'flex',
       alignItems: 'center',
       gap: 7,
-      ...(emailOnly ? {
-        border: `1px solid ${C.green}`,
-        background: C.green + '1f',
-        color: C.green
-      } : {
-        border: '1px solid var(--border)',
-        background: 'var(--panel)',
-        color: 'var(--dim)'
-      })
+      whiteSpace: 'nowrap',
+      background: 'var(--panel)',
+      border: `1px solid ${extrasAtivos ? C.gold : 'var(--border)'}`,
+      color: extrasAtivos ? 'var(--text)' : 'var(--dim)'
     }
-  }, /*#__PURE__*/React.createElement(SvgMulti, {
+  }, /*#__PURE__*/React.createElement(Svg, {
+    d: "M3 6h18M7 12h10M10 18h4",
     w: 14,
     h: 14,
-    sw: 1.8
-  }, /*#__PURE__*/React.createElement("rect", {
-    x: 3,
-    y: 5,
-    width: 18,
-    height: 14,
-    rx: 2
-  }), /*#__PURE__*/React.createElement("path", {
-    d: "M3 7l9 6 9-6"
-  })), "S\xF3 e-mail v\xE1lido"), temFiltro && /*#__PURE__*/React.createElement("button", {
-    onClick: limparFiltros,
-    title: "Volta para Em aberto, todo o per\xEDodo, sem os demais filtros",
+    sw: 1.9
+  }), "Filtros", extrasAtivos > 0 && /*#__PURE__*/React.createElement("span", {
     style: {
-      height: 38,
-      padding: '0 12px',
+      minWidth: 18,
+      height: 18,
       borderRadius: 9,
+      background: C.gold,
+      color: '#0E1936',
+      fontSize: 11,
+      fontWeight: 700,
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '0 5px'
+    }
+  }, extrasAtivos)), painelFiltros && /*#__PURE__*/React.createElement("div", {
+    role: "dialog",
+    "aria-label": "Mais filtros",
+    style: {
+      position: 'absolute',
+      top: 44,
+      right: 0,
+      zIndex: 30,
+      width: 340,
+      maxWidth: 'calc(100vw - 32px)',
+      background: 'var(--panel)',
+      border: '1px solid var(--border)',
+      borderRadius: 12,
+      padding: 16,
+      boxShadow: '0 12px 32px rgba(0,0,0,.25)',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 12
+    }
+  }, filterPeriodo === 'custom' && /*#__PURE__*/React.createElement("label", {
+    style: rotFiltro
+  }, "Entrou entre", /*#__PURE__*/React.createElement("span", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 6
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    value: filterDe,
+    max: filterAte || undefined,
+    "aria-label": "Data inicial",
+    onChange: e => {
+      setFilterDe(e.target.value);
+      setPage(1);
+    },
+    style: {
+      ...campoFiltro,
+      flex: 1
+    }
+  }), /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, "at\xE9"), /*#__PURE__*/React.createElement("input", {
+    type: "date",
+    value: filterAte,
+    min: filterDe || undefined,
+    "aria-label": "Data final",
+    onChange: e => {
+      setFilterAte(e.target.value);
+      setPage(1);
+    },
+    style: {
+      ...campoFiltro,
+      flex: 1
+    }
+  }))), /*#__PURE__*/React.createElement("label", {
+    style: rotFiltro
+  }, "Local", /*#__PURE__*/React.createElement("input", {
+    value: filterLocal,
+    onChange: handleLocal,
+    placeholder: "Cidade ou UF (ex.: Curitiba, PR)",
+    style: campoFiltro
+  })), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'grid',
+      gridTemplateColumns: '1fr 1fr',
+      gap: 10
+    }
+  }, /*#__PURE__*/React.createElement("label", {
+    style: rotFiltro
+  }, "Score", /*#__PURE__*/React.createElement("select", {
+    value: filterScore,
+    onChange: e => {
+      setFilterScore(e.target.value);
+      setPage(1);
+    },
+    style: campoFiltro
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "Qualquer"), /*#__PURE__*/React.createElement("option", {
+    value: "90"
+  }, "90 ou mais"), /*#__PURE__*/React.createElement("option", {
+    value: "75"
+  }, "75 ou mais"), /*#__PURE__*/React.createElement("option", {
+    value: "60"
+  }, "60 ou mais"), /*#__PURE__*/React.createElement("option", {
+    value: "40"
+  }, "40 ou mais"))), /*#__PURE__*/React.createElement("label", {
+    style: rotFiltro
+  }, "An\xE1lise SWOT", /*#__PURE__*/React.createElement("select", {
+    value: filterAnalise,
+    onChange: e => {
+      setFilterAnalise(e.target.value);
+      setPage(1);
+    },
+    style: campoFiltro
+  }, /*#__PURE__*/React.createElement("option", {
+    value: ""
+  }, "Qualquer"), /*#__PURE__*/React.createElement("option", {
+    value: "sem"
+  }, "Sem an\xE1lise"), /*#__PURE__*/React.createElement("option", {
+    value: "com"
+  }, "Com an\xE1lise")))), /*#__PURE__*/React.createElement("label", {
+    style: rotFiltro
+  }, "Ordenar", /*#__PURE__*/React.createElement("select", {
+    value: ordem,
+    onChange: e => {
+      setOrdem(e.target.value);
+      setPage(1);
+    },
+    "aria-label": "Ordenar leads",
+    style: campoFiltro
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "score"
+  }, "Maior score primeiro"), /*#__PURE__*/React.createElement("option", {
+    value: "recentes"
+  }, "Mais recentes primeiro"))), /*#__PURE__*/React.createElement("label", {
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      fontSize: 12.5,
+      color: 'var(--text)',
+      cursor: 'pointer'
+    }
+  }, /*#__PURE__*/React.createElement("input", {
+    type: "checkbox",
+    checked: emailOnly,
+    onChange: () => {
+      setEmailOnly(e => !e);
+      setPage(1);
+    },
+    style: {
+      accentColor: 'var(--accent)'
+    }
+  }), "S\xF3 leads com e-mail v\xE1lido"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingTop: 10,
+      borderTop: '1px solid var(--border)'
+    }
+  }, /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: limparFiltros,
+    disabled: !temFiltro,
+    style: {
+      background: 'none',
+      border: 'none',
+      padding: 0,
       fontSize: 12.5,
       fontFamily: 'inherit',
-      cursor: 'pointer',
-      border: 'none',
-      background: 'transparent',
-      color: C.gold,
-      whiteSpace: 'nowrap'
+      color: temFiltro ? C.gold : 'var(--faint)',
+      cursor: temFiltro ? 'pointer' : 'default'
     }
-  }, "Limpar filtros"), user?.master && /*#__PURE__*/React.createElement("button", {
+  }, "Limpar filtros"), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => setPainelFiltros(false),
+    style: {
+      height: 32,
+      padding: '0 14px',
+      borderRadius: 8,
+      border: '1px solid var(--border)',
+      background: 'transparent',
+      color: 'var(--text)',
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, "Fechar")))), temFiltro && /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: limparFiltros,
+    title: "Limpar filtros (volta para Em aberto, este m\xEAs)",
+    "aria-label": "Limpar filtros",
+    style: {
+      height: 38,
+      width: 38,
+      borderRadius: 9,
+      border: '1px solid var(--border)',
+      background: 'transparent',
+      color: 'var(--dim)',
+      cursor: 'pointer',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      flexShrink: 0
+    }
+  }, /*#__PURE__*/React.createElement(Svg, {
+    d: "M18 6L6 18M6 6l12 12",
+    w: 14,
+    h: 14,
+    sw: 2
+  })), user?.master && /*#__PURE__*/React.createElement("button", {
     onClick: () => setNovoLead(true),
     title: "Cadastrar um lead \xE0 m\xE3o para testes",
     style: {
@@ -3551,6 +3635,7 @@ function Leads({
       borderRadius: 9,
       fontSize: 12.5,
       fontFamily: 'inherit',
+      marginLeft: 'auto',
       cursor: 'pointer',
       display: 'flex',
       alignItems: 'center',

@@ -1369,6 +1369,24 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
     setSelected([]);
   }, [filtrosChave, debouncedQ]);
   const temFiltro = filtrosChave !== JSON.stringify(FILTROS_LEADS_PADRAO) || !!debouncedQ;
+  // Painel "Filtros": os secundários. O número no botão conta os ligados.
+  const [painelFiltros, setPainelFiltros] = useState(false);
+  const painelRef = useRef(null);
+  useEffect(() => {
+    if (!painelFiltros) return;
+    const fora = e => { if (painelRef.current && !painelRef.current.contains(e.target)) setPainelFiltros(false); };
+    const esc = e => { if (e.key === 'Escape') setPainelFiltros(false); };
+    document.addEventListener('mousedown', fora);
+    document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('mousedown', fora); document.removeEventListener('keydown', esc); };
+  }, [painelFiltros]);
+  const extrasAtivos = [filterLocal.trim(), filterScore, filterAnalise, emailOnly, ordem !== 'score',
+    filterPeriodo === 'custom' && (filterDe || filterAte)].filter(Boolean).length;
+  const selFiltro = { height:38, padding:'0 10px', borderRadius:9, border:'1px solid var(--border)',
+    background:'var(--panel)', fontSize:12.5, fontFamily:'inherit', cursor:'pointer' };
+  const rotFiltro = { display:'flex', flexDirection:'column', gap:5, fontSize:11.5, color:'var(--dim)' };
+  const campoFiltro = { height:34, borderRadius:8, border:'1px solid var(--border)', background:'var(--panel2)',
+    color:'var(--text)', padding:'0 10px', fontSize:12.5, fontFamily:'inherit', minWidth:0 };
   const limparFiltros = () => {
     const p = FILTROS_LEADS_PADRAO;
     setFilterStatus(p.status); setFilterBusca(p.busca); setFilterLocal(p.local); setDebouncedLocal(p.local);
@@ -1541,27 +1559,26 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
 
   return (
     <div>
+      {/* Barra de filtros numa linha só: busca e os filtros do dia a dia à
+          vista; o resto (local, score, análise, e-mail, ordem, datas) no
+          painel "Filtros", com o número de filtros ligados no botão. */}
       <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap', marginBottom:16 }}>
-        <div style={{ position:'relative', flex:'1 1 150px', minWidth:150, maxWidth:320 }}>
+        <div style={{ position:'relative', flex:'1 1 200px', minWidth:180, maxWidth:340 }}>
           <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="var(--faint)" strokeWidth={1.8} strokeLinecap="round"
             style={{ position:'absolute', left:12, top:11 }}>
             <circle cx={11} cy={11} r={7}/><path d="M21 21l-4.3-4.3"/>
           </svg>
-          <input value={q} onChange={handleQ} placeholder="Empresa, decisor, CNPJ ou ID do CRM…"
+          <input value={q} onChange={handleQ} placeholder="Empresa, decisor, CNPJ ou ID do CRM…" aria-label="Buscar lead"
             style={{ width:'100%', height:38, borderRadius:9, border:'1px solid var(--border)',
               background:'var(--panel)', color:'var(--text)', padding:'0 12px 0 34px', fontSize:13, fontFamily:'inherit' }}/>
         </div>
-        <select value={filterBusca} onChange={e => { setFilterBusca(e.target.value); setPage(1); }}
-          style={{ height:38, padding:'0 10px', borderRadius:9, border:'1px solid var(--border)', maxWidth:170,
-            background:'var(--panel)', color: filterBusca ? 'var(--text)' : 'var(--dim)',
-            fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>
+        <select value={filterBusca} onChange={e => { setFilterBusca(e.target.value); setPage(1); }} aria-label="Radar"
+          style={{ ...selFiltro, maxWidth:180, color: filterBusca ? 'var(--text)' : 'var(--dim)' }}>
           <option value="">Todos os radares</option>
           {buscasOpts.map(b => <option key={b.id} value={b.id}>{b.nome}</option>)}
         </select>
-        <select value={filterStatus} onChange={e => { setFilterStatus(e.target.value); setPage(1); }}
-          style={{ height:38, padding:'0 10px', borderRadius:9, border:'1px solid var(--border)', maxWidth:150,
-            background:'var(--panel)', color: filterStatus ? 'var(--text)' : 'var(--dim)',
-            fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>
+        <select value={filterStatus} onChange={e => { setFilterStatus(e.target.value); setPage(1); }} aria-label="Status"
+          style={{ ...selFiltro, maxWidth:170, color: filterStatus ? 'var(--text)' : 'var(--dim)' }}>
           <option value="abertos">Em aberto</option>
           <option value="">Todos os status</option>
           <option value="Novo">Novo</option>
@@ -1574,86 +1591,105 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
           <option value="Enviado:manual">Enviado · marcado à mão</option>
           <option value="Descartado">Descartado / negativado</option>
         </select>
-        <input value={filterLocal} onChange={handleLocal} placeholder="Local (cidade/UF)"
-          style={{ height:38, width:140, maxWidth:'100%', borderRadius:9, border:'1px solid var(--border)',
-            background:'var(--panel)', color:'var(--text)', padding:'0 12px', fontSize:12.5, fontFamily:'inherit' }}/>
-        <select value={filterScore} onChange={e => { setFilterScore(e.target.value); setPage(1); }}
-          style={{ height:38, padding:'0 10px', borderRadius:9, border:'1px solid var(--border)',
-            background:'var(--panel)', color: filterScore ? 'var(--text)' : 'var(--dim)',
-            fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>
-          <option value="">Score</option>
-          <option value="90">≥ 90</option>
-          <option value="75">≥ 75</option>
-          <option value="60">≥ 60</option>
-          <option value="40">≥ 40</option>
-        </select>
-        {/* Sem análise: os leads que ficaram sem briefing (a IA falhou ou não
-            estava ativa). Selecione e use "Refazer análise". */}
-        <select value={filterAnalise} onChange={e => { setFilterAnalise(e.target.value); setPage(1); }}
-          style={{ height:38, padding:'0 10px', borderRadius:9, border:'1px solid var(--border)',
-            background:'var(--panel)', color: filterAnalise ? 'var(--text)' : 'var(--dim)',
-            fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>
-          <option value="">Análise SWOT</option>
-          <option value="sem">Sem análise</option>
-          <option value="com">Com análise</option>
-        </select>
-        {/* Sem espaçador aqui: um <div flex:1> empurrava o botão pra borda
-            direita, mas participava do flex-wrap e ocupava uma linha inteira,
-            derrubando "Só e-mail válido" pra linha seguinte mesmo quando havia
-            espaço de sobra na primeira. */}
-        {/* Período: quando o lead entrou no Hunter. */}
-        <select value={filterPeriodo} onChange={e => { setFilterPeriodo(e.target.value); setPage(1); }}
-          aria-label="Período de entrada do lead"
-          style={{ height:38, padding:'0 10px', borderRadius:9, border:'1px solid var(--border)',
-            background:'var(--panel)', color: filterPeriodo ? 'var(--text)' : 'var(--dim)',
-            fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>
+        {/* Período: quando o lead entrou no Hunter. "Escolher datas…" abre o
+            painel com o de/até. */}
+        <select value={filterPeriodo} aria-label="Período de entrada do lead"
+          onChange={e => { setFilterPeriodo(e.target.value); setPage(1); if (e.target.value === 'custom') setPainelFiltros(true); }}
+          style={{ ...selFiltro, maxWidth:180, color: filterPeriodo ? 'var(--text)' : 'var(--dim)' }}>
           <option value="">Todo o período</option>
           <option value="hoje">Hoje</option>
           <option value="7d">Últimos 7 dias</option>
           <option value="30d">Últimos 30 dias</option>
           <option value="mes">Este mês</option>
           <option value="mes_passado">Mês passado</option>
-          <option value="custom">Escolher datas…</option>
+          <option value="custom">{filterPeriodo === 'custom' && (filterDe || filterAte)
+            ? `${filterDe ? filterDe.split('-').reverse().slice(0, 2).join('/') : '…'} a ${filterAte ? filterAte.split('-').reverse().slice(0, 2).join('/') : '…'}`
+            : 'Escolher datas…'}</option>
         </select>
-        {filterPeriodo === 'custom' && (
-          <span style={{ display:'flex', alignItems:'center', gap:6, fontSize:12, color:'var(--dim)' }}>
-            de
-            <input type="date" value={filterDe} max={filterAte || undefined} aria-label="Data inicial"
-              onChange={e => { setFilterDe(e.target.value); setPage(1); }}
-              style={{ height:38, borderRadius:9, border:'1px solid var(--border)', background:'var(--panel)',
-                color:'var(--text)', padding:'0 8px', fontSize:12.5, fontFamily:'inherit' }}/>
-            até
-            <input type="date" value={filterAte} min={filterDe || undefined} aria-label="Data final"
-              onChange={e => { setFilterAte(e.target.value); setPage(1); }}
-              style={{ height:38, borderRadius:9, border:'1px solid var(--border)', background:'var(--panel)',
-                color:'var(--text)', padding:'0 8px', fontSize:12.5, fontFamily:'inherit' }}/>
-          </span>
-        )}
-        <select value={ordem} onChange={e => { setOrdem(e.target.value); setPage(1); }} aria-label="Ordenar leads"
-          style={{ height:38, padding:'0 10px', borderRadius:9, border:'1px solid var(--border)',
-            background:'var(--panel)', color:'var(--dim)', fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>
-          <option value="score">Maior score primeiro</option>
-          <option value="recentes">Mais recentes primeiro</option>
-        </select>
-        <button onClick={() => { setEmailOnly(e => !e); setPage(1); }}
-          style={{ height:38, padding:'0 13px', borderRadius:9, fontSize:12.5, fontFamily:'inherit',
-            cursor:'pointer', display:'flex', alignItems:'center', gap:7,
-            ...(emailOnly
-              ? { border:`1px solid ${C.green}`, background:C.green+'1f', color:C.green }
-              : { border:'1px solid var(--border)', background:'var(--panel)', color:'var(--dim)' }) }}>
-          <SvgMulti w={14} h={14} sw={1.8}><rect x={3} y={5} width={18} height={14} rx={2}/><path d="M3 7l9 6 9-6"/></SvgMulti>
-          Só e-mail válido
-        </button>
+        <div ref={painelRef} style={{ position:'relative' }}>
+          <button type="button" onClick={() => setPainelFiltros(v => !v)} aria-expanded={painelFiltros} aria-haspopup="dialog"
+            style={{ height:38, padding:'0 13px', borderRadius:9, fontSize:12.5, fontFamily:'inherit', cursor:'pointer',
+              display:'flex', alignItems:'center', gap:7, whiteSpace:'nowrap', background:'var(--panel)',
+              border:`1px solid ${extrasAtivos ? C.gold : 'var(--border)'}`, color: extrasAtivos ? 'var(--text)' : 'var(--dim)' }}>
+            <Svg d="M3 6h18M7 12h10M10 18h4" w={14} h={14} sw={1.9}/>
+            Filtros
+            {extrasAtivos > 0 && (
+              <span style={{ minWidth:18, height:18, borderRadius:9, background:C.gold, color:'#0E1936', fontSize:11,
+                fontWeight:700, display:'inline-flex', alignItems:'center', justifyContent:'center', padding:'0 5px' }}>{extrasAtivos}</span>
+            )}
+          </button>
+          {painelFiltros && (
+            <div role="dialog" aria-label="Mais filtros"
+              style={{ position:'absolute', top:44, right:0, zIndex:30, width:340, maxWidth:'calc(100vw - 32px)',
+                background:'var(--panel)', border:'1px solid var(--border)', borderRadius:12, padding:16,
+                boxShadow:'0 12px 32px rgba(0,0,0,.25)', display:'flex', flexDirection:'column', gap:12 }}>
+              {filterPeriodo === 'custom' && (
+                <label style={rotFiltro}>Entrou entre
+                  <span style={{ display:'flex', alignItems:'center', gap:6 }}>
+                    <input type="date" value={filterDe} max={filterAte || undefined} aria-label="Data inicial"
+                      onChange={e => { setFilterDe(e.target.value); setPage(1); }} style={{ ...campoFiltro, flex:1 }}/>
+                    <span style={{ color:'var(--faint)' }}>até</span>
+                    <input type="date" value={filterAte} min={filterDe || undefined} aria-label="Data final"
+                      onChange={e => { setFilterAte(e.target.value); setPage(1); }} style={{ ...campoFiltro, flex:1 }}/>
+                  </span>
+                </label>
+              )}
+              <label style={rotFiltro}>Local
+                <input value={filterLocal} onChange={handleLocal} placeholder="Cidade ou UF (ex.: Curitiba, PR)" style={campoFiltro}/>
+              </label>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+                <label style={rotFiltro}>Score
+                  <select value={filterScore} onChange={e => { setFilterScore(e.target.value); setPage(1); }} style={campoFiltro}>
+                    <option value="">Qualquer</option>
+                    <option value="90">90 ou mais</option>
+                    <option value="75">75 ou mais</option>
+                    <option value="60">60 ou mais</option>
+                    <option value="40">40 ou mais</option>
+                  </select>
+                </label>
+                {/* Sem análise: os leads que ficaram sem briefing — selecione e
+                    use "Refazer análise". */}
+                <label style={rotFiltro}>Análise SWOT
+                  <select value={filterAnalise} onChange={e => { setFilterAnalise(e.target.value); setPage(1); }} style={campoFiltro}>
+                    <option value="">Qualquer</option>
+                    <option value="sem">Sem análise</option>
+                    <option value="com">Com análise</option>
+                  </select>
+                </label>
+              </div>
+              <label style={rotFiltro}>Ordenar
+                <select value={ordem} onChange={e => { setOrdem(e.target.value); setPage(1); }} aria-label="Ordenar leads" style={campoFiltro}>
+                  <option value="score">Maior score primeiro</option>
+                  <option value="recentes">Mais recentes primeiro</option>
+                </select>
+              </label>
+              <label style={{ display:'flex', alignItems:'center', gap:8, fontSize:12.5, color:'var(--text)', cursor:'pointer' }}>
+                <input type="checkbox" checked={emailOnly} onChange={() => { setEmailOnly(e => !e); setPage(1); }}
+                  style={{ accentColor:'var(--accent)' }}/>
+                Só leads com e-mail válido
+              </label>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', paddingTop:10, borderTop:'1px solid var(--border)' }}>
+                <button type="button" onClick={limparFiltros} disabled={!temFiltro}
+                  style={{ background:'none', border:'none', padding:0, fontSize:12.5, fontFamily:'inherit',
+                    color: temFiltro ? C.gold : 'var(--faint)', cursor: temFiltro ? 'pointer' : 'default' }}>Limpar filtros</button>
+                <button type="button" onClick={() => setPainelFiltros(false)}
+                  style={{ height:32, padding:'0 14px', borderRadius:8, border:'1px solid var(--border)', background:'transparent',
+                    color:'var(--text)', fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>Fechar</button>
+              </div>
+            </div>
+          )}
+        </div>
         {temFiltro && (
-          <button onClick={limparFiltros} title="Volta para Em aberto, todo o período, sem os demais filtros"
-            style={{ height:38, padding:'0 12px', borderRadius:9, fontSize:12.5, fontFamily:'inherit', cursor:'pointer',
-              border:'none', background:'transparent', color:C.gold, whiteSpace:'nowrap' }}>
-            Limpar filtros
+          <button type="button" onClick={limparFiltros} title="Limpar filtros (volta para Em aberto, este mês)"
+            aria-label="Limpar filtros"
+            style={{ height:38, width:38, borderRadius:9, border:'1px solid var(--border)', background:'transparent',
+              color:'var(--dim)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>
+            <Svg d="M18 6L6 18M6 6l12 12" w={14} h={14} sw={2}/>
           </button>
         )}
         {user?.master && (
           <button onClick={() => setNovoLead(true)} title="Cadastrar um lead à mão para testes"
-            style={{ height:38, padding:'0 13px', borderRadius:9, fontSize:12.5, fontFamily:'inherit',
+            style={{ height:38, padding:'0 13px', borderRadius:9, fontSize:12.5, fontFamily:'inherit', marginLeft:'auto',
               cursor:'pointer', display:'flex', alignItems:'center', gap:7, whiteSpace:'nowrap',
               border:'1px dashed var(--border)', background:'transparent', color:'var(--dim)' }}>
             <Svg d="M12 5v14M5 12h14" w={14} h={14} sw={2}/>
