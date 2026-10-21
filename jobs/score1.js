@@ -124,6 +124,15 @@ module.exports = async function score1(job, pool, queues) {
   }
 
   const params = parseCriterios(busca.criterios);
+  // Semelhantes SEM perfil (lista ainda sendo perfilada, ou perfil perdido):
+  // não há com o que comparar. Sem esta trava a conta caía no ICP vazio — só
+  // "situação ativa", que a escala relativa transformava em 100 — e QUALQUER
+  // empresa ativa virava lead. Na dúvida, não aprova.
+  if (busca.tipo === 'lookalike' && !params?.perfil) {
+    console.warn(`[score1] ${cnpj} (radar ${busca_id}): radar de semelhantes sem perfil — empresa não aprovada.`);
+    await pool.query(`UPDATE buscas SET fora_perfil = fora_perfil + 1 WHERE id=$1`, [busca_id]);
+    return { cnpj, passou: false, motivo: 'radar_sem_perfil' };
+  }
   let { score, breakdown } = computeScore1(empresa, params);
   const corte = busca.corte_score ?? 60;
   // Importação por CNPJ: o usuário pediu explicitamente ESTA empresa — qualifica
@@ -315,9 +324,47 @@ function computeScore1(emp, params) {
     + (params.portes?.length ? W.PORTE : 0)
     + (params.capital_min ? W.CAPITAL : 0)
     + (params.simples != null ? W.SIMPLES : 0);
-  if (possivel > 0) score = Math.round(score / possivel * 100);
+  // Sem nenhum critério além de "situação ativa", não há o que medir: a escala
+  // relativa daria 100 a qualquer empresa ativa. Fica a nota crua (5), que não
+  // passa em corte nenhum que faça sentido.
+  if (possivel > W.SITUACAO_ATIVA) score = Math.round(score / possivel * 100);
+  else breakdown.push({ item: 'Radar sem critérios de perfil — nota não calculada', pts: 0 });
 
   return { score: Math.min(100, score), breakdown };
 }
 
 module.exports.provaPelaLista = provaPelaLista;
+
+// Leads que nasceram com a nota falsa (radar de semelhantes sem perfil → só
+// "situação ativa" → 100). Recalcula com o perfil atual do radar; quem não
+// passa no corte sai da lista de trabalho (Descartado, sem virar contraexemplo
+// — não foi o usuário que reprovou). Enviados ao CRM não mudam: só contam.
+async function recalcularNotasFalsas(pool) {
+  const { rows } = await pool.query(
+    `SELECT l.id, l.status, l.cnpj, b.criterios, b.corte_score, b.tipo
+       FROM leads l JOIN buscas b ON b.id = l.busca_id
+      WHERE b.tipo = 'lookalike' AND l.score = 100
+        AND jsonb_typeof(l.breakdown) = 'array' AND jsonb_array_length(l.breakdown) = 1
+        AND l.breakdown->0->>'item' ILIKE 'Situação ativa%'`);
+  const r = { analisados: rows.length, descartados: 0, mantidos: 0, enviados: 0, sem_perfil: 0 };
+  for (const l of rows) {
+    if (l.status === 'Enviado') { r.enviados++; continue; }
+    if (l.status === 'Descartado') continue;
+    const params = parseCriterios(l.criterios);
+    if (!params?.perfil) { r.sem_perfil++; continue; }
+    const { rows: [emp] } = await pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [l.cnpj]);
+    if (!emp) continue;
+    const { score, breakdown } = computeScore1(emp, params);
+    const passa = score >= (l.corte_score ?? 60);
+    await pool.query(
+      `UPDATE leads SET score=$2, breakdown=$3::jsonb,
+              status = CASE WHEN $4 THEN status ELSE 'Descartado' END,
+              motivo_descarte = CASE WHEN $4 THEN motivo_descarte ELSE 'score_recalculado' END,
+              contato_pendente = CASE WHEN $4 THEN contato_pendente ELSE false END,
+              atualizado_em=now() WHERE id=$1`,
+      [l.id, score, JSON.stringify(breakdown), passa]);
+    if (passa) r.mantidos++; else r.descartados++;
+  }
+  return r;
+}
+module.exports.recalcularNotasFalsas = recalcularNotasFalsas;

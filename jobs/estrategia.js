@@ -592,7 +592,7 @@ async function passo(db, pool, queues) {
     if (b) {
       const crit = b.criterios || {};
       // Semelhantes refaz o perfil: a lista pode ter crescido (conversões do CRM).
-      if (b.tipo === 'lookalike') delete crit.params;
+      if (b.tipo === 'lookalike') crit.reperfilar = true;
       await db.query(
         `UPDATE buscas SET status='Ativa', criterios=$2::jsonb, descoberta_token=NULL, descoberta_fase=1,
                            ultima_ativ=now() WHERE id=$1`, [b.id, JSON.stringify(crit)]);
