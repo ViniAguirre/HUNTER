@@ -184,6 +184,11 @@ DADOS ÚTEIS sobre a empresa antes de ele fazer o contato. Regras:
 (4) NÃO invente. Se a base for rala (sem texto de site), diga menos e marque como provável — nunca
     invente números, clientes, marcas ou fatos. Prefira "provavelmente/tende a" a afirmar sem base.
 (5) Seja CONCRETO — evite frases de efeito e generalidades que serviriam pra qualquer empresa.
+(6) ENCAIXE HONESTO. Sugerir que a empresa amplie o mix, revenda ou adicione uma linha do que nós
+    vendemos só vale quando ela JÁ atua em algo complementar (vende produtos da mesma categoria ou
+    vizinhos, atende o mesmo cliente final, usa o mesmo canal) — e aí diga qual é essa ponte
+    concreta. Se a atividade dela não tem relação com o que vendemos, NÃO invente uma ponte nem
+    transforme isso em oportunidade: diga com clareza que a aderência é baixa.
 Responda SEMPRE em português do Brasil e SOMENTE com um JSON válido no formato pedido.`;
 
 function montarPrompt(empresa, contexto, perfilEmpresa) {
@@ -222,7 +227,9 @@ function montarPrompt(empresa, contexto, perfilEmpresa) {
       (p.exemplos?.length ? `, por exemplo: ${p.exemplos.join(', ')}` : '') +
       `. Use isso no resumo e no sinal comercial como prova social: empresas parecidas já compram.\n`
     : (p ? `\nAtenção: esta empresa é do segmento "${p.rotulo}", que NÃO aparece entre os clientes atuais do vendedor ` +
-      `usados no radar. Diga isso no sinal comercial: é um perfil novo, a abordagem precisa explicar o encaixe.\n` : '');
+      `usados no radar. Avalie com honestidade se existe encaixe real (regra 6): se ela já atua em algo ` +
+      `complementar ao que vendemos, diga qual é a ponte; se não, diga que a aderência é baixa — não ` +
+      `invente uma oportunidade de ampliar o mix.\n` : '');
   return `Empresa a analisar:\n${linhas.join('\n')}\n` + prova +
     (motivoMatch ? `\nPor que essa empresa deu match no perfil buscado (Score ${perfilEmpresa?.score ?? '—'}/100):\n${motivoMatch}\n` : '') +
     (resumoSite ? `\nO que o site oficial da empresa diz sobre ela mesma:\n"${resumoSite}"\n` : '') +
@@ -238,8 +245,17 @@ function montarPrompt(empresa, contexto, perfilEmpresa) {
     "oportunidades": ["onde a nossa solução gera ganho concreto pra ela"],
     "ameacas": ["objeções/obstáculos prováveis ao fechamento (já ter fornecedor, orçamento, momento)"]
   },
-  "sinal_comercial": "1-2 frases: o dado/contexto mais relevante pra CONHECER antes de abordar (timing, maturidade, característica que muda a abordagem) — um INSIGHT, não uma frase pra dizer ao cliente"
+  "sinal_comercial": "1-2 frases: o dado/contexto mais relevante pra CONHECER antes de abordar (timing, maturidade, característica que muda a abordagem) — um INSIGHT, não uma frase pra dizer ao cliente",
+  "aderencia": { "nivel": "alta | media | baixa — o quanto a atividade desta empresa tem a ver com o que NÓS vendemos (regra 6)", "motivo": "1 frase com o porquê, citando o que ela faz/vende" }
 }`;
+}
+
+// Aderência ao que vendemos: a IA devolve nível + motivo; aqui só se aceita um
+// dos três níveis (qualquer outra coisa vira null — a tela não mostra).
+function aderenciaDe(a) {
+  const nivel = String(a?.nivel || a || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
+  const n = ['alta', 'media', 'baixa'].find(x => nivel.startsWith(x));
+  return n ? { nivel: n, motivo: String(a?.motivo || '').trim().slice(0, 300) } : null;
 }
 
 // Gera o briefing SWOT. Retorna objeto já parseado (ou lança em erro de API).
@@ -299,6 +315,7 @@ async function gerarSwot(empresa, { apiKey, modelo, contexto, perfilEmpresa, pro
         ameacas: arr(parsed.swot?.ameacas),
       },
       sinal_comercial: parsed.sinal_comercial || '',
+      aderencia: aderenciaDe(parsed.aderencia),
       baseado_em_site: !!perfilEmpresa?.resumoSite,
       baseado_em_match: !!(perfilEmpresa?.breakdown && perfilEmpresa.breakdown.length),
       modelo: body.model,

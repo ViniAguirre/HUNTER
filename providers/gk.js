@@ -437,6 +437,8 @@ function montarBriefing(empresa, lead, extras = {}) {
     lista('Fraquezas', s.fraquezas),
     lista('Oportunidades', s.oportunidades),
     lista('Ameaças', s.ameacas),
+    sw.aderencia?.nivel ? `*Aderência ao que vendemos*\n${{ alta: 'Alta', media: 'Média', baixa: 'Baixa' }[sw.aderencia.nivel] || sw.aderencia.nivel}`
+      + (sw.aderencia.motivo ? ` — ${sw.aderencia.motivo}` : '') : '',
     sw.sinal_comercial ? `*Sinal comercial*\n${sw.sinal_comercial}` : '',
     motivos ? `*Por que deu match (score)*\n${motivos}` : '',
     cv.resumo_site ? `*O que o site da empresa diz*\n${cv.resumo_site}` : '',

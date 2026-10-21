@@ -303,6 +303,11 @@ const MOTIVO_SWOT = {
   sem_firmografia: 'faltam os dados de cadastro desta empresa. Use “Re-enriquecer” e tente de novo.',
   sem_material: 'não há material sobre a empresa (site ou perfil) para a IA analisar — só com o cadastro a análise sairia genérica. Use “Re-enriquecer” para buscar de novo, ou cadastre o site em “Editar” e clique em “Refazer análise”.',
 };
+// Aderência ao que o cliente vende (a IA avalia no briefing): alta, média ou
+// baixa, com o porquê. Baixa = a atividade do lead não tem ponte com o produto.
+const ADERENCIA = { alta: ['Alta', C.green], media: ['Média', C.amber], baixa: ['Baixa', C.red] };
+const textoAderencia = a => a && ADERENCIA[a.nivel] ? `${ADERENCIA[a.nivel][0]}${a.motivo ? ' — ' + a.motivo : ''}` : '';
+
 function briefingVazio(sw) {
   if (!sw || typeof sw !== 'object') return true;
   const n = v => Array.isArray(v) ? v.length : 0;
@@ -1129,6 +1134,7 @@ function secaoLeadHtml(l) {
       ${quad('Forças', sw.swot?.forcas)}${quad('Fraquezas', sw.swot?.fraquezas)}
       ${quad('Oportunidades', sw.swot?.oportunidades)}${quad('Ameaças', sw.swot?.ameacas)}
     </div>
+    ${sw.aderencia ? `<div class="callout" style="margin-top:12px"><b>Aderência ao que vendemos:</b> ${esc(textoAderencia(sw.aderencia))}</div>` : ''}
     ${(sw.sinal_comercial || sw.gancho) ? `<div class="callout" style="margin-top:12px"><b>Sinal comercial:</b> ${esc(sw.sinal_comercial || sw.gancho)}</div>` : ''}
   ` : ''}
   <div class="rod">Gerado pelo Hunter em ${esc(new Date().toLocaleString('pt-BR'))}</div>
@@ -7867,6 +7873,18 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                 ))}
               </div>
               )}
+              {l.swot.aderencia && ADERENCIA[l.swot.aderencia.nivel] && (() => {
+                const [rot, cor] = ADERENCIA[l.swot.aderencia.nivel];
+                return (
+                  <div style={{ display:'flex', alignItems:'flex-start', gap:10, padding:'10px 14px', marginBottom:10, borderRadius:11,
+                    border:`1px solid ${cor}`, background:`color-mix(in srgb, ${cor} 8%, transparent)` }}>
+                    <span style={{ fontSize:10.5, fontWeight:600, color:cor, textTransform:'uppercase', letterSpacing:'.06em', whiteSpace:'nowrap', marginTop:2 }}>
+                      Aderência {rot}
+                    </span>
+                    {l.swot.aderencia.motivo && <span style={{ fontSize:12.5, lineHeight:1.5, color:'var(--text)' }}>{l.swot.aderencia.motivo}</span>}
+                  </div>
+                );
+              })()}
               {(l.swot.sinal_comercial || l.swot.gancho) && (
                 <div style={{ background:'rgba(58,142,255,.07)', border:'1px solid rgba(58,142,255,.22)', borderRadius:11, padding:14, marginBottom:10 }}>
                   <div style={{ fontSize:10.5, fontWeight:600, color:C.blue, marginBottom:5, textTransform:'uppercase', letterSpacing:'.06em' }}>Sinal comercial</div>
@@ -7887,6 +7905,7 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                     [l.swot.resumo,
                      l.swot.fatos_uteis?.length ? 'Fatos úteis:\n- ' + l.swot.fatos_uteis.join('\n- ') : '',
                      l.swot.dores_provaveis?.length ? 'Dores prováveis:\n- ' + l.swot.dores_provaveis.join('\n- ') : '',
+                     l.swot.aderencia ? 'Aderência ao que vendemos: ' + textoAderencia(l.swot.aderencia) : '',
                      (l.swot.sinal_comercial || l.swot.gancho) ? 'Sinal comercial: ' + (l.swot.sinal_comercial || l.swot.gancho) : ''].filter(Boolean).join('\n\n')).catch(()=>{})}
                   style={{ display:'flex', alignItems:'center', gap:6, height:31, padding:'0 12px',
                     borderRadius:7, border:'1px solid rgba(58,142,255,.3)', background:'transparent',
