@@ -747,6 +747,9 @@ async function init() {
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS crm_conexao_id   TEXT;
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS crm_conexao_nome TEXT;
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS crm_conexao_em   TIMESTAMPTZ;
+    -- Por que o briefing não saiu (categoria, sem nome de provedor) e quando.
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS swot_erro        TEXT;
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS swot_erro_em     TIMESTAMPTZ;
     -- Atendimento no CRM GK: o ticket aberto pro lead, a fila em que ele está e
     -- se alguém já pegou (aguardando → em_atendimento → finalizado). É o que a
     -- Estratégia mostra por fila (jobs/atendimento.js atualiza).

@@ -40,6 +40,25 @@ function compilarPerfil(perfil) {
   return linhas.length ? `Perfil comercial deste cliente (fichamento — use pra calibrar a análise e o SWOT):\n${linhas.join('\n')}` : '';
 }
 
+// Por que o briefing não saiu, em categorias — sem nome de provedor nem de
+// modelo (sigilo.js): a tela do lead mostra isso pra qualquer usuário. O erro
+// cru fica no job (Monitoramento, só master).
+function motivoFalhaIA(falhas) {
+  const txt = falhas.map(f => String(f.erro || '')).join(' | ').toLowerCase();
+  if (/http 402|insufficient|credit|cr[eé]dito|quota|billing/.test(txt)) return 'ia_sem_credito';
+  if (/http 401|http 403|invalid.*key|chave/.test(txt)) return 'ia_chave_invalida';
+  if (/http 429|rate.?limit|too many/.test(txt)) return 'ia_limite';
+  if (/vazia|empty|sem conte[uú]do/.test(txt)) return 'ia_resposta_vazia';
+  if (/json/.test(txt)) return 'ia_resposta_invalida';
+  if (/timeout|timed out|econnaborted|etimedout/.test(txt)) return 'ia_tempo';
+  return 'ia_falhou';
+}
+
+async function registrarFalha(pool, lead_id, motivo) {
+  await pool.query(`UPDATE leads SET swot_erro=$2, swot_erro_em=now() WHERE id=$1`, [lead_id, motivo])
+    .catch(e => console.error('[swot] gravar motivo da falha:', e.message));
+}
+
 module.exports = async function swot(job, pool, queues) {
   const { cnpj, busca_id, lead_id } = job.data;
 
@@ -58,6 +77,7 @@ module.exports = async function swot(job, pool, queues) {
   if (!igs.length) {
     console.warn(`[swot] lead ${lead_id} (${cnpj}): NENHUMA integração de IA ativa ` +
       `(Integrações → Inteligência: salve a chave E clique em "Ativar"). Briefing não gerado.`);
+    await registrarFalha(pool, lead_id, 'sem_ia');
   }
 
   if (igs.length) {
@@ -105,14 +125,18 @@ module.exports = async function swot(job, pool, queues) {
         }
       }
       // Todas as chaves falharam → job re-tenta com backoff.
-      if (!briefing) throw new Error('IA: todos os provedores falharam — ' + falhas.map(f => f.erro).join(' | '));
+      if (!briefing) {
+        await registrarFalha(pool, lead_id, motivoFalhaIA(falhas));
+        throw new Error('IA: todos os provedores falharam — ' + falhas.map(f => f.erro).join(' | '));
+      }
       await pool.query(
-        `UPDATE leads SET swot=$2::jsonb, estagio='pronto', atualizado_em=now() WHERE id=$1`,
+        `UPDATE leads SET swot=$2::jsonb, estagio='pronto', swot_erro=NULL, swot_erro_em=NULL, atualizado_em=now() WHERE id=$1`,
         [lead_id, JSON.stringify(briefing)]
       );
       console.log(`[swot] lead ${lead_id} (${cnpj}): briefing gerado (${usado.provedor} · ${usado.modelo || 'padrão'}).`);
     } else {
       console.warn(`[swot] lead ${lead_id}: empresa ${cnpj} não encontrada na base — briefing não gerado.`);
+      await registrarFalha(pool, lead_id, 'sem_firmografia');
     }
   }
   // Sem chave IA: o lead segue 'scored' (sem gasto). Mesmo assim pode ir ao CRM.
@@ -134,3 +158,5 @@ module.exports = async function swot(job, pool, queues) {
 
   return { cnpj, lead_id, swot: igs.length > 0, crm_auto: crmAuto, contato_ok: contatoOk, ...(usado ? { ia: usado } : {}) };
 };
+
+module.exports.motivoFalhaIA = motivoFalhaIA;

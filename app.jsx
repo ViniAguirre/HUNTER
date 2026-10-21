@@ -290,6 +290,18 @@ const statusColors = { Qualificado:C.gold, Novo:C.blue, Enviado:C.green, Incompl
 // hoje, resposta vazia da IA virava objeto com a forma certa e todos os campos
 // em branco. A tela precisa olhar o CONTEÚDO, não a presença do objeto — senão
 // mostra quatro quadrantes com "—" como se fosse análise.
+// O que dizer quando a IA não gerou o briefing (jobs/swot.js grava a categoria).
+const MOTIVO_SWOT = {
+  sem_ia: 'nenhuma inteligência artificial está ativa. O administrador ativa em Integrações.',
+  ia_sem_credito: 'a inteligência artificial está sem crédito. Fale com o administrador.',
+  ia_chave_invalida: 'a chave da inteligência artificial foi recusada. Fale com o administrador.',
+  ia_limite: 'a inteligência artificial recusou por excesso de pedidos. Tente de novo em alguns minutos.',
+  ia_resposta_vazia: 'a IA respondeu vazio. Tente de novo; se repetir, o administrador pode trocar o modelo em Integrações.',
+  ia_resposta_invalida: 'a IA respondeu num formato inválido. Tente de novo.',
+  ia_tempo: 'a IA demorou demais para responder. Tente de novo.',
+  ia_falhou: 'a IA não respondeu. Tente de novo em alguns minutos.',
+  sem_firmografia: 'faltam os dados de cadastro desta empresa. Use “Re-enriquecer” e tente de novo.',
+};
 function briefingVazio(sw) {
   if (!sw || typeof sw !== 'object') return true;
   const n = v => Array.isArray(v) ? v.length : 0;
@@ -7233,6 +7245,7 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
     // IA devolvia nada. Agora briefing vazio nem chega a ser gravado — o job
     // falha — e a ausência de carimbo novo é justamente o sinal de que falhou.
     const antes = String(lead?.swot?.gerado_em || '');
+    const erroAntes = String(lead?.swot_erro_em || '');
     try {
       const r = await fetch('/api/leads/acoes', {
         method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
@@ -7252,6 +7265,13 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
         const novo = await fetch('/api/leads/' + leadId, { credentials:'same-origin' })
           .then(x => x.ok ? x.json() : null).catch(() => null);
         if (novo && String(novo.swot?.gerado_em || '') !== antes) { setLead(novo); return; }
+        // Falhou: mostra o motivo já, em vez de esperar 3 minutos à toa. O job
+        // ainda tenta de novo sozinho; se der certo, o briefing aparece ao reabrir.
+        if (novo?.swot_erro_em && String(novo.swot_erro_em) !== erroAntes) {
+          setLead(novo);
+          window.alert('A análise não saiu: ' + (MOTIVO_SWOT[novo.swot_erro] || MOTIVO_SWOT.ia_falhou));
+          return;
+        }
       }
       window.alert('A análise ainda não voltou depois de quase 3 minutos. Ela pode chegar mesmo assim — ' +
         'reabra o lead daqui a pouco antes de tentar de novo. Se continuar sem vir, o motivo costuma ser o modelo ' +
@@ -7577,10 +7597,17 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                   Briefing SWOT · IA
                 </span>
               </div>
+              {/* Sem briefing: diz POR QUÊ. Lead sem contato não ganha análise
+                  automática (economia de IA) — isso não é falha. Falha de verdade
+                  vem gravada pelo job, em categoria (sem nome de provedor). */}
               {briefingVazio(l.swot) && (
-                <p style={{ fontSize:12.5, lineHeight:1.55, margin:'0 0 12px', color:'var(--dim)' }}>
-                  A análise ainda não foi gerada para este lead — a IA falhou ou devolveu resposta vazia.
-                  Clique em “Refazer análise” abaixo. Os contatos não são alterados.
+                <p style={{ fontSize:12.5, lineHeight:1.55, margin:'0 0 12px', color: l.swot_erro ? C.red : 'var(--dim)' }}>
+                  {l.swot_erro
+                    ? <>A última tentativa de análise falhou{l.swot_erro_em ? ` (${timeAgo(l.swot_erro_em)})` : ''}: {MOTIVO_SWOT[l.swot_erro] || MOTIVO_SWOT.ia_falhou}</>
+                    : l.contato_status === 'sem_contato'
+                    ? <>A análise não é gerada automaticamente para lead sem contato — economiza IA em empresa que ainda não dá pra abordar.
+                        Ela sai sozinha quando o contato for encontrado, ou clique em “Refazer análise” para gerar agora.</>
+                    : <>A análise ainda não foi gerada para este lead. Clique em “Refazer análise” abaixo. Os contatos não são alterados.</>}
                 </p>
               )}
               {l.swot.resumo && (
