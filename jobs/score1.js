@@ -179,7 +179,46 @@ module.exports = async function score1(job, pool, queues) {
     }
   }
 
-  const vagas = await orcamento.disponivel(pool);
+  const breakdownJson = JSON.stringify(breakdown);
+  // crm_ref nasce JUNTO com o lead, derivado de (radar, CNPJ). Antes ele só era
+  // sorteado na hora de enviar ao CRM — e o Tracking Hub precisa do mesmo id já
+  // na descoberta, senão cada etapa do funil vira uma pessoa diferente lá. Lead
+  // antigo mantém o ref que já tem (o CRM devolve esse valor de volta).
+  const ref = tracking.hunterId(busca_id, cnpj);
+  // Vaga no teto → lead → consumo, numa transação com trava por cliente. O
+  // Score 1 roda 10 empresas em paralelo: cada uma conferia a vaga antes de as
+  // outras registrarem o consumo, e na última vaga do dia/hora passavam várias
+  // — o limite diário estourava. Com a trava, uma confere e consome por vez.
+  // O consumo fica registrado mesmo se o lead for apagado depois (ex.: a
+  // validação não achou telefone): o crédito de CNPJá e a busca de contato JÁ
+  // foram gastos, então a vaga não volta pro caixa.
+  let vagas, lead;
+  const db = await pool.connect();
+  try {
+    await db.query('BEGIN');
+    await db.query(`SELECT pg_advisory_xact_lock(hashtext('hunter-orcamento:' || COALESCE(current_setting('app.tenant_id', true), '')))`);
+    vagas = await orcamento.disponivel(db);
+    if (vagas.dia > 0 && vagas.hora > 0) {
+      ({ rows: [lead] } = await db.query(`
+        INSERT INTO leads (busca_id, empresa_cnpj, cnpj, fantasia, razao, setor, cnae, porte, cidade, uf,
+          decisor, cargo, score, breakdown, situacao, abertura, capital, endereco, estagio, status, origem, crm_ref)
+        VALUES ($1,$2,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15,$16,$17,'scored','Novo','cnpja',$18)
+        ON CONFLICT (busca_id, cnpj) DO NOTHING
+        RETURNING id`,
+        [busca_id, cnpj, empresa.fantasia || empresa.razao, empresa.razao, empresa.setor, empresa.cnae,
+         empresa.porte, empresa.cidade, empresa.uf, empresa.decisor, empresa.cargo, score, breakdownJson,
+         empresa.situacao, empresa.abertura, empresa.capital, empresa.endereco, ref]
+      ));
+      if (lead) await orcamento.registrarLead(db);
+    }
+    await db.query('COMMIT');
+  } catch (e) {
+    await db.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    db.release();
+  }
+
   if (vagas.dia <= 0 || vagas.hora <= 0) {
     const motivo = vagas.foraDaJanela ? 'fora_da_janela' : (vagas.dia <= 0 ? 'limite_diario' : 'cadencia_horaria');
     const desde = job.data.aguardando_desde || Date.now();
@@ -200,33 +239,10 @@ module.exports = async function score1(job, pool, queues) {
       volta_em_min: Math.round((vagas.esperarMs || 0) / 60_000) };
   }
 
-  const breakdownJson = JSON.stringify(breakdown);
-  // crm_ref nasce JUNTO com o lead, derivado de (radar, CNPJ). Antes ele só era
-  // sorteado na hora de enviar ao CRM — e o Tracking Hub precisa do mesmo id já
-  // na descoberta, senão cada etapa do funil vira uma pessoa diferente lá. Lead
-  // antigo mantém o ref que já tem (o CRM devolve esse valor de volta).
-  const ref = tracking.hunterId(busca_id, cnpj);
-  const { rows: [lead] } = await pool.query(`
-    INSERT INTO leads (busca_id, empresa_cnpj, cnpj, fantasia, razao, setor, cnae, porte, cidade, uf,
-      decisor, cargo, score, breakdown, situacao, abertura, capital, endereco, estagio, status, origem, crm_ref)
-    VALUES ($1,$2,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,$14,$15,$16,$17,'scored','Novo','cnpja',$18)
-    ON CONFLICT (busca_id, cnpj) DO NOTHING
-    RETURNING id`,
-    [busca_id, cnpj, empresa.fantasia || empresa.razao, empresa.razao, empresa.setor, empresa.cnae,
-     empresa.porte, empresa.cidade, empresa.uf, empresa.decisor, empresa.cargo, score, breakdownJson,
-     empresa.situacao, empresa.abertura, empresa.capital, empresa.endereco, ref]
-  );
-
   if (!lead) {
     // Corrida rara: essa busca já tinha criado o lead pra este CNPJ. Nada a fazer.
     return { cnpj, score, corte, passou: true, skipped: 'lead_ja_existe' };
   }
-
-  // Consome 1 vaga do teto do dia/hora. Fica registrado mesmo se o lead for
-  // apagado depois (ex.: validação não achou telefone) — o crédito de CNPJá e a
-  // busca de contato JÁ foram gastos, então a vaga não pode voltar pro caixa.
-  await orcamento.registrarLead(pool).catch(e =>
-    console.error(`[score1] falha ao registrar consumo do lead ${lead.id}: ${e.message}`));
 
   // Trava o CNPJ pra sempre: nenhuma outra busca (nem esta, de novo) volta a
   // criar lead pra ele. Só sobe o estado (nunca rebaixa de em_crm pra qualificado).

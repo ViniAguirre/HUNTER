@@ -1702,7 +1702,7 @@ app.post('/api/buscas', requireAuth, requireEditor, async (req, res) => {
   const ritmo = typeof req.body.ritmo === 'number' ? req.body.ritmo : 120;
   const criterios = req.body.criterios || {};
   const corteScore = typeof req.body.corte_score === 'number'
-    ? Math.max(0, Math.min(100, req.body.corte_score)) : 60;
+    ? Math.max(0, Math.min(100, req.body.corte_score)) : await cortePadrao();
   const crmAuto = !!req.body.crm_auto;
   // Fila do CRM específica deste radar (opcional). Vazio = usa a fila padrão
   // configurada em Integrações.
@@ -3404,6 +3404,20 @@ app.get('/api/config', requireAuth, requireMaster, async (req, res) => {
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
+// Padrões pros formulários de radar/pauta — qualquer usuário logado. O
+// /api/config inteiro é só do master (tem segredos), e o formulário que lia
+// dele caía no 60 fixo pra todo o resto do time.
+async function cortePadrao() {
+  const { rows: [c] } = await pool.query(`SELECT corte_padrao FROM config`).catch(() => ({ rows: [] }));
+  return Number.isInteger(c?.corte_padrao) ? c.corte_padrao : 60;
+}
+app.get('/api/config/padroes', requireAuth, async (req, res) => {
+  try {
+    const { rows: [c] } = await pool.query(`SELECT corte_padrao, descoberta_modo_padrao FROM config`);
+    res.json({ corte_padrao: c?.corte_padrao ?? 60, descoberta_modo_padrao: c?.descoberta_modo_padrao || 'cnpja' });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
 app.patch('/api/config', requireAuth, requireMaster, async (req, res) => {
   const b = req.body || {};
   const sets = [], vals = [];
@@ -3803,8 +3817,8 @@ async function garantirBuscaLookalikeAuto(lista, total) {
     : /^semelhantes/i.test(lista) ? lista : `Semelhantes — ${lista}`;
   const { rows:[nova] } = await pool.query(
     `INSERT INTO buscas (nome, tipo, status, lista, ritmo, criterios, corte_score, criador_id, ultima_ativ)
-     VALUES ($3,'lookalike',$1,$4,100,'{"proposta_valor":""}'::jsonb,60,$2,now())
-     RETURNING id`, [status, u?.id || null, nomeRadar, lista]
+     VALUES ($3,'lookalike',$1,$4,100,'{"proposta_valor":""}'::jsonb,$5,$2,now())
+     RETURNING id`, [status, u?.id || null, nomeRadar, lista, await cortePadrao()]
   );
   return nova.id;
 }
