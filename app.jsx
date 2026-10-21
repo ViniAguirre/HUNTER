@@ -4591,6 +4591,8 @@ function NovaBusca({ onSalvar, inicial, modoPauta = false, pautaId = null, onCan
   const [expandirModo, setExpandirModo] = useState(inicial?.expandir_modo === 'cidades' ? 'cidades' : 'estados');
   const [expandirExcluir, setExpandirExcluir] = useState(Array.isArray(inicial?.expandir_excluir) ? inicial.expandir_excluir : []);
   const [corte, setCorte] = useState(inicial?.corte_score ?? 60);
+  // Mínimo geral (Configurações): abaixo dele o radar roda no mínimo.
+  const [corteMin, setCorteMin] = useState(0);
   const [saving, setSaving] = useState(false);
   const [ufs, setUfs] = useState(!modoPauta && Array.isArray(iniP.ufs) ? iniP.ufs : []);
   const [portes, setPortes] = useState(Array.isArray(iniP.portes) ? iniP.portes : []);
@@ -4763,7 +4765,12 @@ function NovaBusca({ onSalvar, inicial, modoPauta = false, pautaId = null, onCan
     fetch('/api/config/padroes', { credentials:'same-origin' }).then(r => r.json())
       // Só pra formulário em branco: ao duplicar um radar ou editar uma pauta,
       // o padrão atropelava o corte e o modo que vieram dela.
-      .then(c => { if (inicial) return; if (c?.corte_padrao != null) setCorte(c.corte_padrao); if (c?.descoberta_modo_padrao) setModoDesc(c.descoberta_modo_padrao); })
+      .then(c => {
+        if (c?.corte_padrao != null) setCorteMin(c.corte_padrao);
+        if (inicial) return;
+        if (c?.corte_padrao != null) setCorte(c.corte_padrao);
+        if (c?.descoberta_modo_padrao) setModoDesc(c.descoberta_modo_padrao);
+      })
       .catch(() => {});
   }, []);
 
@@ -5472,6 +5479,11 @@ function NovaBusca({ onSalvar, inicial, modoPauta = false, pautaId = null, onCan
             <div style={{ display:'flex', justifyContent:'space-between', fontSize:10.5, color:'var(--faint)', marginTop:5 }}>
               <span>permissivo</span><span>rigoroso</span>
             </div>
+            {corte < corteMin && (
+              <div style={{ fontSize:11.5, color:C.amber, marginTop:8, lineHeight:1.4 }}>
+                Abaixo do corte mínimo geral ({corteMin} pts, em Configurações): este radar vai rodar em <b>{corteMin} pts</b>.
+              </div>
+            )}
             <div style={{ fontSize:11, color:'var(--faint)', marginTop:8, lineHeight:1.4 }}>
               O volume é controlado por um teto diário geral (em Configurações), não por radar — o Hunter faz várias
               camadas de garimpo e qualificação, então o limite diário já basta.
@@ -6624,7 +6636,7 @@ function Config() {
   const salvar = async () => {
     // Campo numérico apagado ia vazio e o servidor ignorava em silêncio — a
     // tela dizia "salvas" com o valor antigo ainda valendo.
-    const vazio = [['limite_diario', 'Limite diário de leads'], ['corte_padrao', 'Corte de score'],
+    const vazio = [['limite_diario', 'Limite diário de leads'], ['corte_padrao', 'Corte mínimo de score'],
       ['ttl_cache_dias', 'TTL de cache']].find(([k]) => cfg[k] === '' || cfg[k] == null || isNaN(+cfg[k]));
     if (vazio) { setMsg({ ok:false, txt:`Preencha "${vazio[1]}".` }); return; }
     setSalvando(true); setMsg(null);
@@ -6672,7 +6684,7 @@ function Config() {
         <p style={{ fontSize:12.5, color:'var(--faint)', margin:'0 0 18px' }}>Valores iniciais aplicados a novos radares e ao motor.</p>
         <div className="h-cards" style={{ '--card':'200px', gap:16 }}>
           {numField('Limite diário de leads', 'limite_diario', 'leads/dia')}
-          {numField('Corte de score', 'corte_padrao', 'pts')}
+          {numField('Corte mínimo de score', 'corte_padrao', 'pts')}
           {numField('TTL de cache', 'ttl_cache_dias', 'dias')}
         </div>
         <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:12, lineHeight:1.5 }}>
@@ -6680,8 +6692,9 @@ function Config() {
           orçamento. Cada lead captado consome uma vaga <b>na hora em que nasce</b>: se ele for descartado depois (por
           exemplo, quando o enriquecimento não acha telefone), a vaga <b>não</b> volta — a consulta paga já foi feita.
           Ao atingir o teto, a captação pausa e retoma no dia seguinte. 0 = sem teto.
-          {' '}O <b>corte de score</b> é a nota mínima que vem marcada ao criar um radar ou pauta (cada um pode mudar a sua;
-          os que já existem não mudam). O <b>TTL de cache</b> é por quantos dias os dados de uma empresa já consultada são
+          {' '}O <b>corte mínimo de score</b> vale pra todos os radares, inclusive os que já existem: radar com corte mais
+          baixo roda no mínimo (mínimo 40, radar em 30 → roda em 40); radar com corte mais alto mantém o dele (radar em
+          70 → roda em 70). Também é o valor que vem marcado ao criar um radar ou pauta. O <b>TTL de cache</b> é por quantos dias os dados de uma empresa já consultada são
           reaproveitados sem consultar de novo.
         </div>
 

@@ -1842,7 +1842,7 @@ app.get('/api/buscas/:id/qualidade', requireAuth, async (req, res) => {
     }).sort((a, c) => ((ordemNivel[a.nivel] ?? 3) - (ordemNivel[c.nivel] ?? 3)) || ((a.score || 0) - (c.score || 0)));
     const conta = n => leads.filter(l => l.nivel === n).length;
     res.json({
-      tipo: b.tipo, corte: b.corte_score, tem_alvo: alvo.length > 0,
+      tipo: b.tipo, corte: Math.max(b.corte_score ?? 60, await cortePadrao()), tem_alvo: alvo.length > 0,
       resumo: { total: leads.length, nucleo: conta('nucleo'), ponta: conta('ponta'), fora: conta('fora') },
       // As atividades que definem o alvo (as 8 mais comuns entre os clientes).
       alvo: alvo.filter(x => !x.so_negativo).slice(0, 8)
