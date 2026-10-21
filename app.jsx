@@ -851,23 +851,32 @@ function RadaresFunil({ radares, selecionado, onSelecionar, onAbrir, carregando 
   // (Leads). Aqui são 5 colunas curtas que cabem em 520px — dividindo a linha com
   // o funil, o modo cartão disparava já no desktop e empilhava rótulo e número
   // sem necessidade. Se estreitar demais, rola na horizontal.
+  // A altura do cartão acompanha a do funil ao lado (o miolo é absoluto e não
+  // empurra a linha da grade): com muitos radares, a lista rola por dentro em
+  // vez de esticar a linha e deixar um vão vazio embaixo do funil. Em tela
+  // estreita (um embaixo do outro) volta ao normal, com altura máxima.
   return (
-    <div style={{ background:'var(--panel)', border:'1px solid var(--border)',
-      borderRadius:14, overflow:'hidden' }}>
+    <div className="h-radares-funil" style={{ background:'var(--panel)', border:'1px solid var(--border)',
+      borderRadius:14, overflow:'hidden', position:'relative', minHeight:300 }}>
+      <div className="h-radares-funil-in" style={{ position:'absolute', inset:0, display:'flex', flexDirection:'column' }}>
       <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between',
         gap:10, padding:'14px 16px 12px' }}>
-        <h3 style={{ fontSize:14, fontWeight:600, margin:0 }}>Radares no funil</h3>
+        <h3 style={{ fontSize:14, fontWeight:600, margin:0 }}>
+          Radares no funil
+          {!carregando && radares.length > 0 && <span style={{ fontSize:11.5, fontWeight:400, color:'var(--faint)' }}> · {radares.length}</span>}
+        </h3>
         {selecionado != null && (
           <button onClick={() => onSelecionar(null)}
             style={{ background:'none', border:'none', color:C.blue, fontSize:12,
               cursor:'pointer', fontFamily:'inherit', padding:0 }}>Ver todos</button>
         )}
       </div>
-      <div className="h-scroll">
+      <div className="h-scroll" style={{ flex:1, minHeight:0, overflow:'auto' }}>
       <div className="h-tw" style={{ '--tw':'430px' }}>
         <div className="h-thead" style={{ display:'grid', gridTemplateColumns:cols, alignItems:'center',
           gap:8, padding:'10px 16px', borderTop:'1px solid var(--border)', borderBottom:'1px solid var(--border)',
-          fontSize:10.5, fontWeight:600, letterSpacing:'.04em', color:'var(--faint)', textTransform:'uppercase' }}>
+          fontSize:10.5, fontWeight:600, letterSpacing:'.04em', color:'var(--faint)', textTransform:'uppercase',
+          position:'sticky', top:0, zIndex:1, background:'var(--panel)' }}>
           <div>Radar</div><div style={{ textAlign:'right' }}>Encontr.</div>
           <div style={{ textAlign:'right' }}>Segment.</div>
           <div style={{ textAlign:'right' }}>Qualif.</div>
@@ -907,6 +916,7 @@ function RadaresFunil({ radares, selecionado, onSelecionar, onAbrir, carregando 
             </div>
           );
         })}
+      </div>
       </div>
       </div>
     </div>
