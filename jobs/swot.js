@@ -7,6 +7,13 @@
  * gasto, sem erro) — a formulação da abordagem em si é feita no CRM, não aqui.
  */
 const openai = require('../providers/openai');
+const google = require('../providers/google');
+
+// O agente só analisa com MATERIAL sobre a empresa: o texto do site dela (ou do
+// perfil na rede social). Só com o cadastro da Receita, a análise sai genérica
+// — e um closer não confia em SWOT que serve pra qualquer empresa do ramo.
+const MATERIAL_MIN = 40;
+const temMaterial = cv => String(cv?.resumo_site || '').trim().length >= MATERIAL_MIN;
 const { swotSemOrigem } = require('../sigilo');
 
 // Rótulos do fichamento comercial (tela "Agente SWOT", master). Precisa casar
@@ -40,6 +47,25 @@ function compilarPerfil(perfil) {
   return linhas.length ? `Perfil comercial deste cliente (fichamento — use pra calibrar a análise e o SWOT):\n${linhas.join('\n')}` : '';
 }
 
+// Por que o briefing não saiu, em categorias — sem nome de provedor nem de
+// modelo (sigilo.js): a tela do lead mostra isso pra qualquer usuário. O erro
+// cru fica no job (Monitoramento, só master).
+function motivoFalhaIA(falhas) {
+  const txt = falhas.map(f => String(f.erro || '')).join(' | ').toLowerCase();
+  if (/http 402|insufficient|credit|cr[eé]dito|quota|billing/.test(txt)) return 'ia_sem_credito';
+  if (/http 401|http 403|invalid.*key|chave/.test(txt)) return 'ia_chave_invalida';
+  if (/http 429|rate.?limit|too many/.test(txt)) return 'ia_limite';
+  if (/vazia|empty|sem conte[uú]do/.test(txt)) return 'ia_resposta_vazia';
+  if (/json/.test(txt)) return 'ia_resposta_invalida';
+  if (/timeout|timed out|econnaborted|etimedout/.test(txt)) return 'ia_tempo';
+  return 'ia_falhou';
+}
+
+async function registrarFalha(pool, lead_id, motivo) {
+  await pool.query(`UPDATE leads SET swot_erro=$2, swot_erro_em=now() WHERE id=$1`, [lead_id, motivo])
+    .catch(e => console.error('[swot] gravar motivo da falha:', e.message));
+}
+
 module.exports = async function swot(job, pool, queues) {
   const { cnpj, busca_id, lead_id } = job.data;
 
@@ -58,6 +84,7 @@ module.exports = async function swot(job, pool, queues) {
   if (!igs.length) {
     console.warn(`[swot] lead ${lead_id} (${cnpj}): NENHUMA integração de IA ativa ` +
       `(Integrações → Inteligência: salve a chave E clique em "Ativar"). Briefing não gerado.`);
+    await registrarFalha(pool, lead_id, 'sem_ia');
   }
 
   if (igs.length) {
@@ -70,13 +97,25 @@ module.exports = async function swot(job, pool, queues) {
       pool.query(`SELECT prova FROM decisoes_jev WHERE tipo='score1' AND busca_id=$1 AND cnpj=$2
                   AND prova IS NOT NULL ORDER BY id DESC LIMIT 1`, [busca_id, cnpj]).catch(() => ({ rows: [] })),
     ]);
-    if (empresa) {
+    let cvLead = lead?.contato_validado || {};
+    // Site cadastrado à mão (ou achado sem texto): lê agora pra ter material.
+    if (empresa && !temMaterial(cvLead) && cvLead.website) {
+      const s = await google.scrapeSite(cvLead.website).catch(() => null);
+      if (s?.resumo && s.resumo.trim().length >= MATERIAL_MIN) {
+        cvLead = { ...cvLead, resumo_site: s.resumo, resumo_fonte: s.resumo_fonte || 'home' };
+        await pool.query(`UPDATE leads SET contato_validado=$2::jsonb WHERE id=$1`, [lead_id, JSON.stringify(cvLead)]);
+      }
+    }
+    if (empresa && !temMaterial(cvLead)) {
+      console.log(`[swot] lead ${lead_id} (${cnpj}): sem material da empresa (site/perfil) — análise não gerada.`);
+      await registrarFalha(pool, lead_id, 'sem_material');
+    } else if (empresa) {
       const crit = busca?.criterios || {};
       const contexto = crit.params?.proposta_valor || crit.proposta_valor || crit.texto || '';
       // Contato validado (Google/Econodata) traz o resumo REAL do site da empresa
       // — dá ao agente algo específico pra falar, além do CNAE genérico. O
       // breakdown do Score 1 fundamenta a análise em POR QUE essa empresa deu match.
-      const cv = lead?.contato_validado || {};
+      const cv = cvLead;
       const perfilEmpresa = {
         resumoSite: cv.resumo_site || null, siteValidado: !!cv.validado, fonteContato: cv.fonte || null,
         score: lead?.score ?? null, breakdown: Array.isArray(lead?.breakdown) ? lead.breakdown : [],
@@ -105,14 +144,18 @@ module.exports = async function swot(job, pool, queues) {
         }
       }
       // Todas as chaves falharam → job re-tenta com backoff.
-      if (!briefing) throw new Error('IA: todos os provedores falharam — ' + falhas.map(f => f.erro).join(' | '));
+      if (!briefing) {
+        await registrarFalha(pool, lead_id, motivoFalhaIA(falhas));
+        throw new Error('IA: todos os provedores falharam — ' + falhas.map(f => f.erro).join(' | '));
+      }
       await pool.query(
-        `UPDATE leads SET swot=$2::jsonb, estagio='pronto', atualizado_em=now() WHERE id=$1`,
+        `UPDATE leads SET swot=$2::jsonb, estagio='pronto', swot_erro=NULL, swot_erro_em=NULL, atualizado_em=now() WHERE id=$1`,
         [lead_id, JSON.stringify(briefing)]
       );
       console.log(`[swot] lead ${lead_id} (${cnpj}): briefing gerado (${usado.provedor} · ${usado.modelo || 'padrão'}).`);
     } else {
       console.warn(`[swot] lead ${lead_id}: empresa ${cnpj} não encontrada na base — briefing não gerado.`);
+      await registrarFalha(pool, lead_id, 'sem_firmografia');
     }
   }
   // Sem chave IA: o lead segue 'scored' (sem gasto). Mesmo assim pode ir ao CRM.
@@ -134,3 +177,5 @@ module.exports = async function swot(job, pool, queues) {
 
   return { cnpj, lead_id, swot: igs.length > 0, crm_auto: crmAuto, contato_ok: contatoOk, ...(usado ? { ia: usado } : {}) };
 };
+
+module.exports.motivoFalhaIA = motivoFalhaIA;

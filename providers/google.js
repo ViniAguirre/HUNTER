@@ -581,7 +581,10 @@ function contatoDeRedeSocial(brutos, nome, cidade, uf) {
     if (!tel) continue;
     const dddUf = DDD_UF[parseInt(String(tel).slice(0, 2), 10)];
     if (!estado || dddUf !== estado) continue;
-    return { telefone: tel, email: extrairEmailDe(texto), perfil: b.url || b.site };
+    // O texto do perfil (bio/trecho) é o material que o agente SWOT usa quando
+    // a empresa não tem site.
+    const resumo = limpar(String(b.conteudo || '')).slice(0, 600);
+    return { telefone: tel, email: extrairEmailDe(texto), perfil: b.url || b.site, resumo: resumo.length >= 40 ? resumo : null };
   }
   return null;
 }
@@ -733,7 +736,7 @@ async function buscarContatoGratis(nome, cidade, uf, opts = {}) {
     diag.resultado = 'rede_social';
     return fim({
       encontrado: true, telefone: rs.telefone, whatsapp: rs.telefone, email: rs.email || null,
-      website: null, perfil_social: rs.perfil, resumo_site: null, resumo_fonte: null,
+      website: null, perfil_social: rs.perfil, resumo_site: rs.resumo, resumo_fonte: rs.resumo ? 'rede_social' : null,
       fonte: 'busca_gratis', fonte_busca: fonteBusca, site_conferido: 'rede_social',
       validado: true, validado_em: agora,
     });

@@ -618,6 +618,19 @@ const statusColors = {
 // hoje, resposta vazia da IA virava objeto com a forma certa e todos os campos
 // em branco. A tela precisa olhar o CONTEÚDO, não a presença do objeto — senão
 // mostra quatro quadrantes com "—" como se fosse análise.
+// O que dizer quando a IA não gerou o briefing (jobs/swot.js grava a categoria).
+const MOTIVO_SWOT = {
+  sem_ia: 'nenhuma inteligência artificial está ativa. O administrador ativa em Integrações.',
+  ia_sem_credito: 'a inteligência artificial está sem crédito. Fale com o administrador.',
+  ia_chave_invalida: 'a chave da inteligência artificial foi recusada. Fale com o administrador.',
+  ia_limite: 'a inteligência artificial recusou por excesso de pedidos. Tente de novo em alguns minutos.',
+  ia_resposta_vazia: 'a IA respondeu vazio. Tente de novo; se repetir, o administrador pode trocar o modelo em Integrações.',
+  ia_resposta_invalida: 'a IA respondeu num formato inválido. Tente de novo.',
+  ia_tempo: 'a IA demorou demais para responder. Tente de novo.',
+  ia_falhou: 'a IA não respondeu. Tente de novo em alguns minutos.',
+  sem_firmografia: 'faltam os dados de cadastro desta empresa. Use “Re-enriquecer” e tente de novo.',
+  sem_material: 'não há material sobre a empresa (site ou perfil) para a IA analisar — só com o cadastro a análise sairia genérica. Use “Re-enriquecer” para buscar de novo, ou cadastre o site em “Editar” e clique em “Refazer análise”.'
+};
 function briefingVazio(sw) {
   if (!sw || typeof sw !== 'object') return true;
   const n = v => Array.isArray(v) ? v.length : 0;
@@ -15213,6 +15226,7 @@ function LeadDetailPanel({
     // IA devolvia nada. Agora briefing vazio nem chega a ser gravado — o job
     // falha — e a ausência de carimbo novo é justamente o sinal de que falhou.
     const antes = String(lead?.swot?.gerado_em || '');
+    const erroAntes = String(lead?.swot_erro_em || '');
     try {
       const r = await fetch('/api/leads/acoes', {
         method: 'POST',
@@ -15241,6 +15255,13 @@ function LeadDetailPanel({
         }).then(x => x.ok ? x.json() : null).catch(() => null);
         if (novo && String(novo.swot?.gerado_em || '') !== antes) {
           setLead(novo);
+          return;
+        }
+        // Falhou: mostra o motivo já, em vez de esperar 3 minutos à toa. O job
+        // ainda tenta de novo sozinho; se der certo, o briefing aparece ao reabrir.
+        if (novo?.swot_erro_em && String(novo.swot_erro_em) !== erroAntes) {
+          setLead(novo);
+          window.alert('A análise não saiu: ' + (MOTIVO_SWOT[novo.swot_erro] || MOTIVO_SWOT.ia_falhou));
           return;
         }
       }
@@ -16031,9 +16052,9 @@ function LeadDetailPanel({
       fontSize: 12.5,
       lineHeight: 1.55,
       margin: '0 0 12px',
-      color: 'var(--dim)'
+      color: l.swot_erro && l.swot_erro !== 'sem_material' ? C.red : 'var(--dim)'
     }
-  }, "A an\xE1lise ainda n\xE3o foi gerada para este lead \u2014 a IA falhou ou devolveu resposta vazia. Clique em \u201CRefazer an\xE1lise\u201D abaixo. Os contatos n\xE3o s\xE3o alterados."), l.swot.resumo && /*#__PURE__*/React.createElement("p", {
+  }, l.swot_erro === 'sem_material' ? /*#__PURE__*/React.createElement(React.Fragment, null, "An\xE1lise n\xE3o gerada: ", MOTIVO_SWOT.sem_material) : l.swot_erro ? /*#__PURE__*/React.createElement(React.Fragment, null, "A \xFAltima tentativa de an\xE1lise falhou", l.swot_erro_em ? ` (${timeAgo(l.swot_erro_em)})` : '', ": ", MOTIVO_SWOT[l.swot_erro] || MOTIVO_SWOT.ia_falhou) : l.contato_status === 'sem_contato' ? /*#__PURE__*/React.createElement(React.Fragment, null, "A an\xE1lise \xE9 feita com o material encontrado sobre a empresa (site ou perfil), e ainda n\xE3o encontramos contato nem site deste lead. Ela sai sozinha quando o contato e o material forem encontrados \u2014 use \u201CRe-enriquecer\u201D, ou cadastre o site em \u201CEditar\u201D e clique em \u201CRefazer an\xE1lise\u201D.") : /*#__PURE__*/React.createElement(React.Fragment, null, "A an\xE1lise ainda n\xE3o foi gerada para este lead. Clique em \u201CRefazer an\xE1lise\u201D abaixo. Os contatos n\xE3o s\xE3o alterados.")), l.swot.resumo && /*#__PURE__*/React.createElement("p", {
     style: {
       fontSize: 13,
       lineHeight: 1.6,
