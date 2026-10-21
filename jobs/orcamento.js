@@ -128,7 +128,22 @@ async function consumo(pool, dia, hora) {
  * `dia`/`hora` = vagas restantes (0 = travado). Fora da janela, ambos são 0 —
  * o motor pausa e o scheduler volta a tentar sozinho quando a janela abrir.
  */
-async function disponivel(pool) {
+// Fila do CRM livre (o time está sem lead do Hunter pra atender): a cota por
+// hora não segura — ela existe pra espalhar os leads no dia, e com a fila
+// vazia o que importa é abastecer o time. O teto do DIA continua valendo.
+// Quem decide é o piloto da Estratégia, a cada minuto, com o controle pelo CRM
+// ligado (jobs/estrategia.js grava crm_fila_livre); sinal com mais de 5 min é
+// velho demais pra confiar (piloto parado).
+async function filaDoCrmLivre(pool) {
+  try {
+    const { rows: [e] } = await pool.query(
+      `SELECT ativo AND crm_controle AND crm_fila_livre
+              AND crm_fila_livre_em > now() - interval '5 minutes' AS livre FROM estrategia`);
+    return !!e?.livre;
+  } catch (_) { return false; }   // coluna ainda não migrada
+}
+
+async function disponivel(pool, { filaLivre } = {}) {
   const cfg = await lerConfig(pool);
   const { limite, inicio, fim } = cfg;
   const agora = await agoraLocal(pool, cfg.tz);
@@ -147,10 +162,16 @@ async function disponivel(pool) {
   const usado = await consumo(pool, dia, hora);
   const porHora = Math.max(1, Math.ceil(limite / horasDaJanela(inicio, fim)));
   const vagasDia = Math.max(0, limite - usado.dia);
-  const vagasHora = Math.max(0, porHora - usado.hora);
+  let vagasHora = Math.max(0, porHora - usado.hora);
+  let peloCrm = false;
+  if (vagasHora <= 0 && vagasDia > 0 && (filaLivre ?? await filaDoCrmLivre(pool))) {
+    vagasHora = vagasDia;
+    peloCrm = true;
+  }
   return {
     dia: vagasDia,
     hora: vagasHora,
+    filaLivre: peloCrm,
     foraDaJanela: false,
     // Teto do dia → só amanhã (ou no próximo dia marcado). Cota da hora → na
     // próxima hora em que a janela estiver aberta.
@@ -181,5 +202,5 @@ async function registrarLead(pool) {
 
 const pad = n => String(n).padStart(2, '0');
 
-module.exports = { disponivel, registrarLead, horasDaJanela, dentroDaJanela, abertoEm, esperaAteAbrir,
+module.exports = { disponivel, filaDoCrmLivre, registrarLead, horasDaJanela, dentroDaJanela, abertoEm, esperaAteAbrir,
   normalizarDias, TODOS_OS_DIAS, CHAVE, TZ_PADRAO };

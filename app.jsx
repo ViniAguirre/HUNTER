@@ -2162,6 +2162,114 @@ function PerfilMedio({ perfil }) {
   );
 }
 
+// Conferência do que o radar mandou ao CRM: a atividade de cada lead bate com
+// a dos clientes da lista (ou com as atividades escolhidas)? Do pior pro
+// melhor, com o joinha pra baixo ali mesmo — o lead recusado vira contraexemplo
+// e o radar aprende a evitar empresas assim.
+const NIVEL_QUAL = {
+  nucleo: { cor: C.green, rotulo: 'Atividade principal dos clientes' },
+  ponta:  { cor: C.amber, rotulo: 'Atividade rara entre os clientes ou só parecida' },
+  fora:   { cor: C.red,   rotulo: 'Atividade que nenhum cliente tem' },
+};
+
+function QualidadeEnvios({ buscaId, onOpenLead }) {
+  const [q, setQ] = useState(null);
+  const [filtro, setFiltro] = useState('todos');
+  const [todos, setTodos] = useState(false);
+  useEffect(() => {
+    fetch(`/api/buscas/${buscaId}/qualidade`, { credentials:'same-origin' })
+      .then(r => r.ok ? r.json() : null).then(setQ).catch(() => setQ(null));
+  }, [buscaId]);
+  if (!q || !q.resumo.total) return null;
+
+  const marcar = (id, mud) => setQ(prev => ({ ...prev,
+    leads: prev.leads.map(l => l.id === id ? { ...l, recusado: mud.status === 'Descartado' } : l) }));
+  const pct = n => Math.round(n / q.resumo.total * 100);
+  const lista = q.leads.filter(l => filtro === 'todos' || l.nivel === filtro);
+  const visiveis = todos ? lista : lista.slice(0, 30);
+  const descr = l => l.nivel === 'nucleo' && l.freq != null ? `${Math.round(l.freq * 100)}% dos clientes`
+    : l.nivel === 'ponta' ? (l.grupo ? 'só do mesmo grupo' : l.freq != null ? `só ${Math.round(l.freq * 100)}% dos clientes` : 'rara')
+    : l.nivel === 'fora' ? 'nenhum cliente tem' : '';
+
+  return (
+    <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, marginBottom:18, overflow:'hidden' }}>
+      <div style={{ padding:'15px 18px', borderBottom:'1px solid var(--border)' }}>
+        <h3 style={{ fontSize:14, fontWeight:600, margin:0 }}>Qualidade do que foi ao CRM</h3>
+        <div style={{ fontSize:12, color:'var(--faint)', marginTop:4, lineHeight:1.45 }}>
+          {q.tipo === 'lookalike'
+            ? 'Cada lead enviado comparado com a atividade (CNAE) dos clientes da lista. Achou um errado? O joinha pra baixo descarta e ensina o radar a evitar empresas assim.'
+            : 'Cada lead enviado comparado com as atividades (CNAE) escolhidas no radar.'}
+        </div>
+        {q.tem_alvo ? (
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginTop:12 }}>
+            {[['todos', `Todos (${q.resumo.total})`, 'var(--dim)'],
+              ...['nucleo', 'ponta', 'fora'].map(n => [n, `${NIVEL_QUAL[n].rotulo}: ${q.resumo[n]} (${pct(q.resumo[n])}%)`, NIVEL_QUAL[n].cor])]
+              .map(([k, txt, cor]) => (
+                <button key={k} type="button" aria-pressed={filtro === k} onClick={() => setFiltro(k)}
+                  style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'5px 10px', borderRadius:8, fontSize:12, cursor:'pointer',
+                    fontFamily:'inherit', color:'var(--text)', background: filtro === k ? 'var(--panel2)' : 'transparent',
+                    border: filtro === k ? `1px solid ${cor}` : '1px solid var(--border)' }}>
+                  {k !== 'todos' && <span style={{ width:8, height:8, borderRadius:'50%', background:cor }}/>}{txt}
+                </button>
+              ))}
+          </div>
+        ) : (
+          <div style={{ fontSize:12, color:C.amber, marginTop:8 }}>Este radar não tem atividade definida — não dá pra comparar.</div>
+        )}
+        {q.alvo.length > 0 && (
+          <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:10, lineHeight:1.5 }}>
+            {q.tipo === 'lookalike' ? 'Atividades dos clientes: ' : 'Atividades do radar: '}
+            {q.alvo.map((a, i) => (
+              <span key={a.c}>{i > 0 && ' · '}<span style={{ color:'var(--dim)' }}>{a.descricao || fmtCnae(a.c)}</span>
+                {a.freq != null && ` (${Math.round(a.freq * 100)}%)`}</span>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="h-scroll">
+      <div className="h-tw" style={{ '--tw':'820px' }}>
+      {visiveis.map(l => {
+        const nv = NIVEL_QUAL[l.nivel];
+        return (
+          <div key={l.id} onClick={() => onOpenLead(l.id)} className="row-hover h-linha"
+            style={{ display:'grid', gridTemplateColumns:'14px 1.6fr 2fr 1fr 110px 40px', alignItems:'center', gap:10,
+              padding:'11px 18px', borderBottom:'1px solid var(--border)', cursor:'pointer', opacity: l.recusado ? .55 : 1 }}>
+            <span title={nv?.rotulo || 'Sem comparação'} style={{ width:9, height:9, borderRadius:'50%', background: nv?.cor || C.gray }}/>
+            <div style={{ minWidth:0 }}>
+              <div className="h-titulo" style={{ fontSize:13, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis',
+                textDecoration: l.recusado ? 'line-through' : 'none' }}>{l.nome}</div>
+              {l.motivos.length > 0 && (
+                <div style={{ fontSize:11, color:'var(--faint)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}
+                  title={l.motivos.join(' · ')}>{l.motivos.join(' · ')}</div>
+              )}
+            </div>
+            <div data-rot="Atividade" style={{ minWidth:0 }}>
+              <div style={{ fontSize:12.5, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }} title={l.atividade}>
+                {l.atividade || fmtCnae(l.cnae) || '—'}
+              </div>
+              {l.nivel && <div style={{ fontSize:11, color: nv?.cor }}>{descr(l)}{l.nome_ramo && l.nivel !== 'nucleo' ? ' · nome do ramo' : ''}</div>}
+            </div>
+            <div data-rot="Local" style={{ fontSize:12.5, color:'var(--dim)' }}>{l.cidade}{l.uf ? '/' + l.uf : ''}</div>
+            <div data-rot="Score"><ScoreBar score={l.score}/></div>
+            <div onClick={e => e.stopPropagation()}>
+              <ForaDoPerfil leadId={l.id} marcado={l.recusado} compacto onMudou={mud => marcar(l.id, mud)}/>
+            </div>
+          </div>
+        );
+      })}
+      </div>
+      </div>
+      {lista.length > visiveis.length && (
+        <button type="button" onClick={() => setTodos(true)}
+          style={{ width:'100%', padding:'11px', background:'transparent', border:'none', color:'var(--accent)',
+            fontSize:12.5, cursor:'pointer', fontFamily:'inherit' }}>
+          Ver todos ({lista.length})
+        </button>
+      )}
+    </div>
+  );
+}
+
 // Joinha pra baixo: marca o lead como "fora do perfil". Além de descartar, vira
 // CONTRAEXEMPLO na lista de semelhantes do radar — o motor passa a saber o que
 // EVITAR, não só o que procurar.
@@ -2472,6 +2580,8 @@ function BuscaDetail({ buscaId, onBack, onOpenLead, onDuplicar, onVerLeads }) {
       </div>
 
       {criterios.params?.perfil && <PerfilMedio perfil={criterios.params.perfil}/>}
+
+      <QualidadeEnvios buscaId={buscaId} onOpenLead={onOpenLead}/>
 
       <div className="h-tabela" style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden' }}>
         <div style={{ padding:'15px 18px', borderBottom:'1px solid var(--border)' }}>
@@ -3809,9 +3919,11 @@ function ControleCrm({ plano, crm, salvando, onSalvar }) {
             {contaHunter
               ? <>Usa os leads do Hunter <b>aguardando atendimento</b> nas filas do CRM (o cartão de filas). Quando um atendente
                   começa a atender, o lead sai da conta. Escolha abaixo quando abrir radar novo: assim que algum vendedor estiver
-                  perto de ficar sem lead, ou quando o total cair. Os limites de Configurações continuam valendo.</>
+                  perto de ficar sem lead, ou quando o total cair.</>
               : <>O CRM avisa quantos leads do Hunter estão na fila <b>sem atendimento</b>. Radar novo só abre quando essa fila cai para o
-                  número abaixo ou menos — assim o time recebe lead no ritmo em que atende. Os limites de Configurações continuam valendo.</>}
+                  número abaixo ou menos — assim o time recebe lead no ritmo em que atende.</>}
+            {' '}Com a fila livre, a <b>cota por hora não segura</b>: o Hunter continua buscando até o limite diário de Configurações,
+            pra o time não ficar sem lead. Fila cheia de novo, a cota por hora volta a valer.
           </span>
         </span>
       </label>

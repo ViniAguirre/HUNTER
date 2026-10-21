@@ -364,8 +364,8 @@ async function contarFila(q, estados) {
   return Object.values(c).reduce((s, n) => s + (n || 0), 0);
 }
 
-async function portao(pool, queues) {
-  const v = await orcamento.disponivel(pool);
+async function portao(pool, queues, { filaLivre } = {}) {
+  const v = await orcamento.disponivel(pool, { filaLivre });
   if (v.foraDaJanela) return { livre: false, motivo: v.motivo || 'fora do horário de funcionamento' };
   if (v.dia <= 0) return { livre: false, motivo: 'o limite de leads de hoje já foi atingido — o próximo radar abre no próximo dia de funcionamento' };
   if (v.hora <= 0) return { livre: false, motivo: 'a cota de leads desta hora já foi usada — tenta de novo na próxima hora' };
@@ -463,6 +463,26 @@ function portaoCrm(plano) {
   return { livre: true };
 }
 
+// Empresas aprovadas que o Score 1 adiou pra próxima hora (cota da hora
+// cheia): com a fila do CRM livre, a cota não segura mais — solta agora em vez
+// de deixar o time sem lead até virar a hora. Se o teto do DIA acabou, elas
+// continuam esperando (voltariam a ser adiadas).
+async function soltarEsperaDaHora(pool, queues) {
+  if (!queues?.score1) return 0;
+  try {
+    const v = await orcamento.disponivel(pool, { filaLivre: true });
+    if (v.dia <= 0) return 0;
+    const jobs = await queues.score1.getDelayed(0, Math.min(v.dia, 200) - 1);
+    let n = 0;
+    for (const j of jobs) { if (await j.promote().then(() => true, () => false)) n++; }
+    if (n) console.log(`[estrategia] fila do CRM livre: ${n} empresa(s) aprovada(s) saíram da espera da cota por hora`);
+    return n;
+  } catch (e) {
+    console.warn('[estrategia] não consegui soltar a espera da hora:', e.message);
+    return 0;
+  }
+}
+
 async function passo(db, pool, queues) {
   const plano = await lerPlano(db);
   if (!plano || !plano.ativo) return { desligado: true };
@@ -490,6 +510,19 @@ async function passo(db, pool, queues) {
     acoes.push({ acao: 'pausou', busca_id: b.id });
   }
 
+  // Controle pelo CRM: a fila diz se o time está sem lead. Calculado antes de
+  // tudo (inclusive com radar rodando) porque, livre, ela solta a cota por hora
+  // de toda a esteira — ver orcamento.disponivel. Gravado fora da transação do
+  // piloto pra o Score 1 enxergar já.
+  let crm = { livre: true };
+  if (plano.crm_controle) {
+    plano.crm_carga = await cargaHunter(db);
+    plano.crm_fila_hunter = plano.crm_carga ? plano.crm_carga.total : null;
+    crm = portaoCrm(plano);
+    await pool.query(`UPDATE estrategia SET crm_fila_livre=$1, crm_fila_livre_em=now()`, [crm.livre]);
+    if (crm.livre) await soltarEsperaDaHora(pool, queues);
+  }
+
   const { rows: [{ n: ativos }] } = await db.query(
     `SELECT COUNT(*)::int n FROM buscas WHERE estrategia_pauta_id IS NOT NULL AND status='Ativa'`);
   const simultaneos = Math.max(1, Math.min(MAX_SIMULTANEOS, plano.simultaneos || 1));
@@ -502,13 +535,8 @@ async function passo(db, pool, queues) {
       : 'nenhuma pauta ativa na linha editorial' };
   }
 
-  const gate = await portao(pool, queues);
+  const gate = await portao(pool, queues, { filaLivre: plano.crm_controle && crm.livre });
   if (!gate.livre) return { acoes, estado: `aguardando: ${gate.motivo}` };
-  if (plano.crm_controle) {
-    plano.crm_carga = await cargaHunter(db);
-    plano.crm_fila_hunter = plano.crm_carga ? plano.crm_carga.total : null;
-  }
-  const crm = portaoCrm(plano);
   if (!crm.livre) return { acoes, estado: `aguardando: ${crm.motivo}` };
 
   const porOrdem = rows => rows.sort((a, b) =>
