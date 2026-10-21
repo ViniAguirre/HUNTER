@@ -7704,7 +7704,9 @@ function ExpansaoPauta({
   setMax,
   excluir,
   setExcluir,
-  temRegioes
+  temRegioes,
+  modo = 'estados',
+  setModo
 }) {
   const alterna = uf => setExcluir(excluir.includes(uf) ? excluir.filter(x => x !== uf) : [...excluir, uf].sort());
   return /*#__PURE__*/React.createElement("div", {
@@ -7744,12 +7746,51 @@ function ExpansaoPauta({
       marginTop: 4,
       lineHeight: 1.45
     }
-  }, temRegioes ? /*#__PURE__*/React.createElement(React.Fragment, null, "Cidade varrida \u2192 o estado inteiro dela. Depois, estados vizinhos, come\xE7ando pelo vizinho da regi\xE3o que mais virou lead (empate: o maior mercado). Cada escolha aparece na lista de regi\xF5es e no di\xE1rio, com o motivo. Se a pauta varreu 200+ empresas sem virar nenhum lead, ele n\xE3o expande \u2014 o problema \xE9 o filtro, n\xE3o a regi\xE3o.") : 'Adicione pelo menos uma região acima para ligar a expansão.'))), expandir && temRegioes && /*#__PURE__*/React.createElement("div", {
+  }, temRegioes ? /*#__PURE__*/React.createElement(React.Fragment, null, "Cada escolha aparece na lista de regi\xF5es e no di\xE1rio, com o motivo. Se a pauta varreu 200+ empresas sem virar nenhum lead, ele n\xE3o expande \u2014 o problema \xE9 o filtro, n\xE3o a regi\xE3o.") : 'Adicione pelo menos uma região acima para ligar a expansão.'))), expandir && temRegioes && /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 16,
       paddingLeft: 26
     }
-  }, /*#__PURE__*/React.createElement("label", {
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      gap: 8,
+      flexWrap: 'wrap',
+      marginBottom: 14
+    }
+  }, [['cidades', 'Por cidades', 'Um radar por cidade, da maior para a menor (população do IBGE). Acabou o estado, segue para os vizinhos. Sem limite de regiões: vai até bater o limite diário de leads e continua no dia seguinte.'], ['estados', 'Por estados', 'Cidade varrida → o estado inteiro dela. Depois, estados vizinhos, começando pelo vizinho da região que mais virou lead (empate: o maior mercado).']].map(([v, nome, desc]) => {
+    const sel = modo === v;
+    return /*#__PURE__*/React.createElement("button", {
+      key: v,
+      type: "button",
+      "aria-pressed": sel,
+      onClick: () => setModo && setModo(v),
+      style: {
+        flex: '1 1 240px',
+        textAlign: 'left',
+        padding: '10px 12px',
+        borderRadius: 10,
+        cursor: 'pointer',
+        fontFamily: 'inherit',
+        border: sel ? `1.5px solid ${C.gold}` : '1px solid var(--border)',
+        background: sel ? 'color-mix(in srgb, var(--accent) 7%, transparent)' : 'var(--panel2)',
+        color: 'var(--text)'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 13,
+        fontWeight: 600,
+        color: sel ? C.gold : 'var(--text)'
+      }
+    }, nome), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11.5,
+        color: 'var(--faint)',
+        marginTop: 3,
+        lineHeight: 1.4
+      }
+    }, desc));
+  })), modo !== 'cidades' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("label", {
     style: {
       display: 'block',
       fontSize: 12,
@@ -7773,7 +7814,7 @@ function ExpansaoPauta({
   }, [1, 2, 3, 5, 8, 10, 15, 27].map(n => /*#__PURE__*/React.createElement("option", {
     key: n,
     value: n
-  }, n === 27 ? 'sem limite (o Brasil todo)' : n))), /*#__PURE__*/React.createElement("label", {
+  }, n === 27 ? 'sem limite (o Brasil todo)' : n)))), /*#__PURE__*/React.createElement("label", {
     style: {
       display: 'block',
       fontSize: 12,
@@ -8173,7 +8214,20 @@ function ControleCrm({
     style: {
       color: 'var(--faint)'
     }
-  }, "O CRM ainda n\xE3o enviou nenhum aviso.", plano.crm_controle ? ' Enquanto isso, o piloto não abre radar novo.' : '')), !contaHunter && /*#__PURE__*/React.createElement("button", {
+  }, "O CRM ainda n\xE3o enviou nenhum aviso.", plano.crm_controle ? ' Enquanto isso, o piloto não abre radar novo.' : '')), plano.crm_controle && (porFila ? liberaFila : temAviso && n <= g) && (() => {
+    const est = String(plano.estado || '');
+    const abrindo = /^(abriu|retomou|continuou|expandiu|recome[cç]ou)/.test(est);
+    if (plano.ativo && (abrindo || !est)) return null;
+    const dica = !plano.ativo ? 'Ligue o piloto automático no topo desta tela.' : /linha editorial conclu/.test(est) ? 'Todas as regiões das pautas já foram varridas: adicione regiões, ligue a expansão automática na pauta ou escolha "Recomeçar" em "Quando a linha editorial acabar".' : /rodando/.test(est) ? 'O limite de "Radares rodando ao mesmo tempo" está cheio: aumente o número ou espere um radar esgotar.' : /nenhuma pauta/.test(est) ? 'Nenhuma pauta vale neste período: confira as semanas/meses das pautas.' : null;
+    return /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 12,
+        marginTop: 8,
+        color: C.amber,
+        lineHeight: 1.5
+      }
+    }, plano.ativo ? /*#__PURE__*/React.createElement(React.Fragment, null, "A fila libera, mas o piloto n\xE3o abriu radar: ", /*#__PURE__*/React.createElement("b", null, est.replace(/^aguardando:\s*/, '')), ".") : /*#__PURE__*/React.createElement(React.Fragment, null, "A fila libera, mas o piloto autom\xE1tico est\xE1 desligado."), dica && /*#__PURE__*/React.createElement(React.Fragment, null, " ", dica));
+  })(), !contaHunter && /*#__PURE__*/React.createElement("button", {
     type: "button",
     onClick: () => setMostrarComo(v => !v),
     style: {
@@ -9345,8 +9399,8 @@ function Estrategia({
       style: badgeStyle(C.gold)
     }, "CRM autom\xE1tico"), p.expandir && /*#__PURE__*/React.createElement("span", {
       style: badgeStyle(C.cyan),
-      title: `Acrescenta até ${p.expandir_max} regiões sozinho`
-    }, "Expande sozinho"), (p.tags || []).map(t => /*#__PURE__*/React.createElement("span", {
+      title: p.expandir_modo === 'cidades' ? 'Abre um radar por cidade, da maior para a menor, até o limite diário de leads' : `Acrescenta até ${p.expandir_max} regiões sozinho`
+    }, p.expandir_modo === 'cidades' ? 'Expande por cidades' : 'Expande sozinho'), (p.tags || []).map(t => /*#__PURE__*/React.createElement("span", {
       key: t,
       title: "Tag enviada ao CRM com cada lead",
       style: {
@@ -9566,6 +9620,7 @@ function NovaBusca({
   const [meses, setMeses] = useState(Array.isArray(inicial?.meses) ? inicial.meses : []);
   const [expandir, setExpandir] = useState(!!inicial?.expandir);
   const [expandirMax, setExpandirMax] = useState(inicial?.expandir_max || 5);
+  const [expandirModo, setExpandirModo] = useState(inicial?.expandir_modo === 'cidades' ? 'cidades' : 'estados');
   const [expandirExcluir, setExpandirExcluir] = useState(Array.isArray(inicial?.expandir_excluir) ? inicial.expandir_excluir : []);
   const [corte, setCorte] = useState(inicial?.corte_score ?? 60);
   const [saving, setSaving] = useState(false);
@@ -10040,7 +10095,8 @@ function NovaBusca({
           meses,
           expandir: expandir && regioes.length > 0,
           expandir_max: expandirMax,
-          expandir_excluir: expandirExcluir
+          expandir_excluir: expandirExcluir,
+          expandir_modo: expandirModo
         })
       }) : await fetch('/api/buscas', {
         method: 'POST',
@@ -11032,6 +11088,8 @@ function NovaBusca({
     setExpandir: setExpandir,
     max: expandirMax,
     setMax: setExpandirMax,
+    modo: expandirModo,
+    setModo: setExpandirModo,
     excluir: expandirExcluir,
     setExcluir: setExpandirExcluir,
     temRegioes: regioes.length > 0

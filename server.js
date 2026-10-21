@@ -764,6 +764,9 @@ async function init() {
     ALTER TABLE estrategia_pautas ADD COLUMN IF NOT EXISTS expandir         BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE estrategia_pautas ADD COLUMN IF NOT EXISTS expandir_max     INTEGER NOT NULL DEFAULT 5;
     ALTER TABLE estrategia_pautas ADD COLUMN IF NOT EXISTS expandir_excluir TEXT[] NOT NULL DEFAULT '{}';
+    -- 'estados' (cidade → estado → vizinhos, até expandir_max) ou 'cidades'
+    -- (uma cidade por radar, da maior pra menor, sem teto: o ritmo é o limite diário).
+    ALTER TABLE estrategia_pautas ADD COLUMN IF NOT EXISTS expandir_modo    TEXT NOT NULL DEFAULT 'estados';
     -- De qual pauta o radar nasceu (NULL = criado à mão). Excluir a pauta não
     -- apaga os radares: eles só viram radares comuns.
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS estrategia_pauta_id INTEGER
@@ -2060,14 +2063,14 @@ app.post('/api/estrategia/pautas', requireAuth, requireEditor, async (req, res) 
     const { rows: [nova] } = await pool.query(
       `INSERT INTO estrategia_pautas (nome, tipo, criterios, lista, regioes, semanas, meses, corte_score,
                                       crm_auto, crm_queue_id, ativo, criado_por, expandir, expandir_max,
-                                      expandir_excluir, tags, ordem, crm_destino, afiliados_alvo)
+                                      expandir_excluir, tags, ordem, crm_destino, afiliados_alvo, expandir_modo)
        VALUES ($1,$2,$3::jsonb,$4,$5::jsonb,$6::int[],$7::int[],$8,$9,$10,$11,$12,$13,$14,$15::text[],$16::text[],
-               (SELECT COALESCE(MAX(ordem), 0) + 1 FROM estrategia_pautas), $17, $18::jsonb)
+               (SELECT COALESCE(MAX(ordem), 0) + 1 FROM estrategia_pautas), $17, $18::jsonb, $19)
        RETURNING *`,
       [p.nome, p.tipo, JSON.stringify(p.criterios), p.lista, JSON.stringify(p.regioes), p.semanas, p.meses,
        p.corte_score, p.crm_auto, p.crm_queue_id, p.ativo ?? true, req.user.id,
        p.expandir, p.expandir_max, p.expandir_excluir, p.tags,
-       destino.crm_destino, destino.afiliados_alvo ? JSON.stringify(destino.afiliados_alvo) : null]);
+       destino.crm_destino, destino.afiliados_alvo ? JSON.stringify(destino.afiliados_alvo) : null, p.expandir_modo]);
     res.status(201).json(nova);
   } catch (e) { erroEstrategia(res, e); }
 });
@@ -2085,12 +2088,12 @@ app.put('/api/estrategia/pautas/:id', requireAuth, requireEditor, async (req, re
       `UPDATE estrategia_pautas SET nome=$2, tipo=$3, criterios=$4::jsonb, lista=$5, regioes=$6::jsonb,
               semanas=$7::int[], meses=$8::int[], corte_score=$9, crm_auto=$10, crm_queue_id=$11,
               ativo=COALESCE($12, ativo), expandir=$13, expandir_max=$14, expandir_excluir=$15::text[],
-              tags=$16::text[], crm_destino=$17, afiliados_alvo=$18::jsonb, atualizado_em=now()
+              tags=$16::text[], crm_destino=$17, afiliados_alvo=$18::jsonb, expandir_modo=$19, atualizado_em=now()
         WHERE id=$1 RETURNING *`,
       [id, p.nome, p.tipo, JSON.stringify(p.criterios), p.lista, JSON.stringify(p.regioes), p.semanas, p.meses,
        p.corte_score, p.crm_auto, p.crm_queue_id, p.ativo ?? null,
        p.expandir, p.expandir_max, p.expandir_excluir, p.tags,
-       destino.crm_destino, destino.afiliados_alvo ? JSON.stringify(destino.afiliados_alvo) : null]);
+       destino.crm_destino, destino.afiliados_alvo ? JSON.stringify(destino.afiliados_alvo) : null, p.expandir_modo]);
     if (!atual) return res.status(404).json({ erro: 'pauta não encontrada' });
     res.json(atual);
   } catch (e) { erroEstrategia(res, e); }

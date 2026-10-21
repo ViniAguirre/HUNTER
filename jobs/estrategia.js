@@ -132,7 +132,9 @@ function normalizarRegioes(lista) {
     chaves.add(n.chave);
     out.push(n);
   }
-  if (out.length > MAX_REGIOES) throw new ErroEstrategia(`no máximo ${MAX_REGIOES} regiões por pauta`);
+  // O teto vale pras regiões escolhidas à mão. As que o piloto acrescenta
+  // (expansão por cidades) crescem uma por radar e não podem travar a edição.
+  if (out.filter(r => !r.auto).length > MAX_REGIOES) throw new ErroEstrategia(`no máximo ${MAX_REGIOES} regiões por pauta`);
   return out;
 }
 
@@ -180,6 +182,7 @@ function normalizarPauta(b, { parcial = false } = {}) {
     const n = parseInt(b.expandir_max, 10);
     out.expandir_max = Number.isFinite(n) ? Math.max(1, Math.min(EXPANSAO_MAX, n)) : 5;
   }
+  if (!parcial || 'expandir_modo' in b) out.expandir_modo = b.expandir_modo === 'cidades' ? 'cidades' : 'estados';
   if (!parcial || 'expandir_excluir' in b) {
     out.expandir_excluir = [...new Set((Array.isArray(b.expandir_excluir) ? b.expandir_excluir : [])
       .map(u => String(u).toUpperCase()).filter(u => UFS.has(u)))].sort();
@@ -278,6 +281,63 @@ function proximaExpansao(p, usadas, desempenho = {}) {
   }
   // 3) nenhum vizinho livre (todos excluídos/varridos): o maior mercado que sobrou
   return { uf: candidatos[0], motivo: 'o maior mercado que a pauta ainda não varreu' };
+}
+
+// ── Expansão por CIDADES ─────────────────────────────────────────────────────
+// Uma cidade por radar, da maior pra menor (população do Censo 2022, IBGE),
+// começando pelos estados da pauta, na ordem dela; acabadas as cidades de um
+// estado, segue pros vizinhos (em camadas: vizinhos, depois vizinhos dos
+// vizinhos; empate pelo maior mercado). Sem teto de regiões: quem dita o ritmo
+// é o portão — limite diário, cadência por hora, horário, esteira e fila do CRM.
+// Estado que a pauta já varreu inteiro é pulado (as cidades dele já passaram).
+let _cidadesPorUf = null;
+function cidadesPorUf(uf) {
+  if (!_cidadesPorUf) {
+    _cidadesPorUf = {};
+    for (const m of require('../public/municipios.json')) (_cidadesPorUf[m.uf] ||= []).push(m);
+    for (const l of Object.values(_cidadesPorUf)) l.sort((a, b) => (b.p || 0) - (a.p || 0));
+  }
+  return _cidadesPorUf[uf] || [];
+}
+const habitantes = n => n >= 1e6 ? `${(n / 1e6).toFixed(1).replace('.', ',')} mi de hab.` : `${Math.round(n / 1000)} mil hab.`;
+
+function proximaCidade(p, usadas) {
+  const regs = Array.isArray(p.regioes) ? p.regioes : [];
+  if (!p.expandir || !regs.length) return null;
+  const excluir = new Set(p.expandir_excluir || []);
+  const usadasL = [...usadas];
+  const estadoInteiro = new Set([
+    ...regs.filter(r => !(r.municipios_rotulos || []).length).flatMap(r => r.ufs),
+    ...usadasL.filter(k => k.startsWith('uf:')).flatMap(k => k.slice(3).split(',')),
+  ]);
+  const cidadesFeitas = new Set([
+    ...regs.flatMap(r => (r.municipios_cod || []).map(String)),
+    ...usadasL.filter(k => k.startsWith('mun:')).flatMap(k => k.slice(4).split(',')),
+  ]);
+  const base = [...new Set(regs.flatMap(r => r.ufs))].filter(u => !excluir.has(u));
+  const ordem = [], visto = new Set();
+  let camada = base;
+  while (camada.length) {
+    const prox = new Set();
+    for (const u of camada) {
+      if (visto.has(u)) continue;
+      visto.add(u); ordem.push(u);
+      for (const v of VIZINHOS[u] || []) if (!visto.has(v) && !excluir.has(v)) prox.add(v);
+    }
+    camada = UFS_POR_MERCADO.filter(u => prox.has(u));
+  }
+  for (const uf of ordem) {
+    if (estadoInteiro.has(uf)) continue;
+    const c = cidadesPorUf(uf).find(m => !cidadesFeitas.has(String(m.c)));
+    if (!c) continue;
+    return {
+      municipio: { c: String(c.c), n: c.n, uf },
+      motivo: base.includes(uf)
+        ? `próxima maior cidade de ${uf} ainda não varrida (${habitantes(c.p || 0)})`
+        : `${uf} é vizinho das regiões já varridas — começa pela maior cidade (${habitantes(c.p || 0)})`,
+    };
+  }
+  return null;
 }
 
 // ── Portão: dá pra abrir radar AGORA sem furar limite nem inchar a fila? ────────
@@ -503,14 +563,17 @@ async function passo(db, pool, queues) {
       }
       const desempenho = Object.fromEntries(meus.map(d => [d.regiao_chave, d]));
       const usadas = new Set(meus.map(d => d.regiao_chave));
-      const prox = proximaExpansao(p, usadas, desempenho);
+      const porCidade = p.expandir_modo === 'cidades';
+      const prox = porCidade ? proximaCidade(p, usadas) : proximaExpansao(p, usadas, desempenho);
       if (!prox) continue;
-      const reg = normalizarRegiao({ ufs: [prox.uf], auto: true, motivo: prox.motivo });
+      const reg = prox.municipio
+        ? normalizarRegiao({ municipios_rotulos: [prox.municipio], auto: true, motivo: prox.motivo })
+        : normalizarRegiao({ ufs: [prox.uf], auto: true, motivo: prox.motivo });
       await db.query(
         `UPDATE estrategia_pautas SET regioes = regioes || $2::jsonb, atualizado_em=now() WHERE id=$1`,
         [p.id, JSON.stringify([reg])]);
       await evento(db, 'sugeriu', { pauta_id: p.id,
-        detalhe: `${p.nome}: acabaram as regiões — escolheu ${prox.uf}, ${prox.motivo}` });
+        detalhe: `${p.nome}: acabaram as regiões — escolheu ${prox.municipio ? `${prox.municipio.n}/${prox.municipio.uf}` : prox.uf}, ${prox.motivo}` });
       const b = await abrirRegiao(db, { ...p, regioes: [...p.regioes, reg] }, reg);
       await evento(db, 'criou', { pauta_id: p.id, busca_id: b.id, detalhe: `criou e ligou "${b.nome}"` });
       return { acoes: [...acoes, { acao: 'sugeriu', busca_id: b.id }], estado: `expandiu a pauta e abriu "${b.nome}"` };
@@ -575,7 +638,7 @@ async function executar(pool, queues) {
 }
 
 module.exports = {
-  executar, portao, portaoCrm, proximaExpansao, VIZINHOS, periodoAtual, semanaDoMes, noPeriodo, montarRadar, regioesDa,
+  executar, portao, portaoCrm, proximaExpansao, proximaCidade, VIZINHOS, periodoAtual, semanaDoMes, noPeriodo, montarRadar, regioesDa,
   normalizarPauta, normalizarRegioes, ErroEstrategia,
   LIMIAR_FILA, DIAS_RECOMECO, MAX_SIMULTANEOS, MAX_PAUTAS, REGIAO_UNICA,
 };
