@@ -2894,9 +2894,16 @@ function Leads({
   refreshKey,
   onOpenLead,
   onCrm,
-  user
+  user,
+  preset
 }) {
-  const inicial = useMemo(lerFiltrosLeads, []);
+  // preset: veio de um número do radar ("Qualificados 7") — abre a lista já
+  // filtrada naquilo, em todo o período, pro número da lista bater com o card.
+  const inicial = useMemo(() => preset ? {
+    ...FILTROS_LEADS_PADRAO,
+    periodo: '',
+    ...preset
+  } : lerFiltrosLeads(), []);
   const [leads, setLeads] = useState([]);
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
@@ -3012,7 +3019,9 @@ function Leads({
     ordem
   });
   useEffect(() => {
-    try {
+    // Filtro que veio de um número do radar é de passagem: não substitui os
+    // filtros que a pessoa deixou guardados.
+    if (!preset) try {
       const guardar = JSON.parse(filtrosChave);
       for (const k of SEM_GUARDAR) delete guardar[k];
       localStorage.setItem('hunter_leads_filtros', JSON.stringify(guardar));
@@ -3122,7 +3131,10 @@ function Leads({
     // A opção "Sem contato" não é um status — é a fila de enriquecimento
     // manual (contato_status). Vai num parâmetro próprio.
     // Buscar um lead pelo nome/CNPJ/ID do CRM acha ele mesmo já finalizado.
-    if (filterStatus === 'sem_contato' || filterStatus === 'so_telefone') params.set('contato', filterStatus);else if (filterStatus && filterStatus !== 'abertos') params.set('status', filterStatus);
+    if (filterStatus.startsWith('contato:')) {
+      const c = filterStatus.slice(8);
+      params.set('contato', c === 'decisao' ? 'so_telefone' : c);
+    } else if (filterStatus === 'sem_contato' || filterStatus === 'so_telefone') params.set('contato', filterStatus);else if (filterStatus && filterStatus !== 'abertos') params.set('status', filterStatus);
     if (['abertos', 'sem_contato', 'so_telefone'].includes(filterStatus) && !debouncedQ) params.set('abertos', '1');
     if (emailOnly) params.set('email_only', 'true');
     if (filterBusca) params.set('busca_id', filterBusca);
@@ -3372,17 +3384,29 @@ function Leads({
     value: "abertos"
   }, "Em aberto"), /*#__PURE__*/React.createElement("option", {
     value: ""
-  }, "Todos os status"), /*#__PURE__*/React.createElement("option", {
-    value: "Novo"
-  }, "Novo"), /*#__PURE__*/React.createElement("option", {
-    value: "Qualificado"
-  }, "Qualificado"), /*#__PURE__*/React.createElement("option", {
-    value: "Incompleto"
-  }, "Incompleto"), /*#__PURE__*/React.createElement("option", {
+  }, "Todos os status"), /*#__PURE__*/React.createElement("optgroup", {
+    label: "Por contato (qualquer situa\xE7\xE3o)"
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "contato:completo"
+  }, "Qualificados \u2014 telefone e e-mail"), /*#__PURE__*/React.createElement("option", {
+    value: "contato:decisao"
+  }, "S\xF3 telefone"), /*#__PURE__*/React.createElement("option", {
+    value: "contato:sem_contato"
+  }, "Sem telefone")), /*#__PURE__*/React.createElement("optgroup", {
+    label: "Para trabalhar (em aberto)"
+  }, /*#__PURE__*/React.createElement("option", {
     value: "so_telefone"
   }, "S\xF3 telefone \u2014 sem e-mail"), /*#__PURE__*/React.createElement("option", {
     value: "sem_contato"
-  }, "Sem contato / com perfil"), /*#__PURE__*/React.createElement("option", {
+  }, "Sem contato / com perfil")), /*#__PURE__*/React.createElement("optgroup", {
+    label: "Situa\xE7\xE3o"
+  }, /*#__PURE__*/React.createElement("option", {
+    value: "Novo"
+  }, "Novo"), /*#__PURE__*/React.createElement("option", {
+    value: "Qualificado"
+  }, "Aprovados \xE0 m\xE3o"), /*#__PURE__*/React.createElement("option", {
+    value: "Incompleto"
+  }, "Incompleto"), /*#__PURE__*/React.createElement("option", {
     value: "Enviado"
   }, "Enviado (todos)"), /*#__PURE__*/React.createElement("option", {
     value: "Enviado:crm"
@@ -3390,7 +3414,7 @@ function Leads({
     value: "Enviado:manual"
   }, "Enviado \xB7 marcado \xE0 m\xE3o"), /*#__PURE__*/React.createElement("option", {
     value: "Descartado"
-  }, "Descartado / negativado")), /*#__PURE__*/React.createElement("select", {
+  }, "Descartado / negativado"))), /*#__PURE__*/React.createElement("select", {
     value: filterPeriodo,
     "aria-label": "Per\xEDodo de entrada do lead",
     onChange: e => {
@@ -4715,7 +4739,8 @@ function BuscaDetail({
   buscaId,
   onBack,
   onOpenLead,
-  onDuplicar
+  onDuplicar,
+  onVerLeads
 }) {
   const [data, setData] = useState(null);
   const [toggling, setToggling] = useState(false);
@@ -4979,27 +5004,49 @@ function BuscaDetail({
       gap: 12,
       marginBottom: 18
     }
-  }, [['Encontrados', fmtNum(b.enc), 'var(--text)'], ['Segmentadas (perfil)', fmtNum(b.seg ?? b.qual), C.blue], ['Qualificados', fmtNum(b.qual), C.green], ['Só telefone', fmtNum(b.so_telefone), C.amber], ['Sem contato / com perfil', fmtNum(b.sem_contato), C.red], ['Fora do perfil', fmtNum(b.fora), C.gray], ['Enviados ao CRM', fmtNum(b.crm), C.cyan]].map(([label, val, col]) => /*#__PURE__*/React.createElement("div", {
-    key: label,
-    style: {
-      background: 'var(--panel)',
-      border: '1px solid var(--border)',
-      borderRadius: 12,
-      padding: '14px 16px'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 11.5,
-      color: 'var(--faint)',
-      marginBottom: 6
-    }
-  }, label), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 22,
-      fontWeight: 600,
-      color: col
-    }
-  }, val)))), /*#__PURE__*/React.createElement("div", {
+  }, [['Encontrados', fmtNum(b.enc), 'var(--text)', null], ['Segmentadas (perfil)', fmtNum(b.seg ?? b.qual), C.blue, ''], ['Qualificados', fmtNum(b.qual), C.green, 'contato:completo'], ['Só telefone', fmtNum(b.so_telefone), C.amber, 'contato:decisao'], ['Sem contato / com perfil', fmtNum(b.sem_contato), C.red, 'contato:sem_contato'], ['Fora do perfil', fmtNum(b.fora), C.gray, null], ['Enviados ao CRM', fmtNum(b.crm), C.cyan, 'Enviado']].map(([label, val, col, status]) => {
+    const clicavel = status != null && onVerLeads;
+    return /*#__PURE__*/React.createElement("div", {
+      key: label,
+      role: clicavel ? 'button' : undefined,
+      tabIndex: clicavel ? 0 : undefined,
+      onClick: clicavel ? () => onVerLeads({
+        busca: String(b.id),
+        status
+      }) : undefined,
+      onKeyDown: clicavel ? e => {
+        if (e.key === 'Enter') onVerLeads({
+          busca: String(b.id),
+          status
+        });
+      } : undefined,
+      title: clicavel ? `Ver estes leads na aba Leads` : label === 'Fora do perfil' ? 'Empresas verificadas que não bateram com o perfil — não viram lead' : undefined,
+      className: clicavel ? 'row-hover' : undefined,
+      style: {
+        background: 'var(--panel)',
+        border: '1px solid var(--border)',
+        borderRadius: 12,
+        padding: '14px 16px',
+        cursor: clicavel ? 'pointer' : 'default'
+      }
+    }, /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 11.5,
+        color: 'var(--faint)',
+        marginBottom: 6
+      }
+    }, label, clicavel && /*#__PURE__*/React.createElement("span", {
+      style: {
+        color: 'var(--faint)'
+      }
+    }, " \u203A")), /*#__PURE__*/React.createElement("div", {
+      style: {
+        fontSize: 22,
+        fontWeight: 600,
+        color: col
+      }
+    }, val));
+  })), /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'var(--panel)',
       border: '1px solid var(--border)',
@@ -8372,7 +8419,7 @@ function FilasAtendimento() {
     style: {
       flex: 1
     }
-  }, d.outras_filas_aguardando > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, "Mais ", d.outras_filas_aguardando, " aguardando em filas fora desta lista. "), conferido ? `Última conferência no CRM ${conferido}.` : 'Ainda sem conferência no CRM.', " O Hunter confere os tickets a cada poucos minutos."), /*#__PURE__*/React.createElement("button", {
+  }, d.outras_filas_aguardando > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, "Mais ", d.outras_filas_aguardando, " aguardando em filas fora desta lista", (d.outras_filas || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, " (", d.outras_filas.map(f => `${f.nome}: ${f.aguardando}`).join(' · '), ")"), ". "), conferido ? `Última conferência no CRM ${conferido}.` : 'Ainda sem conferência no CRM.', " O Hunter confere os tickets a cada poucos minutos."), /*#__PURE__*/React.createElement("button", {
     type: "button",
     onClick: carregar,
     disabled: carregando,
@@ -16272,6 +16319,7 @@ function App() {
   const [screen, setScreen] = useState('dashboard');
   const [openLeadId, setOpenLeadId] = useState(null);
   const [crmIds, setCrmIds] = useState(null);
+  const [leadsPreset, setLeadsPreset] = useState(null); // filtros vindos de um número do radar
   const [buscaDetailId, setBuscaDetailId] = useState(null);
   const [user, setUser] = useState(null);
   const [leadsRefreshKey, setLeadsRefreshKey] = useState(0);
@@ -16296,6 +16344,7 @@ function App() {
     setScreen(s);
     setOpenLeadId(null);
     setCrmIds(null);
+    setLeadsPreset(null);
     if (s !== 'nova') setDuplicarDe(null);
   };
   const duplicarBusca = b => {
@@ -16359,10 +16408,12 @@ function App() {
         });
       case 'leads':
         return /*#__PURE__*/React.createElement(Leads, {
+          key: leadsPreset ? JSON.stringify(leadsPreset) : 'leads',
           refreshKey: leadsRefreshKey,
           onOpenLead: setOpenLeadId,
           onCrm: setCrmIds,
-          user: user
+          user: user,
+          preset: leadsPreset
         });
       case 'buscas':
         return /*#__PURE__*/React.createElement(Buscas, {
@@ -16373,7 +16424,12 @@ function App() {
           buscaId: buscaDetailId,
           onBack: () => setScreen('buscas'),
           onOpenLead: setOpenLeadId,
-          onDuplicar: duplicarBusca
+          onDuplicar: duplicarBusca,
+          onVerLeads: preset => {
+            setLeadsPreset(preset);
+            setScreen('leads');
+            setOpenLeadId(null);
+          }
         });
       case 'nova':
         return /*#__PURE__*/React.createElement(NovaBusca, {

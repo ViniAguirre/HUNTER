@@ -178,6 +178,10 @@ function buildLeadsFilter(query) {
   // Vai pelo estágio derivado, e não pela coluna crua, pra casar exatamente com
   // o número que a tela do radar mostra — lead antigo tem contato_status vazio.
   if (contato === 'sem_contato') conditions.push(`${estagioContato('l')} = 'sem_contato'`);
+  // Qualificado = telefone E e-mail (o mesmo critério dos números do radar e
+  // do Dashboard). O status 'Qualificado' da coluna só existe quando alguém
+  // aprova à mão — filtrar por ele não achava os qualificados do radar.
+  if (contato === 'completo') conditions.push(`${estagioContato('l')} = 'completo'`);
   // Só telefone: dá pra ligar, falta o e-mail. Não é qualificado nem sem
   // contato; sem filtro próprio, essa faixa não tinha como ser trabalhada.
   if (contato === 'so_telefone') conditions.push(`${estagioContato('l')} = 'decisao'`);
@@ -3393,9 +3397,14 @@ app.get('/api/estrategia/filas-atendimento', requireAuth, async (req, res) => {
     // Lead do Hunter aguardando numa fila que não está na lista (ex.: conexão
     // desmarcada da distribuição): não some sem aviso.
     const naLista = new Set(ids);
-    const outras = cont.filter(r => !naLista.has(String(r.id))).reduce((t, r) => t + r.aguardando, 0);
+    // E diz QUAIS: sem o nome, "mais 6 em outras filas" não dava pra conferir.
+    const outrasLista = cont.filter(r => !naLista.has(String(r.id)) && r.aguardando > 0)
+      .map(r => ({ id: String(r.id), nome: nomeDe.get(String(r.id)) || `Fila ${r.id}`, aguardando: r.aguardando }))
+      .sort((a, b) => b.aguardando - a.aguardando);
+    if (ult?.sem_fila) outrasLista.push({ id: null, nome: 'sem fila', aguardando: ult.sem_fila });
+    const outras = outrasLista.reduce((t, r) => t + r.aguardando, 0);
     res.json({ gk: true, filas, total_aguardando: filas.reduce((t, f) => t + f.aguardando, 0),
-               outras_filas_aguardando: outras, origem: daDistrib.length ? 'distribuicao' : 'hunter',
+               outras_filas_aguardando: outras, outras_filas: outrasLista, origem: daDistrib.length ? 'distribuicao' : 'hunter',
                conferido_em: ult?.em || null, erro_filas: doCrm ? null : 'não consegui listar as filas no CRM' });
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });

@@ -1276,8 +1276,12 @@ function datasDoPeriodo(periodo, de, ate) {
   return { de: '', ate: '' };
 }
 
-function Leads({ refreshKey, onOpenLead, onCrm, user }) {
-  const inicial = useMemo(lerFiltrosLeads, []);
+function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
+  // preset: veio de um número do radar ("Qualificados 7") — abre a lista já
+  // filtrada naquilo, em todo o período, pro número da lista bater com o card.
+  const inicial = useMemo(() => preset
+    ? { ...FILTROS_LEADS_PADRAO, periodo:'', ...preset }
+    : lerFiltrosLeads(), []);
   const [leads, setLeads] = useState([]);
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
@@ -1371,7 +1375,9 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
   const filtrosChave = JSON.stringify({ status:filterStatus, busca:filterBusca, local:debouncedLocal, score:filterScore,
     analise:filterAnalise, email:emailOnly, periodo:filterPeriodo, de:filterDe, ate:filterAte, ordem });
   useEffect(() => {
-    try {
+    // Filtro que veio de um número do radar é de passagem: não substitui os
+    // filtros que a pessoa deixou guardados.
+    if (!preset) try {
       const guardar = JSON.parse(filtrosChave);
       for (const k of SEM_GUARDAR) delete guardar[k];
       localStorage.setItem('hunter_leads_filtros', JSON.stringify(guardar));
@@ -1439,7 +1445,10 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
     // A opção "Sem contato" não é um status — é a fila de enriquecimento
     // manual (contato_status). Vai num parâmetro próprio.
     // Buscar um lead pelo nome/CNPJ/ID do CRM acha ele mesmo já finalizado.
-    if (filterStatus === 'sem_contato' || filterStatus === 'so_telefone') params.set('contato', filterStatus);
+    if (filterStatus.startsWith('contato:')) {
+      const c = filterStatus.slice(8);
+      params.set('contato', c === 'decisao' ? 'so_telefone' : c);
+    } else if (filterStatus === 'sem_contato' || filterStatus === 'so_telefone') params.set('contato', filterStatus);
     else if (filterStatus && filterStatus !== 'abertos') params.set('status', filterStatus);
     if (['abertos','sem_contato','so_telefone'].includes(filterStatus) && !debouncedQ) params.set('abertos', '1');
     if (emailOnly) params.set('email_only', 'true');
@@ -1591,15 +1600,26 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
           style={{ ...selFiltro, maxWidth:170, color: filterStatus ? 'var(--text)' : 'var(--dim)' }}>
           <option value="abertos">Em aberto</option>
           <option value="">Todos os status</option>
-          <option value="Novo">Novo</option>
-          <option value="Qualificado">Qualificado</option>
-          <option value="Incompleto">Incompleto</option>
-          <option value="so_telefone">Só telefone — sem e-mail</option>
-          <option value="sem_contato">Sem contato / com perfil</option>
-          <option value="Enviado">Enviado (todos)</option>
-          <option value="Enviado:crm">Enviado · pelo CRM</option>
-          <option value="Enviado:manual">Enviado · marcado à mão</option>
-          <option value="Descartado">Descartado / negativado</option>
+          {/* Contato: o mesmo critério dos números do radar e do Dashboard,
+              em qualquer situação (inclui enviados e descartados). */}
+          <optgroup label="Por contato (qualquer situação)">
+            <option value="contato:completo">Qualificados — telefone e e-mail</option>
+            <option value="contato:decisao">Só telefone</option>
+            <option value="contato:sem_contato">Sem telefone</option>
+          </optgroup>
+          <optgroup label="Para trabalhar (em aberto)">
+            <option value="so_telefone">Só telefone — sem e-mail</option>
+            <option value="sem_contato">Sem contato / com perfil</option>
+          </optgroup>
+          <optgroup label="Situação">
+            <option value="Novo">Novo</option>
+            <option value="Qualificado">Aprovados à mão</option>
+            <option value="Incompleto">Incompleto</option>
+            <option value="Enviado">Enviado (todos)</option>
+            <option value="Enviado:crm">Enviado · pelo CRM</option>
+            <option value="Enviado:manual">Enviado · marcado à mão</option>
+            <option value="Descartado">Descartado / negativado</option>
+          </optgroup>
         </select>
         {/* Período: quando o lead entrou no Hunter. "Escolher datas…" abre o
             painel com o de/até. */}
@@ -2157,7 +2177,7 @@ function ForaDoPerfil({ leadId, marcado, onMudou, onVarrer, compacto }) {
 }
 
 // ── BuscaDetail ───────────────────────────────────────────────────────────────
-function BuscaDetail({ buscaId, onBack, onOpenLead, onDuplicar }) {
+function BuscaDetail({ buscaId, onBack, onOpenLead, onDuplicar, onVerLeads }) {
   const [data, setData] = useState(null);
   const [toggling, setToggling] = useState(false);
   // Hooks das tags ficam aqui em cima: depois do "Carregando…" (return
@@ -2302,18 +2322,31 @@ function BuscaDetail({ buscaId, onBack, onOpenLead, onDuplicar }) {
             Segmentadas vem do próprio total de leads — somar qualificados +
             sem contato dava número maior que a realidade, porque o lead sem
             contato já estava contado nos dois. */}
-        {[['Encontrados', fmtNum(b.enc), 'var(--text)'],
-          ['Segmentadas (perfil)', fmtNum(b.seg ?? b.qual), C.blue],
-          ['Qualificados', fmtNum(b.qual), C.green],
-          ['Só telefone', fmtNum(b.so_telefone), C.amber],
-          ['Sem contato / com perfil', fmtNum(b.sem_contato), C.red],
-          ['Fora do perfil', fmtNum(b.fora), C.gray],
-          ['Enviados ao CRM', fmtNum(b.crm), C.cyan]].map(([label,val,col]) => (
-          <div key={label} style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:12, padding:'14px 16px' }}>
-            <div style={{ fontSize:11.5, color:'var(--faint)', marginBottom:6 }}>{label}</div>
-            <div style={{ fontSize:22, fontWeight:600, color:col }}>{val}</div>
-          </div>
-        ))}
+        {/* Os que são leads abrem a aba Leads já filtrada (radar + etapa, em
+            todo o período e qualquer situação) — o número da lista bate com o
+            do card. Encontrados e Fora do perfil não viraram lead. */}
+        {[['Encontrados', fmtNum(b.enc), 'var(--text)', null],
+          ['Segmentadas (perfil)', fmtNum(b.seg ?? b.qual), C.blue, ''],
+          ['Qualificados', fmtNum(b.qual), C.green, 'contato:completo'],
+          ['Só telefone', fmtNum(b.so_telefone), C.amber, 'contato:decisao'],
+          ['Sem contato / com perfil', fmtNum(b.sem_contato), C.red, 'contato:sem_contato'],
+          ['Fora do perfil', fmtNum(b.fora), C.gray, null],
+          ['Enviados ao CRM', fmtNum(b.crm), C.cyan, 'Enviado']].map(([label,val,col,status]) => {
+          const clicavel = status != null && onVerLeads;
+          return (
+            <div key={label} role={clicavel ? 'button' : undefined} tabIndex={clicavel ? 0 : undefined}
+              onClick={clicavel ? () => onVerLeads({ busca: String(b.id), status }) : undefined}
+              onKeyDown={clicavel ? e => { if (e.key === 'Enter') onVerLeads({ busca: String(b.id), status }); } : undefined}
+              title={clicavel ? `Ver estes leads na aba Leads` : (label === 'Fora do perfil'
+                ? 'Empresas verificadas que não bateram com o perfil — não viram lead' : undefined)}
+              className={clicavel ? 'row-hover' : undefined}
+              style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:12, padding:'14px 16px',
+                cursor: clicavel ? 'pointer' : 'default' }}>
+              <div style={{ fontSize:11.5, color:'var(--faint)', marginBottom:6 }}>{label}{clicavel && <span style={{ color:'var(--faint)' }}> ›</span>}</div>
+              <div style={{ fontSize:22, fontWeight:600, color:col }}>{val}</div>
+            </div>
+          );
+        })}
       </div>
 
       {/* Em que modo este radar manda pro CRM — e como trocar. A escolha só
@@ -3860,7 +3893,8 @@ function FilasAtendimento() {
       </div>
       <div style={{ display:'flex', alignItems:'center', gap:10, marginTop:10, fontSize:11.5, color:'var(--faint)', flexWrap:'wrap' }}>
         <span style={{ flex:1 }}>
-          {d.outras_filas_aguardando > 0 && <>Mais {d.outras_filas_aguardando} aguardando em filas fora desta lista. </>}
+          {d.outras_filas_aguardando > 0 && <>Mais {d.outras_filas_aguardando} aguardando em filas fora desta lista
+            {(d.outras_filas || []).length > 0 && <> ({d.outras_filas.map(f => `${f.nome}: ${f.aguardando}`).join(' · ')})</>}. </>}
           {conferido ? `Última conferência no CRM ${conferido}.` : 'Ainda sem conferência no CRM.'} O Hunter confere os tickets a cada poucos minutos.
         </span>
         <button type="button" onClick={carregar} disabled={carregando}
@@ -7683,6 +7717,7 @@ function App() {
   const [screen, setScreen] = useState('dashboard');
   const [openLeadId, setOpenLeadId] = useState(null);
   const [crmIds, setCrmIds] = useState(null);
+  const [leadsPreset, setLeadsPreset] = useState(null);   // filtros vindos de um número do radar
   const [buscaDetailId, setBuscaDetailId] = useState(null);
   const [user, setUser] = useState(null);
   const [leadsRefreshKey, setLeadsRefreshKey] = useState(0);
@@ -7703,7 +7738,7 @@ function App() {
       .catch(() => {});
   }, []);
 
-  const navTo = (s) => { setScreen(s); setOpenLeadId(null); setCrmIds(null); if (s !== 'nova') setDuplicarDe(null); };
+  const navTo = (s) => { setScreen(s); setOpenLeadId(null); setCrmIds(null); setLeadsPreset(null); if (s !== 'nova') setDuplicarDe(null); };
   const duplicarBusca = (b) => { setDuplicarDe(b); setScreen('nova'); setOpenLeadId(null); };
   // Persiste o tema escolhido: só muda quando o usuário clica (sobrevive ao reload).
   const toggleTheme = () => setTheme(t => {
@@ -7740,10 +7775,12 @@ function App() {
     switch(screen) {
       case 'dashboard': return <Dashboard onOpenBusca={openBusca}/>;
       case 'leads': return (
-        <Leads refreshKey={leadsRefreshKey} onOpenLead={setOpenLeadId} onCrm={setCrmIds} user={user}/>
+        <Leads key={leadsPreset ? JSON.stringify(leadsPreset) : 'leads'} refreshKey={leadsRefreshKey}
+          onOpenLead={setOpenLeadId} onCrm={setCrmIds} user={user} preset={leadsPreset}/>
       );
       case 'buscas': return <Buscas onOpen={openBusca}/>;
-      case 'buscaDetail': return <BuscaDetail buscaId={buscaDetailId} onBack={() => setScreen('buscas')} onOpenLead={setOpenLeadId} onDuplicar={duplicarBusca}/>;
+      case 'buscaDetail': return <BuscaDetail buscaId={buscaDetailId} onBack={() => setScreen('buscas')} onOpenLead={setOpenLeadId} onDuplicar={duplicarBusca}
+        onVerLeads={preset => { setLeadsPreset(preset); setScreen('leads'); setOpenLeadId(null); }}/>;
       case 'nova': return <NovaBusca key={duplicarDe ? 'dup-'+duplicarDe.id : 'nova'} inicial={duplicarDe} onSalvar={() => navTo('buscas')}/>;
       case 'estrategia': return (
         <Estrategia user={user}
