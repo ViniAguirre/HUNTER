@@ -925,9 +925,15 @@ async function init() {
   // Notas falsas do Score 1 (semelhantes sem perfil davam 100 a qualquer
   // empresa ativa): recalcula os leads em aberto com o perfil atual do radar.
   // Em segundo plano — não segura a subida da API.
-  require('./jobs/score1').recalcularNotasFalsas(pool)
+  // Depois, os portões de perfil (ramo dos clientes, entidade não empresarial)
+  // sobre os leads que nasceram antes deles.
+  const score1Job = require('./jobs/score1');
+  score1Job.recalcularNotasFalsas(pool)
     .then(r => { if (r.analisados) console.log('[migração] notas falsas do Score 1:', JSON.stringify(r)); })
-    .catch(e => console.error('[migração] notas falsas do Score 1:', e.message));
+    .catch(e => console.error('[migração] notas falsas do Score 1:', e.message))
+    .then(() => score1Job.revisarPeloPortao(pool))
+    .then(r => { if (r?.descartados || r?.enviados_fora) console.log('[migração] portão de perfil:', JSON.stringify(r)); })
+    .catch(e => console.error('[migração] portão de perfil:', e.message));
 
   // Lead marcado "fora do perfil" que o envio ao CRM (já na fila) carimbou
   // depois como 'Enviado': a marcação vale — volta pra descartado.

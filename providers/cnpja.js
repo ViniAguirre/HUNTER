@@ -100,6 +100,11 @@ function normalizeOffice(o) {
     cidade: o.address?.city || o.cidade || '',
     porte: normalizePorte(o.company?.size?.acronym || o.company?.size?.text || o.porte || ''),
     situacao: o.status?.text || 'Ativa',
+    // A busca já devolve isto; sem guardar, a empresa achada na varredura
+    // ficava sem natureza jurídica (o portão de perfil usa) e sem capital (a
+    // nota usa) até alguém reconsultar.
+    natureza_juridica: o.company?.nature?.text || o.natureza_juridica || null,
+    capital: typeof o.company?.equity === 'number' ? faixaCapital(o.company.equity) : (o.capital || null),
   };
 }
 

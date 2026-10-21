@@ -153,7 +153,15 @@ module.exports = async function score1(job, pool, queues) {
     score = 100;
     breakdown = [{ item: 'Importada por CNPJ (solicitada explicitamente)', pts: 100 }];
   }
-  const passou = importacao ? true : score >= corte;
+  // Portões de perfil (providers/perfil.js): "é do ramo dos clientes?" vem
+  // ANTES da nota — acertar estado, porte e capital não compensa uma atividade
+  // que nenhum cliente tem, nem transforma uma paróquia em oportunidade.
+  const barrada = importacao ? null : perfilamento.portaoPerfil(empresa, {
+    perfil: busca.tipo === 'lookalike' ? params?.perfil : null,
+    cnaesRadar: busca.tipo === 'lookalike' ? [] : (params?.cnaes || []),
+  });
+  if (barrada) breakdown = [...breakdown, { item: barrada.item, pts: 0 }];
+  const passou = importacao ? true : (!barrada && score >= corte);
 
   // Observação do Jev em paralelo: não atrasa nem muda a decisão do corte.
   if (!importacao) {
@@ -165,7 +173,7 @@ module.exports = async function score1(job, pool, queues) {
   if (!passou) {
     // Verificada mas fora do perfil: NÃO vira lead — só conta na busca.
     await pool.query(`UPDATE buscas SET fora_perfil = fora_perfil + 1 WHERE id=$1`, [busca_id]);
-    return { cnpj, score, corte, passou: false };
+    return { cnpj, score, corte, passou: false, ...(barrada ? { motivo: barrada.motivo } : {}) };
   }
 
   // Qualificou. Checagem PRECISA do teto diário — feita exatamente aqui, no
@@ -395,4 +403,38 @@ async function recalcularNotasFalsas(pool) {
   return r;
 }
 module.exports.recalcularNotasFalsas = recalcularNotasFalsas;
+
+// Os portões de perfil valem também pra quem já virou lead antes deles: lead
+// ainda NÃO enviado ao CRM que não passa sai da lista de trabalho (Descartado,
+// motivo 'filtro_perfil', com o porquê no breakdown — não vira contraexemplo:
+// não foi o usuário que reprovou). Enviados não mudam: só contam, pra o log
+// dizer quantos errados já tinham ido. Idempotente: roda a cada subida.
+async function revisarPeloPortao(pool) {
+  const { rows } = await pool.query(
+    `SELECT l.id, l.status, l.enviado_crm_em, l.breakdown, b.tipo, b.criterios,
+            e.cnpj, e.cnae, e.razao, e.fantasia, e.natureza_juridica
+       FROM leads l JOIN buscas b ON b.id = l.busca_id JOIN empresas e ON e.cnpj = l.cnpj
+      WHERE b.tipo IN ('lookalike', 'icp') AND COALESCE(l.status, '') <> 'Descartado'
+        AND l.criado_em > now() - interval '60 days'`);
+  const r = { analisados: rows.length, descartados: 0, enviados_fora: 0 };
+  for (const l of rows) {
+    const params = parseCriterios(l.criterios);
+    if (l.tipo === 'lookalike' && !params?.perfil) continue;
+    const barrada = perfilamento.portaoPerfil(l, {
+      perfil: l.tipo === 'lookalike' ? params.perfil : null,
+      cnaesRadar: l.tipo === 'lookalike' ? [] : (params?.cnaes || []),
+    });
+    if (!barrada) continue;
+    if (l.enviado_crm_em || l.status === 'Enviado') { r.enviados_fora++; continue; }
+    const bd = [...(Array.isArray(l.breakdown) ? l.breakdown : []), { item: barrada.item, pts: 0 }];
+    await pool.query(
+      `UPDATE leads SET status='Descartado', motivo_descarte='filtro_perfil', contato_pendente=false,
+              breakdown=$2::jsonb, atualizado_em=now()
+        WHERE id=$1 AND enviado_crm_em IS NULL AND COALESCE(status,'') NOT IN ('Enviado','Descartado')`,
+      [l.id, JSON.stringify(bd)]);
+    r.descartados++;
+  }
+  return r;
+}
+module.exports.revisarPeloPortao = revisarPeloPortao;
 module.exports.corteEfetivo = corteEfetivo;

@@ -553,4 +553,104 @@ function pontuarProximidade(emp, perfil, W) {
   return { score: Math.min(100, score), breakdown };
 }
 
-module.exports = { MIN_PERFIL, W, parseCnpjs, construirPerfil, pontuarProximidade, poderDimensao, calcularPesos, tokensNome };
+// ── Portões de perfil: antes da nota, "é do ramo dos clientes?" ─────────────
+// A nota é uma SOMA de semelhanças (atividade, estado, porte, capital, nome…).
+// Sozinha ela deixava passar quem acerta o "entorno" e erra o essencial: uma
+// paróquia no mesmo estado, com o porte e o capital dos clientes, somava
+// pontos suficientes pro corte sem ter nada a ver com o ramo. Os portões
+// barram antes da nota, com o motivo escrito no breakdown.
+//
+// 1) Entidade não empresarial (igreja, órgão público, condomínio, sindicato…):
+//    só passa se os próprios clientes (ou as atividades escolhidas no radar)
+//    incluem esse tipo de entidade.
+// 2) Semelhantes: a atividade (CNAE principal) tem de ser uma que os clientes
+//    têm. Atividade rara entre eles (menos de 5% da lista), ou só do mesmo
+//    grupo, precisa de reforço: o nome da empresa com uma palavra do ramo
+//    (uma que 10%+ dos clientes têm no nome).
+const ATIVIDADE_FREQ_MIN = 0.05;
+const NOME_FREQ_MIN = 0.10;
+const ENTIDADE_SHARE_MIN = 0.05;
+
+const semAcento = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const digitos = c => String(c || '').replace(/\D/g, '');
+const fmtCnae = c => c.length === 7 ? `${c.slice(0, 4)}-${c[4]}/${c.slice(5)}` : c;
+
+const ENTIDADES = [
+  { tipo: 'religiosa', rotulo: 'organização religiosa', cnae: c => c.startsWith('9491'),
+    natureza: /religios/,
+    nome: /\b(paroquia|igreja|diocese|arquidiocese|mitra diocesana|assembleia de deus|congregacao crista|centro espirita|comunidade evangelica|ministerio evangelico)\b/ },
+  { tipo: 'publica', rotulo: 'órgão público', cnae: c => c.startsWith('84'),
+    natureza: /(poder (executivo|legislativo|judiciario)|autarquia|orgao publico|fundo publico|^municipio|^estado ou distrito|^uniao)/,
+    nome: /\b(prefeitura municipal|camara municipal|secretaria (municipal|estadual|de estado)|tribunal de)\b/ },
+  { tipo: 'condominio', rotulo: 'condomínio', cnae: c => c.startsWith('8112'),
+    natureza: /condominio/, nome: /\bcondominio\b/ },
+  { tipo: 'associativa', rotulo: 'sindicato, partido ou entidade de classe', cnae: c => /^94(1|2|3|9)/.test(c) && !c.startsWith('9491'),
+    natureza: /(sindicato|partido politico|entidade sindical)/, nome: /\b(sindicato|partido)\b/ },
+];
+
+// O nome só conta quando a atividade não confirma o ramo: "Colégio Igreja
+// Batista" com CNAE de escola, num radar de escolas, é escola.
+function entidadeDe(emp, { porNome = true } = {}) {
+  const c = digitos(emp.cnae);
+  const nat = semAcento(emp.natureza_juridica);
+  const nome = semAcento(`${emp.razao || ''} ${emp.fantasia || ''}`);
+  return ENTIDADES.find(e => (c && e.cnae(c)) || (nat && e.natureza.test(nat)) || (porNome && e.nome.test(nome))) || null;
+}
+
+// Palavra do ramo no nome da empresa: uma que 10%+ dos clientes têm no nome e
+// que não é típica dos recusados.
+function palavraDoRamo(emp, perfil) {
+  const meus = new Set(tokensNome(emp.fantasia, emp.razao));
+  return (perfil?.nomes || []).find(x => meus.has(x.t) && !x.so_negativo
+    && (x.freq || 0) >= NOME_FREQ_MIN && !(x.ev != null && x.ev <= 0.35)) || null;
+}
+
+// Devolve null (passa) ou { motivo, item } (barrada). `perfil` = semelhantes;
+// sem ele, `cnaesRadar` = atividades escolhidas num radar de perfil (ICP).
+function portaoPerfil(emp, { perfil = null, cnaesRadar = [] } = {}) {
+  const c = digitos(emp.cnae);
+  const cnaeAlvo = !!c && (perfil
+    ? (perfil.cnaes || []).some(x => x.c === c && !x.so_negativo && (x.freq || 0) >= ATIVIDADE_FREQ_MIN)
+    : cnaesRadar.some(x => digitos(x) === c));
+
+  const ent = entidadeDe(emp, { porNome: !cnaeAlvo });
+  if (ent) {
+    const aceita = perfil
+      ? (perfil.cnaes || []).filter(x => !x.so_negativo && ent.cnae(x.c)).reduce((t, x) => t + (x.freq || 0), 0) >= ENTIDADE_SHARE_MIN
+      : cnaesRadar.some(x => ent.cnae(digitos(x)));
+    if (!aceita) {
+      return { motivo: 'entidade_nao_empresarial',
+        item: `É ${ent.rotulo}${perfil ? ' — os clientes da lista não são' : ' — fora das atividades do radar'}` };
+    }
+  }
+
+  if (!perfil) {
+    // Radar de perfil (ICP): a atividade tem de ser uma das escolhidas (ou do
+    // mesmo grupo). A busca já filtra por elas; isto cobre qualquer outro caminho.
+    const alvo = cnaesRadar.map(digitos).filter(Boolean);
+    if (alvo.length && c && !alvo.some(x => x === c || x.slice(0, 4) === c.slice(0, 4))) {
+      return { motivo: 'atividade_fora_do_perfil', item: `Atividade ${fmtCnae(c)} — fora das atividades do radar` };
+    }
+    return null;
+  }
+
+  const cnaes = (perfil.cnaes || []).filter(x => !x.so_negativo && (x.freq || 0) > 0);
+  if (!cnaes.length) return null;          // perfil sem atividade: não há com o que comparar
+  const nome = palavraDoRamo(emp, perfil);
+  if (!c) return nome ? null : { motivo: 'atividade_desconhecida', item: 'Atividade da empresa desconhecida e nome sem palavra do ramo' };
+  const recusada = (perfil.cnaes || []).find(x => x.c === c && x.so_negativo);
+  if (recusada) return { motivo: 'atividade_recusada', item: `Atividade ${fmtCnae(c)} — só aparece entre os que você recusou` };
+  const exato = cnaes.find(x => x.c === c);
+  if (exato && (exato.freq >= ATIVIDADE_FREQ_MIN || nome)) return null;
+  const grupo = !exato && cnaes.find(x => x.c.slice(0, 4) === c.slice(0, 4));
+  if (grupo && nome) return null;
+  if (exato) {
+    return { motivo: 'atividade_rara',
+      item: `Atividade ${fmtCnae(c)} — só ${Math.round(exato.freq * 100)}% dos clientes, e o nome não tem palavra do ramo` };
+  }
+  return { motivo: 'atividade_fora_do_perfil',
+    item: `Atividade ${fmtCnae(c)} — ${grupo ? 'só parecida com a dos clientes, e o nome não tem palavra do ramo' : 'nenhum cliente da lista tem'}` };
+}
+
+module.exports = { MIN_PERFIL, W, parseCnpjs, construirPerfil, pontuarProximidade, poderDimensao, calcularPesos, tokensNome,
+  portaoPerfil, entidadeDe, ATIVIDADE_FREQ_MIN, NOME_FREQ_MIN };
