@@ -73,6 +73,9 @@ module.exports = async function validacao(job, pool, queues) {
     const nome = emp?.fantasia || emp?.razao || '';
 
     let c = null;
+    // Pro diagnóstico da busca de contato (Monitoramento → Busca de contato).
+    let origem = null, diagBusca = null;
+    const t0 = Date.now();
     const tentativa = job.data.tentativa_contato || 0;
     // Nas retentativas, força busca FRESCA (não reaproveita cache) — a ideia é
     // justamente tentar de novo achar o contato que faltou.
@@ -95,8 +98,10 @@ module.exports = async function validacao(job, pool, queues) {
         // ou apenas por semelhança de domínio.
         site_conferido: cvWeb.site_conferido || null,
         fonte_busca: cvWeb.fonte_busca || null,
+        perfil_social: cvWeb.perfil_social || null,
         validado_em: new Date().toISOString(),
       };
+      origem = 'cache';
     }
 
     // 1) Provedor pago ativo (Google Places / Econodata), se houver e a chave funcionar.
@@ -107,6 +112,7 @@ module.exports = async function validacao(job, pool, queues) {
         } else {
           c = await contato.enriquecerContato(cnpj, { apiKey: ig.key_cifrada, backend: ig.config?.backend });
         }
+        if (c) origem = 'pago';
       } catch (e) {
         c = null;   // chave inválida / sem permissão / rate limit → cai no grátis
       }
@@ -124,10 +130,14 @@ module.exports = async function validacao(job, pool, queues) {
       const aoAvaliar = jev ? observarSites(pool, jev, {
         cnpj, nome, razao: emp?.razao, fantasia: emp?.fantasia, cidade: emp?.cidade, uf: emp?.uf, setor: emp?.setor,
       }) : undefined;
-      const g = await google.buscarContatoGratis(nome, emp?.cidade, emp?.uf, { ...busca, cnpj, aoAvaliar }).catch(() => null);
+      const g = await google.buscarContatoGratis(nome, emp?.cidade, emp?.uf,
+        { ...busca, cnpj, razao: emp?.razao, aoAvaliar }).catch(() => null);
+      diagBusca = g?.diag || null;
+      if (g) delete g.diag;
       if (g && (g.website || g.email || g.telefone)) {
         if (!c) {
           c = g;
+          origem = 'gratis';
         } else {
           // Completa os buracos do pago com o grátis (o pago manda no telefone).
           c.website = c.website || g.website;
@@ -166,6 +176,7 @@ module.exports = async function validacao(job, pool, queues) {
             // Guarda a prova junto com o contato — é o que permite auditar
             // depois, e o que faltava pra saber a procedência de 113 leads.
             site_conferido: c.site_conferido || null, fonte_busca: c.fonte_busca || null,
+            perfil_social: c.perfil_social || null,
           })]
         );
       }
@@ -179,6 +190,18 @@ module.exports = async function validacao(job, pool, queues) {
     const hasPhone = !!(c && (c.whatsapp || c.telefone));
     const hasEmail = !!(c && c.email);
     const completo = hasPhone && hasEmail;
+
+    // Diagnóstico: uma linha por tentativa — é o que mostra se a busca na
+    // internet está achando contato, por qual caminho e por que falha.
+    await pool.query(
+      `INSERT INTO busca_contato_log (lead_id, busca_id, tentativa, origem, resultado, conferido, fonte_busca,
+                                      consultas, regras, motivo, telefone, email, ms)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11,$12,$13)`,
+      [lead_id, busca_id || null, tentativa, origem || (diagBusca ? 'gratis' : 'nenhum'),
+       diagBusca?.resultado || (c ? 'site' : 'nada'), c?.site_conferido || null, c?.fonte_busca || null,
+       JSON.stringify(diagBusca?.consultas || []), JSON.stringify(diagBusca?.regras || {}),
+       diagBusca?.motivo || null, hasPhone, hasEmail, Date.now() - t0]
+    ).catch(e => console.error('[validacao] log da busca:', e.message));
 
     // Incompleto (falta telefone OU e-mail): 1 re-enriquecimento (busca fresca).
     if (!completo && tentativa < MAX_TENT_CONTATO && queues?.validacao) {

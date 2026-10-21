@@ -1276,8 +1276,12 @@ function datasDoPeriodo(periodo, de, ate) {
   return { de: '', ate: '' };
 }
 
-function Leads({ refreshKey, onOpenLead, onCrm, user }) {
-  const inicial = useMemo(lerFiltrosLeads, []);
+function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
+  // preset: veio de um número do radar ("Qualificados 7") — abre a lista já
+  // filtrada naquilo, em todo o período, pro número da lista bater com o card.
+  const inicial = useMemo(() => preset
+    ? { ...FILTROS_LEADS_PADRAO, periodo:'', ...preset }
+    : lerFiltrosLeads(), []);
   const [leads, setLeads] = useState([]);
   const [total, setTotal] = useState(0);
   const [pages, setPages] = useState(1);
@@ -1371,7 +1375,9 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
   const filtrosChave = JSON.stringify({ status:filterStatus, busca:filterBusca, local:debouncedLocal, score:filterScore,
     analise:filterAnalise, email:emailOnly, periodo:filterPeriodo, de:filterDe, ate:filterAte, ordem });
   useEffect(() => {
-    try {
+    // Filtro que veio de um número do radar é de passagem: não substitui os
+    // filtros que a pessoa deixou guardados.
+    if (!preset) try {
       const guardar = JSON.parse(filtrosChave);
       for (const k of SEM_GUARDAR) delete guardar[k];
       localStorage.setItem('hunter_leads_filtros', JSON.stringify(guardar));
@@ -1439,7 +1445,10 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
     // A opção "Sem contato" não é um status — é a fila de enriquecimento
     // manual (contato_status). Vai num parâmetro próprio.
     // Buscar um lead pelo nome/CNPJ/ID do CRM acha ele mesmo já finalizado.
-    if (filterStatus === 'sem_contato' || filterStatus === 'so_telefone') params.set('contato', filterStatus);
+    if (filterStatus.startsWith('contato:')) {
+      const c = filterStatus.slice(8);
+      params.set('contato', c === 'decisao' ? 'so_telefone' : c);
+    } else if (filterStatus === 'sem_contato' || filterStatus === 'so_telefone') params.set('contato', filterStatus);
     else if (filterStatus && filterStatus !== 'abertos') params.set('status', filterStatus);
     if (['abertos','sem_contato','so_telefone'].includes(filterStatus) && !debouncedQ) params.set('abertos', '1');
     if (emailOnly) params.set('email_only', 'true');
@@ -1591,15 +1600,26 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
           style={{ ...selFiltro, maxWidth:170, color: filterStatus ? 'var(--text)' : 'var(--dim)' }}>
           <option value="abertos">Em aberto</option>
           <option value="">Todos os status</option>
-          <option value="Novo">Novo</option>
-          <option value="Qualificado">Qualificado</option>
-          <option value="Incompleto">Incompleto</option>
-          <option value="so_telefone">Só telefone — sem e-mail</option>
-          <option value="sem_contato">Sem contato / com perfil</option>
-          <option value="Enviado">Enviado (todos)</option>
-          <option value="Enviado:crm">Enviado · pelo CRM</option>
-          <option value="Enviado:manual">Enviado · marcado à mão</option>
-          <option value="Descartado">Descartado / negativado</option>
+          {/* Contato: o mesmo critério dos números do radar e do Dashboard,
+              em qualquer situação (inclui enviados e descartados). */}
+          <optgroup label="Por contato (qualquer situação)">
+            <option value="contato:completo">Qualificados — telefone e e-mail</option>
+            <option value="contato:decisao">Só telefone</option>
+            <option value="contato:sem_contato">Sem telefone</option>
+          </optgroup>
+          <optgroup label="Para trabalhar (em aberto)">
+            <option value="so_telefone">Só telefone — sem e-mail</option>
+            <option value="sem_contato">Sem contato / com perfil</option>
+          </optgroup>
+          <optgroup label="Situação">
+            <option value="Novo">Novo</option>
+            <option value="Qualificado">Aprovados à mão</option>
+            <option value="Incompleto">Incompleto</option>
+            <option value="Enviado">Enviado (todos)</option>
+            <option value="Enviado:crm">Enviado · pelo CRM</option>
+            <option value="Enviado:manual">Enviado · marcado à mão</option>
+            <option value="Descartado">Descartado / negativado</option>
+          </optgroup>
         </select>
         {/* Período: quando o lead entrou no Hunter. "Escolher datas…" abre o
             painel com o de/até. */}
@@ -2157,7 +2177,7 @@ function ForaDoPerfil({ leadId, marcado, onMudou, onVarrer, compacto }) {
 }
 
 // ── BuscaDetail ───────────────────────────────────────────────────────────────
-function BuscaDetail({ buscaId, onBack, onOpenLead, onDuplicar }) {
+function BuscaDetail({ buscaId, onBack, onOpenLead, onDuplicar, onVerLeads }) {
   const [data, setData] = useState(null);
   const [toggling, setToggling] = useState(false);
   // Hooks das tags ficam aqui em cima: depois do "Carregando…" (return
@@ -2302,18 +2322,31 @@ function BuscaDetail({ buscaId, onBack, onOpenLead, onDuplicar }) {
             Segmentadas vem do próprio total de leads — somar qualificados +
             sem contato dava número maior que a realidade, porque o lead sem
             contato já estava contado nos dois. */}
-        {[['Encontrados', fmtNum(b.enc), 'var(--text)'],
-          ['Segmentadas (perfil)', fmtNum(b.seg ?? b.qual), C.blue],
-          ['Qualificados', fmtNum(b.qual), C.green],
-          ['Só telefone', fmtNum(b.so_telefone), C.amber],
-          ['Sem contato / com perfil', fmtNum(b.sem_contato), C.red],
-          ['Fora do perfil', fmtNum(b.fora), C.gray],
-          ['Enviados ao CRM', fmtNum(b.crm), C.cyan]].map(([label,val,col]) => (
-          <div key={label} style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:12, padding:'14px 16px' }}>
-            <div style={{ fontSize:11.5, color:'var(--faint)', marginBottom:6 }}>{label}</div>
-            <div style={{ fontSize:22, fontWeight:600, color:col }}>{val}</div>
-          </div>
-        ))}
+        {/* Os que são leads abrem a aba Leads já filtrada (radar + etapa, em
+            todo o período e qualquer situação) — o número da lista bate com o
+            do card. Encontrados e Fora do perfil não viraram lead. */}
+        {[['Encontrados', fmtNum(b.enc), 'var(--text)', null],
+          ['Segmentadas (perfil)', fmtNum(b.seg ?? b.qual), C.blue, ''],
+          ['Qualificados', fmtNum(b.qual), C.green, 'contato:completo'],
+          ['Só telefone', fmtNum(b.so_telefone), C.amber, 'contato:decisao'],
+          ['Sem contato / com perfil', fmtNum(b.sem_contato), C.red, 'contato:sem_contato'],
+          ['Fora do perfil', fmtNum(b.fora), C.gray, null],
+          ['Enviados ao CRM', fmtNum(b.crm), C.cyan, 'Enviado']].map(([label,val,col,status]) => {
+          const clicavel = status != null && onVerLeads;
+          return (
+            <div key={label} role={clicavel ? 'button' : undefined} tabIndex={clicavel ? 0 : undefined}
+              onClick={clicavel ? () => onVerLeads({ busca: String(b.id), status }) : undefined}
+              onKeyDown={clicavel ? e => { if (e.key === 'Enter') onVerLeads({ busca: String(b.id), status }); } : undefined}
+              title={clicavel ? `Ver estes leads na aba Leads` : (label === 'Fora do perfil'
+                ? 'Empresas verificadas que não bateram com o perfil — não viram lead' : undefined)}
+              className={clicavel ? 'row-hover' : undefined}
+              style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:12, padding:'14px 16px',
+                cursor: clicavel ? 'pointer' : 'default' }}>
+              <div style={{ fontSize:11.5, color:'var(--faint)', marginBottom:6 }}>{label}{clicavel && <span style={{ color:'var(--faint)' }}> ›</span>}</div>
+              <div style={{ fontSize:22, fontWeight:600, color:col }}>{val}</div>
+            </div>
+          );
+        })}
       </div>
 
       {/* Em que modo este radar manda pro CRM — e como trocar. A escolha só
@@ -3860,7 +3893,8 @@ function FilasAtendimento() {
       </div>
       <div style={{ display:'flex', alignItems:'center', gap:10, marginTop:10, fontSize:11.5, color:'var(--faint)', flexWrap:'wrap' }}>
         <span style={{ flex:1 }}>
-          {d.outras_filas_aguardando > 0 && <>Mais {d.outras_filas_aguardando} aguardando em filas fora desta lista. </>}
+          {d.outras_filas_aguardando > 0 && <>Mais {d.outras_filas_aguardando} aguardando em filas fora desta lista
+            {(d.outras_filas || []).length > 0 && <> ({d.outras_filas.map(f => `${f.nome}: ${f.aguardando}`).join(' · ')})</>}. </>}
           {conferido ? `Última conferência no CRM ${conferido}.` : 'Ainda sem conferência no CRM.'} O Hunter confere os tickets a cada poucos minutos.
         </span>
         <button type="button" onClick={carregar} disabled={carregando}
@@ -6974,6 +7008,122 @@ function Monitor() {
           </div>
         ))}
       </div>
+      <BuscaContatoSaude/>
+    </div>
+  );
+}
+
+// Saúde da busca de contato na internet (sem Google). Responde: a busca está
+// achando telefone/e-mail? Por qual caminho? Qual fonte está respondendo? E,
+// quando não acha, por quê? Só o master vê (fica no Monitoramento).
+const NOMES_CAMINHO = { site:'Site próprio da empresa', rede_social:'Perfil em rede social (Instagram/Facebook)',
+  cache:'Já conhecido (outra busca achou antes)', pago:'Provedor pago de contato', nada:'Não achou' };
+const NOMES_FONTE = { searxng:'SearXNG (próprio, grátis)', tavily:'Tavily (paga)', ddg:'DuckDuckGo (último recurso)' };
+const NOMES_CONSULTA = { nome:'Nome + cidade', razao:'Razão social', cnpj:'CNPJ', redes:'Nome + WhatsApp/Instagram' };
+const NOMES_MOTIVO = { busca_sem_resultado:'A busca não trouxe resultado nenhum',
+  nenhum_site_confirmado:'Achou sites, mas nenhum confirmado como da empresa',
+  so_diretorios_e_redes:'Só guias, cadastros de CNPJ e redes sem telefone' };
+const NOMES_REGRA = { sem_prova:'Site sem prova de ser da empresa', cnpj_diferente:'Site mostra outro CNPJ',
+  ddd_outra_uf:'Telefone de outro estado', diretorio:'Era guia/diretório', dominio_fraco:'Domínio parecido, sem confirmação',
+  nao_abriu:'Site não abriu', aceito_cnpj:'Aceito pelo CNPJ', aceito_dominio:'Aceito pelo domínio', aceito_nome:'Aceito pelo nome' };
+
+function BuscaContatoSaude() {
+  const [dias, setDias] = useState(7);
+  const [d, setD] = useState(null);
+  const [testando, setTestando] = useState(false);
+  const carregar = (testar) => {
+    if (testar) setTestando(true);
+    return fetch(`/api/monitor/busca-contato?dias=${dias}${testar ? '&testar=1' : ''}`, { credentials:'same-origin' })
+      .then(r => r.ok ? r.json() : null).then(x => x && setD(x)).catch(() => {})
+      .finally(() => setTestando(false));
+  };
+  useEffect(() => { carregar(false); }, [dias]);
+  if (!d) return null;
+  const pct = (a, b) => b ? Math.round(100 * a / b) : 0;
+  const cartao = { background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:18, marginTop:18 };
+  const sub = { fontSize:11.5, fontWeight:600, letterSpacing:'.04em', color:'var(--faint)', textTransform:'uppercase', margin:'16px 0 8px' };
+  const linha = (rotulo, valor, total, cor, extra) => (
+    <div key={rotulo} style={{ display:'flex', alignItems:'center', gap:10, padding:'5px 0', fontSize:12.5 }}>
+      <span style={{ flex:'0 1 260px', minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{rotulo}</span>
+      <span style={{ flex:1, height:6, borderRadius:3, background:'var(--panel2)', overflow:'hidden', minWidth:60 }}>
+        <span style={{ display:'block', width: pct(valor, total) + '%', height:'100%', background:cor }}/>
+      </span>
+      <span style={{ minWidth:120, textAlign:'right', color:'var(--dim)' }}>{valor} <span style={{ color:'var(--faint)' }}>({pct(valor, total)}%)</span>{extra}</span>
+    </div>
+  );
+  // Leitura automática do que os números dizem.
+  const avisos = [];
+  const sx = d.fontes?.searxng;
+  if (!d.configurado?.searxng && !d.configurado?.tavily) avisos.push('Nenhuma busca na web configurada: sobra só o DuckDuckGo, que quase não acha empresa pequena. Configure o SearXNG em Integrações → Busca na web.');
+  if (sx && sx.chamadas >= 10 && pct(sx.com_resultado, sx.chamadas) < 30) avisos.push(`O SearXNG voltou vazio em ${100 - pct(sx.com_resultado, sx.chamadas)}% das buscas — provavelmente está fora do ar ou bloqueado pelos buscadores. Use "Testar SearXNG agora".`);
+  if (d.tentativas >= 10 && pct(d.com_telefone, d.tentativas) < 25) avisos.push(`Só ${pct(d.com_telefone, d.tentativas)}% das buscas acharam telefone.`);
+  if (d.teste && d.teste.resultados === 0) avisos.push('O teste do SearXNG agora voltou sem resultado nenhum.');
+  return (
+    <div style={cartao}>
+      <div style={{ display:'flex', alignItems:'flex-start', gap:12, flexWrap:'wrap' }}>
+        <div style={{ flex:'1 1 300px' }}>
+          <div style={{ fontSize:15, fontWeight:600 }}>Busca de contato na internet</div>
+          <div style={{ fontSize:12, color:'var(--dim)', marginTop:4, lineHeight:1.5 }}>
+            Como a busca está achando telefone e e-mail dos leads que passaram no perfil — por qual caminho, por qual fonte e, quando não acha, por quê.
+          </div>
+        </div>
+        <select value={dias} onChange={e => setDias(parseInt(e.target.value, 10))} aria-label="Período do diagnóstico"
+          style={{ height:32, borderRadius:8, border:'1px solid var(--border)', background:'var(--panel2)', color:'var(--text)',
+            padding:'0 8px', fontSize:12.5, fontFamily:'inherit' }}>
+          <option value={1}>Últimas 24 h</option><option value={7}>Últimos 7 dias</option><option value={30}>Últimos 30 dias</option>
+        </select>
+        <button type="button" onClick={() => carregar(true)} disabled={testando || !d.configurado?.searxng}
+          title={d.configurado?.searxng ? 'Faz uma busca de teste agora no SearXNG' : 'SearXNG não configurado'}
+          style={{ height:32, padding:'0 12px', borderRadius:8, border:'1px solid var(--border)', background:'transparent',
+            color:'var(--text)', fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>
+          {testando ? 'Testando…' : 'Testar SearXNG agora'}
+        </button>
+      </div>
+      {d.teste && (
+        <div style={{ fontSize:12, marginTop:10, color: d.teste.resultados ? C.green : C.red }}>
+          Teste do SearXNG: {d.teste.resultados} resultado(s) em {(d.teste.ms / 1000).toFixed(1)} s.
+        </div>
+      )}
+      {avisos.map(a => <div key={a} style={{ fontSize:12.5, color:C.amber, marginTop:10 }}>⚠ {a}</div>)}
+      {!d.tentativas ? (
+        <div style={{ fontSize:12.5, color:'var(--faint)', marginTop:14 }}>
+          Nenhuma busca de contato registrada neste período. O diagnóstico começa a contar a partir desta versão.
+        </div>
+      ) : (<>
+        <div className="h-cards" style={{ '--card':'140px', gap:10, marginTop:14 }}>
+          {[['Buscas', d.tentativas, 'var(--text)', `${d.leads} lead(s)`],
+            ['Com telefone', pct(d.com_telefone, d.tentativas) + '%', C.green, `${d.com_telefone}`],
+            ['Com e-mail', pct(d.com_email, d.tentativas) + '%', C.blue, `${d.com_email}`],
+            ['Telefone e e-mail', pct(d.completos, d.tentativas) + '%', C.gold, `${d.completos}`],
+            ['Tempo médio', d.ms_medio != null ? (d.ms_medio / 1000).toFixed(1) + ' s' : '—', 'var(--text)', 'por busca']].map(([r, v, c, x]) => (
+            <div key={r} style={{ background:'var(--panel2)', borderRadius:10, padding:'10px 12px' }}>
+              <div style={{ fontSize:11.5, color:'var(--faint)' }}>{r}</div>
+              <div style={{ fontSize:20, fontWeight:600, color:c }}>{v}</div>
+              <div style={{ fontSize:11, color:'var(--faint)' }}>{x}</div>
+            </div>
+          ))}
+        </div>
+        <div style={sub}>Por onde achou</div>
+        {(d.caminhos || []).map(c => linha(NOMES_CAMINHO[c.caminho] || c.caminho, c.n, d.tentativas,
+          c.caminho === 'nada' ? C.red : C.green, c.caminho !== 'nada' ? <span style={{ color:'var(--faint)' }}> · {c.com_telefone} c/ tel.</span> : null))}
+        <div style={sub}>Fontes de busca (cada consulta)</div>
+        {/* Barra = consultas que voltaram com algum resultado; ao lado, quantas
+            trouxeram site candidato (fora guias e redes sociais). */}
+        {Object.entries(d.fontes || {}).map(([f, v]) => linha(NOMES_FONTE[f] || f, v.com_resultado, v.chamadas, C.blue,
+          <span style={{ color:'var(--faint)' }}> de {v.chamadas} · {v.com_util} c/ site</span>))}
+        <div style={sub}>Consultas (trouxeram site candidato)</div>
+        {Object.entries(d.consultas || {}).map(([q, v]) => linha(NOMES_CONSULTA[q] || q, v.com_util, v.chamadas, C.cyan,
+          <span style={{ color:'var(--faint)' }}> de {v.chamadas}</span>))}
+        {(d.motivos || []).length > 0 && <>
+          <div style={sub}>Quando não achou, por quê</div>
+          {d.motivos.map(m => linha(NOMES_MOTIVO[m.motivo] || m.motivo, m.n, d.tentativas, C.red))}
+        </>}
+        {(d.regras || []).length > 0 && <>
+          <div style={sub}>Sites avaliados</div>
+          {d.regras.map(r => linha(NOMES_REGRA[r.regra] || r.regra, r.n, d.regras.reduce((t, x) => t + x.n, 0),
+            /^aceito/.test(r.regra) ? C.green : C.gray))}
+        </>}
+      </>)}
     </div>
   );
 }
@@ -7364,6 +7514,16 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                     <span style={{ fontSize:13, flex:1, color:'var(--text)', wordBreak:'break-all' }}>{l.contato_validado.website}</span>
                   </a>
                 )}
+                {/* Empresa sem site: o contato veio do perfil dela na rede social. */}
+                {/^https:\/\/([a-z0-9-]+\.)*(instagram\.com|facebook\.com|linktr\.ee)\//i.test(l.contato_validado?.perfil_social || '') && (
+                  <a href={l.contato_validado.perfil_social} target="_blank" rel="noopener noreferrer"
+                    style={{ display:'flex', alignItems:'center', gap:11, background:'var(--panel2)',
+                      border:'1px solid var(--border)', borderRadius:10, padding:'11px 13px', textDecoration:'none' }}>
+                    <Svg d="M7 2h10a5 5 0 0 1 5 5v10a5 5 0 0 1-5 5H7a5 5 0 0 1-5-5V7a5 5 0 0 1 5-5zM12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM17.5 6.5h.01" color="var(--dim)" w={16} h={16} sw={1.8}/>
+                    <span style={{ fontSize:13, flex:1, color:'var(--text)', wordBreak:'break-all' }}>{l.contato_validado.perfil_social}</span>
+                    <span style={{ fontSize:10, color:'var(--faint)' }}>rede social</span>
+                  </a>
+                )}
                 {l.contato_validado?.resumo_site && (
                   <div style={{ fontSize:12, color:'var(--dim)', lineHeight:1.5, background:'var(--panel2)',
                     borderRadius:10, padding:'10px 13px', fontStyle:'italic' }}>
@@ -7683,6 +7843,7 @@ function App() {
   const [screen, setScreen] = useState('dashboard');
   const [openLeadId, setOpenLeadId] = useState(null);
   const [crmIds, setCrmIds] = useState(null);
+  const [leadsPreset, setLeadsPreset] = useState(null);   // filtros vindos de um número do radar
   const [buscaDetailId, setBuscaDetailId] = useState(null);
   const [user, setUser] = useState(null);
   const [leadsRefreshKey, setLeadsRefreshKey] = useState(0);
@@ -7703,7 +7864,7 @@ function App() {
       .catch(() => {});
   }, []);
 
-  const navTo = (s) => { setScreen(s); setOpenLeadId(null); setCrmIds(null); if (s !== 'nova') setDuplicarDe(null); };
+  const navTo = (s) => { setScreen(s); setOpenLeadId(null); setCrmIds(null); setLeadsPreset(null); if (s !== 'nova') setDuplicarDe(null); };
   const duplicarBusca = (b) => { setDuplicarDe(b); setScreen('nova'); setOpenLeadId(null); };
   // Persiste o tema escolhido: só muda quando o usuário clica (sobrevive ao reload).
   const toggleTheme = () => setTheme(t => {
@@ -7740,10 +7901,12 @@ function App() {
     switch(screen) {
       case 'dashboard': return <Dashboard onOpenBusca={openBusca}/>;
       case 'leads': return (
-        <Leads refreshKey={leadsRefreshKey} onOpenLead={setOpenLeadId} onCrm={setCrmIds} user={user}/>
+        <Leads key={leadsPreset ? JSON.stringify(leadsPreset) : 'leads'} refreshKey={leadsRefreshKey}
+          onOpenLead={setOpenLeadId} onCrm={setCrmIds} user={user} preset={leadsPreset}/>
       );
       case 'buscas': return <Buscas onOpen={openBusca}/>;
-      case 'buscaDetail': return <BuscaDetail buscaId={buscaDetailId} onBack={() => setScreen('buscas')} onOpenLead={setOpenLeadId} onDuplicar={duplicarBusca}/>;
+      case 'buscaDetail': return <BuscaDetail buscaId={buscaDetailId} onBack={() => setScreen('buscas')} onOpenLead={setOpenLeadId} onDuplicar={duplicarBusca}
+        onVerLeads={preset => { setLeadsPreset(preset); setScreen('leads'); setOpenLeadId(null); }}/>;
       case 'nova': return <NovaBusca key={duplicarDe ? 'dup-'+duplicarDe.id : 'nova'} inicial={duplicarDe} onSalvar={() => navTo('buscas')}/>;
       case 'estrategia': return (
         <Estrategia user={user}

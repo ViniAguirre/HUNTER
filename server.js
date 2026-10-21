@@ -18,6 +18,8 @@ const { normalizarTags, normalizarListaCrm } = require('./tags');
 const { swotSemOrigem, contatoSemOrigem } = require('./sigilo');
 const { jaNoCrmSql } = require('./jobs/crm');
 const { estadoDoStatus, cargaHunter } = require('./jobs/atendimento');
+const fontes = require('./jobs/fontes');
+const searxngProv = require('./providers/searxng');
 
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'troque-este-segredo';
@@ -178,6 +180,10 @@ function buildLeadsFilter(query) {
   // Vai pelo estágio derivado, e não pela coluna crua, pra casar exatamente com
   // o número que a tela do radar mostra — lead antigo tem contato_status vazio.
   if (contato === 'sem_contato') conditions.push(`${estagioContato('l')} = 'sem_contato'`);
+  // Qualificado = telefone E e-mail (o mesmo critério dos números do radar e
+  // do Dashboard). O status 'Qualificado' da coluna só existe quando alguém
+  // aprova à mão — filtrar por ele não achava os qualificados do radar.
+  if (contato === 'completo') conditions.push(`${estagioContato('l')} = 'completo'`);
   // Só telefone: dá pra ligar, falta o e-mail. Não é qualificado nem sem
   // contato; sem filtro próprio, essa faixa não tinha como ser trabalhada.
   if (contato === 'so_telefone') conditions.push(`${estagioContato('l')} = 'decisao'`);
@@ -828,9 +834,33 @@ async function init() {
     CREATE INDEX IF NOT EXISTS idx_avaliacoes_lista_lista ON avaliacoes_lista(lista, id DESC);
   `);
 
+  // Diagnóstico da busca de contato na internet (jobs/validacao.js): uma linha
+  // por tentativa — por qual caminho achou (site, rede social, cache, pago), por
+  // quais fontes e consultas, e por que falhou. Só o master vê (Monitoramento).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS busca_contato_log (
+      id          BIGSERIAL PRIMARY KEY,
+      criado_em   TIMESTAMPTZ NOT NULL DEFAULT now(),
+      lead_id     INTEGER,
+      busca_id    INTEGER,
+      tentativa   INTEGER NOT NULL DEFAULT 0,
+      origem      TEXT,
+      resultado   TEXT,
+      conferido   TEXT,
+      fonte_busca TEXT,
+      consultas   JSONB NOT NULL DEFAULT '[]',
+      regras      JSONB NOT NULL DEFAULT '{}',
+      motivo      TEXT,
+      telefone    BOOLEAN NOT NULL DEFAULT false,
+      email       BOOLEAN NOT NULL DEFAULT false,
+      ms          INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS idx_busca_contato_log_data ON busca_contato_log(criado_em DESC);
+  `);
+
   for (const t of ['usuarios', 'buscas', 'leads', 'integracoes', 'sementes', 'contadores', 'contadores_hora', 'propostas_valor', 'listas_semelhantes', 'chaves_api',
                    'estrategia', 'estrategia_pautas', 'estrategia_slots', 'estrategia_eventos', 'decisoes_jev',
-                   'avaliacoes_lista']) {
+                   'avaliacoes_lista', 'busca_contato_log']) {
     await tenantizarTabela(pool, t);
   }
 
@@ -2740,6 +2770,56 @@ app.get('/api/crm/status', requireAuth, async (req, res) => {
 
 // ── API: monitoramento do motor (Fase 3) ───────────────────────────────────────
 
+// Saúde da busca de contato na internet (sem Google): de cada tentativa dos
+// últimos N dias, quanto achou telefone/e-mail, por qual caminho (site próprio,
+// rede social, cache, pago), quanto cada fonte de busca respondeu e por que as
+// outras falharam. ?testar=1 faz uma busca de teste agora no SearXNG.
+app.get('/api/monitor/busca-contato', requireAuth, requireMaster, async (req, res) => {
+  const dias = Math.min(90, Math.max(1, parseInt(req.query.dias, 10) || 7));
+  try {
+    const janela = `criado_em >= now() - make_interval(days => $1)`;
+    const [{ rows: [tot] }, { rows: caminhos }, { rows: fontesRows }, { rows: motivos }, { rows: regras }] = await Promise.all([
+      pool.query(`SELECT COUNT(*)::int AS tentativas, COUNT(DISTINCT lead_id)::int AS leads,
+                         COUNT(*) FILTER (WHERE telefone)::int AS com_telefone,
+                         COUNT(*) FILTER (WHERE email)::int AS com_email,
+                         COUNT(*) FILTER (WHERE telefone AND email)::int AS completos,
+                         round(avg(ms))::int AS ms_medio, max(criado_em) AS ultima
+                    FROM busca_contato_log WHERE ${janela}`, [dias]),
+      pool.query(`SELECT CASE WHEN origem IN ('cache','pago') THEN origem ELSE COALESCE(resultado, 'nada') END AS caminho,
+                         COUNT(*)::int AS n, COUNT(*) FILTER (WHERE telefone)::int AS com_telefone
+                    FROM busca_contato_log WHERE ${janela} GROUP BY 1 ORDER BY 2 DESC`, [dias]),
+      // Cada consulta de cada tentativa, por fonte: quantas vezes foi chamada e
+      // quantas voltou com algum resultado (e com resultado útil, fora diretório/rede).
+      pool.query(`SELECT t->>'fonte' AS fonte, c->>'tipo' AS consulta, COUNT(*)::int AS chamadas,
+                         COUNT(*) FILTER (WHERE (t->>'n')::int > 0)::int AS com_resultado,
+                         COUNT(*) FILTER (WHERE (t->>'uteis')::int > 0)::int AS com_util
+                    FROM busca_contato_log l, jsonb_array_elements(l.consultas) c, jsonb_array_elements(c->'tentativas') t
+                   WHERE l.${janela} GROUP BY 1, 2`, [dias]),
+      pool.query(`SELECT motivo, COUNT(*)::int AS n FROM busca_contato_log
+                   WHERE ${janela} AND motivo IS NOT NULL GROUP BY 1 ORDER BY 2 DESC`, [dias]),
+      pool.query(`SELECT k AS regra, SUM(v::int)::int AS n FROM busca_contato_log, jsonb_each_text(regras) AS r(k, v)
+                   WHERE ${janela} GROUP BY 1 ORDER BY 2 DESC`, [dias]),
+    ]);
+    // Consolida por fonte e por tipo de consulta.
+    const porFonte = {}, porConsulta = {};
+    for (const r of fontesRows) {
+      const f = porFonte[r.fonte] ||= { chamadas: 0, com_resultado: 0, com_util: 0 };
+      f.chamadas += r.chamadas; f.com_resultado += r.com_resultado; f.com_util += r.com_util;
+      const q = porConsulta[r.consulta] ||= { chamadas: 0, com_util: 0 };
+      q.chamadas += r.chamadas; q.com_util += r.com_util;
+    }
+    const busca = await fontes.fontesBuscaWeb(pool);
+    let teste = null;
+    if (req.query.testar === '1' && busca.searxngUrl) {
+      const t0 = Date.now();
+      const r = await searxngProv.buscar('padaria centro São Paulo SP', { url: busca.searxngUrl, max: 20 });
+      teste = { resultados: r.length, ms: Date.now() - t0 };
+    }
+    res.json({ dias, ...tot, caminhos, fontes: porFonte, consultas: porConsulta, motivos, regras,
+               configurado: { searxng: !!busca.searxngUrl, tavily: !!busca.tavilyKey }, teste });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
 app.get('/api/monitor/queues', requireAuth, requireMaster, async (req, res) => {
   try {
     const [leadsHoje, empresasTotal, buscasAtivas, descartados] = await Promise.all([
@@ -3393,9 +3473,14 @@ app.get('/api/estrategia/filas-atendimento', requireAuth, async (req, res) => {
     // Lead do Hunter aguardando numa fila que não está na lista (ex.: conexão
     // desmarcada da distribuição): não some sem aviso.
     const naLista = new Set(ids);
-    const outras = cont.filter(r => !naLista.has(String(r.id))).reduce((t, r) => t + r.aguardando, 0);
+    // E diz QUAIS: sem o nome, "mais 6 em outras filas" não dava pra conferir.
+    const outrasLista = cont.filter(r => !naLista.has(String(r.id)) && r.aguardando > 0)
+      .map(r => ({ id: String(r.id), nome: nomeDe.get(String(r.id)) || `Fila ${r.id}`, aguardando: r.aguardando }))
+      .sort((a, b) => b.aguardando - a.aguardando);
+    if (ult?.sem_fila) outrasLista.push({ id: null, nome: 'sem fila', aguardando: ult.sem_fila });
+    const outras = outrasLista.reduce((t, r) => t + r.aguardando, 0);
     res.json({ gk: true, filas, total_aguardando: filas.reduce((t, f) => t + f.aguardando, 0),
-               outras_filas_aguardando: outras, origem: daDistrib.length ? 'distribuicao' : 'hunter',
+               outras_filas_aguardando: outras, outras_filas: outrasLista, origem: daDistrib.length ? 'distribuicao' : 'hunter',
                conferido_em: ult?.em || null, erro_filas: doCrm ? null : 'não consegui listar as filas no CRM' });
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
