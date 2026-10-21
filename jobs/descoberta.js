@@ -55,7 +55,9 @@ module.exports = async function descoberta(job, pool, queues) {
   // A importação (tipo 'cnpj') NÃO perfila: cada CNPJ é importado como pedido e
   // qualifica por intenção no Score 1 (o enriquecimento acontece no laço abaixo,
   // respeitando o limite grátis de 5/min da Receita).
-  if (tipo === 'lookalike' && !(criterios.params && criterios.params.perfil)) {
+  // `reperfilar`: a lista mudou (semente nova, contraexemplo) — refaz o perfil.
+  // O antigo segue valendo até o novo ficar pronto.
+  if (tipo === 'lookalike' && (!(criterios.params && criterios.params.perfil) || criterios.reperfilar)) {
     const resultado = await perfilar(pool, criterios, busca_id, busca.lista, ig?.key_cifrada || null);
     if (resultado.erro) return resultado;
     criterios = resultado.criterios;
@@ -441,6 +443,7 @@ async function perfilarComLista(pool, criterios, busca_id, cnpjs, negativos = []
   }
   params.proposta_valor = criterios.proposta_valor || criterios.params?.proposta_valor || '';
   const novo = { ...criterios, params };
+  delete novo.reperfilar;
   await pool.query(`UPDATE buscas SET criterios=$2::jsonb WHERE id=$1`, [busca_id, JSON.stringify(novo)]);
   return { criterios: novo };
 }

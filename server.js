@@ -918,6 +918,13 @@ async function init() {
   `).then(r => { if (r.rowCount) console.log(`[migração] ${r.rowCount} lead(s) que já eram clientes saíram da esteira`); })
     .catch(e => console.error('[migração] guardrail sementes:', e.message));
 
+  // Notas falsas do Score 1 (semelhantes sem perfil davam 100 a qualquer
+  // empresa ativa): recalcula os leads em aberto com o perfil atual do radar.
+  // Em segundo plano — não segura a subida da API.
+  require('./jobs/score1').recalcularNotasFalsas(pool)
+    .then(r => { if (r.analisados) console.log('[migração] notas falsas do Score 1:', JSON.stringify(r)); })
+    .catch(e => console.error('[migração] notas falsas do Score 1:', e.message));
+
   // Lead marcado "fora do perfil" que o envio ao CRM (já na fila) carimbou
   // depois como 'Enviado': a marcação vale — volta pra descartado.
   await pool.query(`
@@ -2451,13 +2458,14 @@ app.post('/api/leads/:id/fora-do-perfil', requireAuth, requireEditor, async (req
          ON CONFLICT (tenant_id, lista, cnpj) DO UPDATE SET tipo='negativa', origem='fora_do_perfil'`,
         [cnpj, l.lista]);
     }
-    // Zera o perfil dos radares que usam essa lista → re-perfilam já com o
-    // contraexemplo na próxima varredura.
+    // Marca os radares da lista pra re-perfilar na próxima varredura, já com o
+    // contraexemplo. NÃO apaga o perfil atual: as empresas que já estão na
+    // esteira continuam sendo avaliadas por ele. Apagar abria uma janela em que
+    // o Score 1 rodava sem perfil e dava 100 a qualquer empresa ativa.
     const { rows: buscas } = await pool.query(
       `SELECT id, criterios FROM buscas WHERE lista=$1`, [l.lista]);
     for (const b of buscas) {
-      const crit = b.criterios || {};
-      delete crit.params;
+      const crit = { ...(b.criterios || {}), reperfilar: true };
       await pool.query(`UPDATE buscas SET criterios=$2::jsonb WHERE id=$1`, [b.id, JSON.stringify(crit)]);
     }
     const { rows: [{ n }] } = await pool.query(
@@ -2550,14 +2558,14 @@ app.post('/api/leads/fora-do-perfil-lote', requireAuth, requireEditor, async (re
          ON CONFLICT (tenant_id, lista, cnpj) DO UPDATE SET tipo='negativa', origem='fora_do_perfil'`,
         [cnpj, l.lista]);
     }
-    // Zera o perfil UMA vez por lista (e não por lead) — o re-perfilamento é o
-    // mesmo trabalho independente de quantos contraexemplos entraram.
+    // Marca pra re-perfilar UMA vez por lista (e não por lead) — o
+    // re-perfilamento é o mesmo trabalho independente de quantos contraexemplos
+    // entraram. O perfil atual fica valendo até lá (ver /fora-do-perfil).
     let radares = 0;
     for (const lista of listas) {
       const { rows: bs } = await pool.query(`SELECT id, criterios FROM buscas WHERE lista=$1`, [lista]);
       for (const b of bs) {
-        const crit = b.criterios || {};
-        delete crit.params;
+        const crit = { ...(b.criterios || {}), reperfilar: true };
         await pool.query(`UPDATE buscas SET criterios=$2::jsonb WHERE id=$1`, [b.id, JSON.stringify(crit)]);
         radares++;
       }
@@ -3714,8 +3722,9 @@ async function garantirBuscaLookalikeAuto(lista, total) {
     `SELECT id, criterios FROM buscas WHERE lista=$1 AND tipo='lookalike' ORDER BY id LIMIT 1`, [lista]
   );
   if (existe) {
-    const crit = existe.criterios || {};
-    delete crit.params; // zera o perfil → re-perfila com a nova semente
+    // Re-perfila com a nova semente na próxima varredura, sem apagar o perfil
+    // atual (as empresas já na esteira seguem avaliadas por ele).
+    const crit = { ...(existe.criterios || {}), reperfilar: true };
     await pool.query(`UPDATE buscas SET criterios=$2::jsonb, status=$3, ultima_ativ=now() WHERE id=$1`,
       [existe.id, JSON.stringify(crit), status]);
     return existe.id;
