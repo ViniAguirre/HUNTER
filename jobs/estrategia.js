@@ -290,6 +290,11 @@ function proximaExpansao(p, usadas, desempenho = {}) {
 // vizinhos; empate pelo maior mercado). Sem teto de regiões: quem dita o ritmo
 // é o portão — limite diário, cadência por hora, horário, esteira e fila do CRM.
 // Estado que a pauta já varreu inteiro é pulado (as cidades dele já passaram).
+//
+// Pauta SEM região escolhida (um radar só, "onde os filtros/clientes estiverem")
+// também expande: começa pelos estados que esse primeiro radar varreu
+// (`ufsBase` — no semelhantes, onde os clientes da lista estão) e, sem nenhum,
+// pela maior cidade do país.
 let _cidadesPorUf = null;
 function cidadesPorUf(uf) {
   if (!_cidadesPorUf) {
@@ -301,9 +306,9 @@ function cidadesPorUf(uf) {
 }
 const habitantes = n => n >= 1e6 ? `${(n / 1e6).toFixed(1).replace('.', ',')} mi de hab.` : `${Math.round(n / 1000)} mil hab.`;
 
-function proximaCidade(p, usadas) {
+function proximaCidade(p, usadas, ufsBase = []) {
   const regs = Array.isArray(p.regioes) ? p.regioes : [];
-  if (!p.expandir || !regs.length) return null;
+  if (!p.expandir) return null;
   const excluir = new Set(p.expandir_excluir || []);
   const usadasL = [...usadas];
   const estadoInteiro = new Set([
@@ -314,7 +319,19 @@ function proximaCidade(p, usadas) {
     ...regs.flatMap(r => (r.municipios_cod || []).map(String)),
     ...usadasL.filter(k => k.startsWith('mun:')).flatMap(k => k.slice(4).split(',')),
   ]);
-  const base = [...new Set(regs.flatMap(r => r.ufs))].filter(u => !excluir.has(u));
+  // A ordem dos estados vem das regiões escolhidas à mão; as que o piloto
+  // acrescentou não mudam o ponto de partida.
+  const manuais = regs.filter(r => !r.auto);
+  const base = [...new Set(manuais.length ? manuais.flatMap(r => r.ufs) : ufsBase)]
+    .filter(u => UFS.has(u) && !excluir.has(u));
+  if (!base.length) {
+    // Nenhum estado de partida: a maior cidade do país que ainda não passou.
+    const c = Object.keys(VIZINHOS).filter(u => !excluir.has(u) && !estadoInteiro.has(u))
+      .flatMap(u => cidadesPorUf(u).filter(m => !cidadesFeitas.has(String(m.c))).slice(0, 1))
+      .sort((a, b) => (b.p || 0) - (a.p || 0))[0];
+    return c ? { municipio: { c: String(c.c), n: c.n, uf: c.uf },
+      motivo: `maior cidade do país ainda não varrida (${habitantes(c.p || 0)})` } : null;
+  }
   const ordem = [], visto = new Set();
   let camada = base;
   while (camada.length) {
@@ -542,11 +559,14 @@ async function passo(db, pool, queues) {
   //      pauta com "expandir" ligado → o piloto escolhe a próxima (ver
   //      proximaExpansao), grava na pauta — fica visível e editável na tela —
   //      e já abre o radar dela.
-  const expansiveis = elegiveis.filter(p => p.expandir && (p.regioes || []).length);
+  //      Sem região escolhida, sempre por cidades (por estados precisa de onde
+  //      partir) — vale também pra pauta antiga que gravou "estados".
+  const expansiveis = elegiveis.filter(p => p.expandir);
   if (expansiveis.length) {
     const { rows: desemp } = await db.query(
       `SELECT s.pauta_id, s.regiao_chave, COALESCE(b.universo_varrido, 0)::int AS encontrados,
-              (SELECT COUNT(*) FROM leads l WHERE l.busca_id = b.id)::int AS leads
+              (SELECT COUNT(*) FROM leads l WHERE l.busca_id = b.id)::int AS leads,
+              b.criterios->'params'->'ufs' AS ufs
          FROM estrategia_slots s LEFT JOIN buscas b ON b.id = s.busca_id
         WHERE s.pauta_id = ANY($1::int[])`, [expansiveis.map(p => p.id)]);
     for (const p of expansiveis) {
@@ -563,8 +583,11 @@ async function passo(db, pool, queues) {
       }
       const desempenho = Object.fromEntries(meus.map(d => [d.regiao_chave, d]));
       const usadas = new Set(meus.map(d => d.regiao_chave));
-      const porCidade = p.expandir_modo === 'cidades';
-      const prox = porCidade ? proximaCidade(p, usadas) : proximaExpansao(p, usadas, desempenho);
+      const porCidade = p.expandir_modo === 'cidades' || !(p.regioes || []).some(r => !r.auto);
+      // Os estados que o radar sem região varreu (o perfil grava em params.ufs).
+      const ufsBase = [...new Set(meus.filter(d => d.regiao_chave === REGIAO_UNICA.chave)
+        .flatMap(d => Array.isArray(d.ufs) ? d.ufs : []))];
+      const prox = porCidade ? proximaCidade(p, usadas, ufsBase) : proximaExpansao(p, usadas, desempenho);
       if (!prox) continue;
       const reg = prox.municipio
         ? normalizarRegiao({ municipios_rotulos: [prox.municipio], auto: true, motivo: prox.motivo })
@@ -604,9 +627,13 @@ async function passo(db, pool, queues) {
 
   // Avisa UMA vez que acabou (e não a cada minuto): só registra o evento se o
   // estado anterior ainda não era este.
+  // Pauta sem expansão é o motivo mais comum de o piloto parar cedo: diz qual.
+  const semExpandir = elegiveis.find(p => !p.expandir);
   const estado = plano.ao_concluir === 'recomecar'
     ? `linha editorial concluída — os radares voltam a varrer ${DIAS_RECOMECO} dias depois de esgotar`
-    : 'linha editorial concluída — adicione pautas ou regiões para continuar';
+    : semExpandir
+      ? `linha editorial concluída — ligue a expansão "Por cidades" na pauta "${semExpandir.nome}" (ou adicione pautas e regiões) para o piloto continuar abrindo radares`
+      : 'linha editorial concluída — adicione pautas ou regiões para continuar';
   if (plano.estado !== estado) {
     await evento(db, 'concluiu', { detalhe: `todas as regiões das pautas deste período já foram varridas` });
   }

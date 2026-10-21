@@ -4207,13 +4207,20 @@ function Leads({
 
 // ── Buscas ────────────────────────────────────────────────────────────────────
 function Buscas({
-  onOpen
+  onOpen,
+  onEstrategia
 }) {
   const [buscas, setBuscas] = useState(null);
+  const [piloto, setPiloto] = useState(null);
   const carregar = () => {
     fetch('/api/buscas', {
       credentials: 'same-origin'
     }).then(r => r.json()).then(d => setBuscas(Array.isArray(d) ? d : d.buscas || [])).catch(() => setBuscas([]));
+    // O que o piloto da Estratégia está fazendo — é ele quem cria os radares
+    // sozinho; sem isto a lista só mostra o que já existe.
+    fetch('/api/estrategia', {
+      credentials: 'same-origin'
+    }).then(r => r.ok ? r.json() : null).then(d => setPiloto(d?.plano || null)).catch(() => setPiloto(null));
   };
   useEffect(carregar, []);
   const excluir = async (e, b) => {
@@ -4230,7 +4237,47 @@ function Buscas({
     }
     carregar();
   };
-  return /*#__PURE__*/React.createElement("div", null, /*#__PURE__*/React.createElement("div", {
+  const pilotoParado = piloto?.ativo && /^(aguardando|linha editorial|nenhuma pauta)/.test(String(piloto.estado || ''));
+  return /*#__PURE__*/React.createElement("div", null, piloto && /*#__PURE__*/React.createElement("div", {
+    role: "button",
+    onClick: onEstrategia,
+    title: "Abrir a Estrat\xE9gia",
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      padding: '10px 14px',
+      marginBottom: 14,
+      borderRadius: 12,
+      cursor: 'pointer',
+      background: 'var(--panel)',
+      border: `1px solid ${pilotoParado ? C.amber : 'var(--border)'}`,
+      fontSize: 12.5,
+      color: 'var(--dim)',
+      lineHeight: 1.45
+    }
+  }, /*#__PURE__*/React.createElement(StatusDot, {
+    color: !piloto.ativo ? C.gray : pilotoParado ? C.amber : C.green,
+    pulse: piloto.ativo && !pilotoParado
+  }), /*#__PURE__*/React.createElement("span", {
+    style: {
+      minWidth: 0
+    }
+  }, /*#__PURE__*/React.createElement("b", {
+    style: {
+      color: 'var(--text)'
+    }
+  }, "Piloto autom\xE1tico ", piloto.ativo ? 'ligado' : 'desligado'), piloto.ativo ? piloto.estado ? /*#__PURE__*/React.createElement(React.Fragment, null, " \u2014 ", piloto.estado, piloto.estado_em && /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, " \xB7 desde ", timeAgo(piloto.estado_em))) : ' — aguardando o motor, que confere a estratégia a cada minuto' : ' — nenhum radar é criado sozinho'), /*#__PURE__*/React.createElement("span", {
+    style: {
+      marginLeft: 'auto',
+      color: 'var(--faint)',
+      whiteSpace: 'nowrap'
+    }
+  }, "Estrat\xE9gia \u2192")), /*#__PURE__*/React.createElement("div", {
     style: {
       display: 'flex',
       alignItems: 'center',
@@ -7371,7 +7418,9 @@ function novaRegiao({
 // dele vira a 1ª região (o resto a pessoa acrescenta).
 function regioesIniciais(ini) {
   if (!ini) return [];
-  if (Array.isArray(ini.regioes)) return ini.regioes;
+  // A Estratégia devolve "Sem região definida" no lugar da lista vazia (pra
+  // mostrar o radar único): não é região de verdade, não vai pro formulário.
+  if (Array.isArray(ini.regioes)) return ini.regioes.filter(r => r.chave !== 'br');
   const c = ini.criterios || {};
   const g = ini.tipo === 'lookalike' ? c.geo || {} : c.params || {};
   const ufs = Array.isArray(g.ufs) ? g.ufs : [];
@@ -7722,13 +7771,15 @@ function ExpansaoPauta({
       display: 'flex',
       alignItems: 'flex-start',
       gap: 10,
-      cursor: temRegioes ? 'pointer' : 'default'
+      cursor: 'pointer'
     }
   }, /*#__PURE__*/React.createElement("input", {
     type: "checkbox",
-    checked: expandir && temRegioes,
-    disabled: !temRegioes,
-    onChange: e => setExpandir(e.target.checked),
+    checked: expandir,
+    onChange: e => {
+      setExpandir(e.target.checked);
+      if (e.target.checked && !temRegioes && setModo) setModo('cidades');
+    },
     style: {
       marginTop: 3,
       accentColor: 'var(--accent)'
@@ -7738,7 +7789,7 @@ function ExpansaoPauta({
       fontSize: 13,
       fontWeight: 600
     }
-  }, "Quando as regi\xF5es acabarem, o Hunter escolhe a pr\xF3xima sozinho"), /*#__PURE__*/React.createElement("span", {
+  }, temRegioes ? 'Quando as regiões acabarem, o Hunter escolhe a próxima sozinho' : 'Quando o radar esgotar, o Hunter continua sozinho, cidade por cidade'), /*#__PURE__*/React.createElement("span", {
     style: {
       display: 'block',
       fontSize: 12,
@@ -7746,7 +7797,7 @@ function ExpansaoPauta({
       marginTop: 4,
       lineHeight: 1.45
     }
-  }, temRegioes ? /*#__PURE__*/React.createElement(React.Fragment, null, "Cada escolha aparece na lista de regi\xF5es e no di\xE1rio, com o motivo. Se a pauta varreu 200+ empresas sem virar nenhum lead, ele n\xE3o expande \u2014 o problema \xE9 o filtro, n\xE3o a regi\xE3o.") : 'Adicione pelo menos uma região acima para ligar a expansão.'))), expandir && temRegioes && /*#__PURE__*/React.createElement("div", {
+  }, temRegioes ? /*#__PURE__*/React.createElement(React.Fragment, null, "Cada escolha aparece na lista de regi\xF5es e no di\xE1rio, com o motivo. Se a pauta varreu 200+ empresas sem virar nenhum lead, ele n\xE3o expande \u2014 o problema \xE9 o filtro, n\xE3o a regi\xE3o.") : /*#__PURE__*/React.createElement(React.Fragment, null, "Sem regi\xE3o escolhida, come\xE7a pelos estados que o primeiro radar varreu (no semelhantes, onde os clientes da lista est\xE3o) e segue da maior cidade para a menor. Sem isso, o piloto para quando esse radar esgotar.")))), expandir && /*#__PURE__*/React.createElement("div", {
     style: {
       marginTop: 16,
       paddingLeft: 26
@@ -7759,18 +7810,22 @@ function ExpansaoPauta({
       marginBottom: 14
     }
   }, [['cidades', 'Por cidades', 'Um radar por cidade, da maior para a menor (população do IBGE). Acabou o estado, segue para os vizinhos. Sem limite de regiões: vai até bater o limite diário de leads e continua no dia seguinte.'], ['estados', 'Por estados', 'Cidade varrida → o estado inteiro dela. Depois, estados vizinhos, começando pelo vizinho da região que mais virou lead (empate: o maior mercado).']].map(([v, nome, desc]) => {
-    const sel = modo === v;
+    const sel = modo === v || !temRegioes && v === 'cidades';
+    const bloq = !temRegioes && v === 'estados';
     return /*#__PURE__*/React.createElement("button", {
       key: v,
       type: "button",
       "aria-pressed": sel,
+      disabled: bloq,
       onClick: () => setModo && setModo(v),
+      title: bloq ? 'Adicione pelo menos uma região acima para expandir por estados' : undefined,
       style: {
         flex: '1 1 240px',
         textAlign: 'left',
         padding: '10px 12px',
         borderRadius: 10,
-        cursor: 'pointer',
+        cursor: bloq ? 'not-allowed' : 'pointer',
+        opacity: bloq ? .5 : 1,
         fontFamily: 'inherit',
         border: sel ? `1.5px solid ${C.gold}` : '1px solid var(--border)',
         background: sel ? 'color-mix(in srgb, var(--accent) 7%, transparent)' : 'var(--panel2)',
@@ -7790,7 +7845,7 @@ function ExpansaoPauta({
         lineHeight: 1.4
       }
     }, desc));
-  })), modo !== 'cidades' && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("label", {
+  })), modo !== 'cidades' && temRegioes && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("label", {
     style: {
       display: 'block',
       fontSize: 12,
@@ -10093,10 +10148,10 @@ function NovaBusca({
           regioes,
           semanas,
           meses,
-          expandir: expandir && regioes.length > 0,
+          expandir,
           expandir_max: expandirMax,
           expandir_excluir: expandirExcluir,
-          expandir_modo: expandirModo
+          expandir_modo: regioes.some(r => !r.auto) ? expandirModo : 'cidades'
         })
       }) : await fetch('/api/buscas', {
         method: 'POST',
@@ -11092,7 +11147,7 @@ function NovaBusca({
     setModo: setExpandirModo,
     excluir: expandirExcluir,
     setExcluir: setExpandirExcluir,
-    temRegioes: regioes.length > 0
+    temRegioes: regioes.some(r => !r.auto)
   }), modoPauta && /*#__PURE__*/React.createElement(PeriodoPauta, {
     semanas: semanas,
     setSemanas: setSemanas,
@@ -16792,7 +16847,8 @@ function App() {
         });
       case 'buscas':
         return /*#__PURE__*/React.createElement(Buscas, {
-          onOpen: openBusca
+          onOpen: openBusca,
+          onEstrategia: () => navTo('estrategia')
         });
       case 'buscaDetail':
         return /*#__PURE__*/React.createElement(BuscaDetail, {

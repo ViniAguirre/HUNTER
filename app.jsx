@@ -1957,14 +1957,21 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
 }
 
 // ── Buscas ────────────────────────────────────────────────────────────────────
-function Buscas({ onOpen }) {
+function Buscas({ onOpen, onEstrategia }) {
   const [buscas, setBuscas] = useState(null);
+  const [piloto, setPiloto] = useState(null);
 
   const carregar = () => {
     fetch('/api/buscas', { credentials:'same-origin' })
       .then(r => r.json())
       .then(d => setBuscas(Array.isArray(d) ? d : (d.buscas || [])))
       .catch(() => setBuscas([]));
+    // O que o piloto da Estratégia está fazendo — é ele quem cria os radares
+    // sozinho; sem isto a lista só mostra o que já existe.
+    fetch('/api/estrategia', { credentials:'same-origin' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setPiloto(d?.plano || null))
+      .catch(() => setPiloto(null));
   };
   useEffect(carregar, []);
 
@@ -1976,8 +1983,25 @@ function Buscas({ onOpen }) {
     carregar();
   };
 
+  const pilotoParado = piloto?.ativo && /^(aguardando|linha editorial|nenhuma pauta)/.test(String(piloto.estado || ''));
   return (
     <div>
+      {piloto && (
+        <div role="button" onClick={onEstrategia} title="Abrir a Estratégia"
+          style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', marginBottom:14, borderRadius:12, cursor:'pointer',
+            background:'var(--panel)', border:`1px solid ${pilotoParado ? C.amber : 'var(--border)'}`, fontSize:12.5, color:'var(--dim)', lineHeight:1.45 }}>
+          <StatusDot color={!piloto.ativo ? C.gray : pilotoParado ? C.amber : C.green} pulse={piloto.ativo && !pilotoParado}/>
+          <span style={{ minWidth:0 }}>
+            <b style={{ color:'var(--text)' }}>Piloto automático {piloto.ativo ? 'ligado' : 'desligado'}</b>
+            {piloto.ativo
+              ? (piloto.estado
+                  ? <> — {piloto.estado}{piloto.estado_em && <span style={{ color:'var(--faint)' }}> · desde {timeAgo(piloto.estado_em)}</span>}</>
+                  : ' — aguardando o motor, que confere a estratégia a cada minuto')
+              : ' — nenhum radar é criado sozinho'}
+          </span>
+          <span style={{ marginLeft:'auto', color:'var(--faint)', whiteSpace:'nowrap' }}>Estratégia →</span>
+        </div>
+      )}
       <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:16 }}>
         <div style={{ position:'relative', flex:1, maxWidth:300 }}>
           <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="var(--faint)" strokeWidth={1.8} strokeLinecap="round"
@@ -3472,7 +3496,9 @@ function novaRegiao({ ufs = [], municipios_rotulos = [], rotulo = '' }) {
 // dele vira a 1ª região (o resto a pessoa acrescenta).
 function regioesIniciais(ini) {
   if (!ini) return [];
-  if (Array.isArray(ini.regioes)) return ini.regioes;
+  // A Estratégia devolve "Sem região definida" no lugar da lista vazia (pra
+  // mostrar o radar único): não é região de verdade, não vai pro formulário.
+  if (Array.isArray(ini.regioes)) return ini.regioes.filter(r => r.chave !== 'br');
   const c = ini.criterios || {};
   const g = ini.tipo === 'lookalike' ? (c.geo || {}) : (c.params || {});
   const ufs = Array.isArray(g.ufs) ? g.ufs : [];
@@ -3613,30 +3639,40 @@ function ExpansaoPauta({ expandir, setExpandir, max, setMax, excluir, setExcluir
   const alterna = uf => setExcluir(excluir.includes(uf) ? excluir.filter(x => x !== uf) : [...excluir, uf].sort());
   return (
     <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:20, marginBottom:18 }}>
-      <label style={{ display:'flex', alignItems:'flex-start', gap:10, cursor: temRegioes ? 'pointer' : 'default' }}>
-        <input type="checkbox" checked={expandir && temRegioes} disabled={!temRegioes}
-          onChange={e => setExpandir(e.target.checked)} style={{ marginTop:3, accentColor:'var(--accent)' }}/>
+      {/* Sem região escolhida, só "por cidades" (por estados precisa de onde
+          partir): o piloto começa pelos estados que o primeiro radar varreu. */}
+      <label style={{ display:'flex', alignItems:'flex-start', gap:10, cursor:'pointer' }}>
+        <input type="checkbox" checked={expandir}
+          onChange={e => { setExpandir(e.target.checked); if (e.target.checked && !temRegioes && setModo) setModo('cidades'); }}
+          style={{ marginTop:3, accentColor:'var(--accent)' }}/>
         <span>
-          <span style={{ fontSize:13, fontWeight:600 }}>Quando as regiões acabarem, o Hunter escolhe a próxima sozinho</span>
+          <span style={{ fontSize:13, fontWeight:600 }}>
+            {temRegioes ? 'Quando as regiões acabarem, o Hunter escolhe a próxima sozinho'
+              : 'Quando o radar esgotar, o Hunter continua sozinho, cidade por cidade'}
+          </span>
           <span style={{ display:'block', fontSize:12, color:'var(--faint)', marginTop:4, lineHeight:1.45 }}>
             {temRegioes
               ? <>Cada escolha aparece na lista de regiões e no diário, com o motivo. Se a pauta varreu 200+ empresas sem virar
                   nenhum lead, ele não expande — o problema é o filtro, não a região.</>
-              : 'Adicione pelo menos uma região acima para ligar a expansão.'}
+              : <>Sem região escolhida, começa pelos estados que o primeiro radar varreu (no semelhantes, onde os clientes
+                  da lista estão) e segue da maior cidade para a menor. Sem isso, o piloto para quando esse radar esgotar.</>}
           </span>
         </span>
       </label>
-      {expandir && temRegioes && (
+      {expandir && (
         <div style={{ marginTop:16, paddingLeft:26 }}>
           {/* Por cidades: um radar por cidade, da maior pra menor, sem teto —
               quem dita o ritmo é o limite diário de leads (Configurações). */}
           <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:14 }}>
             {[['cidades', 'Por cidades', 'Um radar por cidade, da maior para a menor (população do IBGE). Acabou o estado, segue para os vizinhos. Sem limite de regiões: vai até bater o limite diário de leads e continua no dia seguinte.'],
               ['estados', 'Por estados', 'Cidade varrida → o estado inteiro dela. Depois, estados vizinhos, começando pelo vizinho da região que mais virou lead (empate: o maior mercado).']].map(([v, nome, desc]) => {
-              const sel = modo === v;
+              const sel = modo === v || (!temRegioes && v === 'cidades');
+              const bloq = !temRegioes && v === 'estados';
               return (
-                <button key={v} type="button" aria-pressed={sel} onClick={() => setModo && setModo(v)}
-                  style={{ flex:'1 1 240px', textAlign:'left', padding:'10px 12px', borderRadius:10, cursor:'pointer', fontFamily:'inherit',
+                <button key={v} type="button" aria-pressed={sel} disabled={bloq} onClick={() => setModo && setModo(v)}
+                  title={bloq ? 'Adicione pelo menos uma região acima para expandir por estados' : undefined}
+                  style={{ flex:'1 1 240px', textAlign:'left', padding:'10px 12px', borderRadius:10, cursor: bloq ? 'not-allowed' : 'pointer',
+                    opacity: bloq ? .5 : 1, fontFamily:'inherit',
                     border: sel ? `1.5px solid ${C.gold}` : '1px solid var(--border)',
                     background: sel ? 'color-mix(in srgb, var(--accent) 7%, transparent)' : 'var(--panel2)', color:'var(--text)' }}>
                   <div style={{ fontSize:13, fontWeight:600, color: sel ? C.gold : 'var(--text)' }}>{nome}</div>
@@ -3645,7 +3681,7 @@ function ExpansaoPauta({ expandir, setExpandir, max, setMax, excluir, setExcluir
               );
             })}
           </div>
-          {modo !== 'cidades' && <>
+          {modo !== 'cidades' && temRegioes && <>
           <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>Até quantas regiões ele pode acrescentar</label>
           <select value={max} onChange={e => setMax(+e.target.value)}
             style={{ height:38, borderRadius:9, border:'1px solid var(--border)', background:'var(--panel2)',
@@ -4810,8 +4846,8 @@ function NovaBusca({ onSalvar, inicial, modoPauta = false, pautaId = null, onCan
               crm_destino: destinoEfetivo,
               afiliados_alvo: alvoPayload(),
               regioes, semanas, meses,
-              expandir: expandir && regioes.length > 0, expandir_max: expandirMax, expandir_excluir: expandirExcluir,
-              expandir_modo: expandirModo })
+              expandir, expandir_max: expandirMax, expandir_excluir: expandirExcluir,
+              expandir_modo: regioes.some(r => !r.auto) ? expandirModo : 'cidades' })
           })
         : await fetch('/api/buscas', {
             method:'POST', credentials:'same-origin',
@@ -5277,7 +5313,7 @@ function NovaBusca({ onSalvar, inicial, modoPauta = false, pautaId = null, onCan
       {modoPauta && (
         <ExpansaoPauta expandir={expandir} setExpandir={setExpandir} max={expandirMax} setMax={setExpandirMax}
           modo={expandirModo} setModo={setExpandirModo}
-          excluir={expandirExcluir} setExcluir={setExpandirExcluir} temRegioes={regioes.length > 0}/>
+          excluir={expandirExcluir} setExcluir={setExpandirExcluir} temRegioes={regioes.some(r => !r.auto)}/>
       )}
       {modoPauta && (
         <PeriodoPauta semanas={semanas} setSemanas={setSemanas} meses={meses} setMeses={setMeses}/>
@@ -7988,7 +8024,7 @@ function App() {
         <Leads key={leadsPreset ? JSON.stringify(leadsPreset) : 'leads'} refreshKey={leadsRefreshKey}
           onOpenLead={setOpenLeadId} onCrm={setCrmIds} user={user} preset={leadsPreset}/>
       );
-      case 'buscas': return <Buscas onOpen={openBusca}/>;
+      case 'buscas': return <Buscas onOpen={openBusca} onEstrategia={() => navTo('estrategia')}/>;
       case 'buscaDetail': return <BuscaDetail buscaId={buscaDetailId} onBack={() => setScreen('buscas')} onOpenLead={setOpenLeadId} onDuplicar={duplicarBusca}
         onVerLeads={preset => { setLeadsPreset(preset); setScreen('leads'); setOpenLeadId(null); }}/>;
       case 'nova': return <NovaBusca key={duplicarDe ? 'dup-'+duplicarDe.id : 'nova'} inicial={duplicarDe} onSalvar={() => navTo('buscas')}/>;
