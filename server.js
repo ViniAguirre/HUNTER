@@ -728,6 +728,10 @@ async function init() {
     -- para o gatilho ou menos.
     ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_controle       BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_fila_gatilho   INTEGER NOT NULL DEFAULT 5;
+    -- Fila do CRM livre, segundo o piloto (a cada minuto): solta a cota por
+    -- hora da esteira enquanto o time está sem lead (jobs/orcamento.js).
+    ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_fila_livre     BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_fila_livre_em  TIMESTAMPTZ;
     ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_fila_pendentes INTEGER;
     ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_fila_em        TIMESTAMPTZ;
     -- Gatilho: 'total' (o total cai pro crm_fila_gatilho) ou 'fila' (alguma
@@ -1782,6 +1786,70 @@ app.get('/api/buscas/:id', requireAuth, async (req, res) => {
       leads: leadsRow.rows,
     });
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// Qualidade do que o radar mandou ao CRM: para cada lead enviado, a atividade
+// dele bate com a dos clientes (semelhantes) ou com as atividades escolhidas
+// (perfil)? É a conferência que o time comercial faz à mão olhando lead a
+// lead — aqui ela vem pronta, do pior pro melhor.
+//   nucleo = mesma atividade de 10%+ dos clientes (ou uma das escolhidas)
+//   ponta  = mesma atividade, mas rara entre os clientes, ou só do mesmo grupo
+//   fora   = atividade que nenhum cliente tem (ou só os recusados)
+const NUCLEO_FREQ = 0.10;
+function veredictoAtividade(cnae, alvo) {
+  const c = String(cnae || '').replace(/\D/g, '');
+  if (!c || !alvo.length) return { nivel: null };
+  const exato = alvo.find(x => x.c === c);
+  if (exato && exato.so_negativo) return { nivel: 'fora', freq: 0 };
+  if (exato) return { nivel: exato.freq == null || exato.freq >= NUCLEO_FREQ ? 'nucleo' : 'ponta', freq: exato.freq ?? null };
+  const grupo = alvo.find(x => !x.so_negativo && x.c.slice(0, 4) === c.slice(0, 4));
+  if (grupo) return { nivel: 'ponta', grupo: true, freq: null };
+  return { nivel: 'fora', freq: null };
+}
+
+app.get('/api/buscas/:id/qualidade', requireAuth, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
+  try {
+    const { rows: [b] } = await pool.query(`SELECT tipo, criterios, corte_score FROM buscas WHERE id=$1`, [id]);
+    if (!b) return res.status(404).json({ erro: 'não encontrada' });
+    const params = b.criterios?.params || {};
+    const perfil = params.perfil;
+    // Semelhantes: as atividades dos clientes, com o peso de cada uma.
+    // Perfil (ICP): as atividades que a pessoa escolheu, todas iguais.
+    const alvo = b.tipo === 'lookalike'
+      ? (perfil?.cnaes || []).map(x => ({ c: String(x.c), freq: x.freq, so_negativo: !!x.so_negativo }))
+      : (params.cnaes || []).map(c => ({ c: String(c).replace(/\D/g, ''), freq: null }));
+    const desc = new Map(catalogoCnae().map(x => [x.c, x.d]));
+    const { rows } = await pool.query(
+      `SELECT id, fantasia, razao, cnae, setor, cidade, uf, porte, score, breakdown, status,
+              crm_atendimento, enviado_crm_em, contato_status
+         FROM leads WHERE busca_id=$1 AND enviado_crm_em IS NOT NULL
+        ORDER BY enviado_crm_em DESC LIMIT 300`, [id]);
+    const ordemNivel = { fora: 0, ponta: 1, nucleo: 2 };
+    const leads = rows.map(l => {
+      const v = veredictoAtividade(l.cnae, alvo);
+      const bd = Array.isArray(l.breakdown) ? l.breakdown : [];
+      const nome = bd.find(x => x.pts > 0 && /^Nome contém/.test(x.item || ''));
+      return {
+        id: l.id, nome: l.fantasia || l.razao, cidade: l.cidade, uf: l.uf, porte: l.porte, score: l.score,
+        cnae: l.cnae, atividade: l.setor || desc.get(String(l.cnae || '').replace(/\D/g, '')) || '',
+        nivel: v.nivel, freq: v.freq ?? null, grupo: !!v.grupo, nome_ramo: nome ? nome.item : null,
+        motivos: bd.filter(x => x.pts > 0).sort((a, c) => c.pts - a.pts).slice(0, 3).map(x => x.item),
+        status: l.status, atendimento: l.crm_atendimento, enviado_em: l.enviado_crm_em,
+        recusado: l.contato_status === 'fora_do_perfil',
+      };
+    }).sort((a, c) => ((ordemNivel[a.nivel] ?? 3) - (ordemNivel[c.nivel] ?? 3)) || ((a.score || 0) - (c.score || 0)));
+    const conta = n => leads.filter(l => l.nivel === n).length;
+    res.json({
+      tipo: b.tipo, corte: b.corte_score, tem_alvo: alvo.length > 0,
+      resumo: { total: leads.length, nucleo: conta('nucleo'), ponta: conta('ponta'), fora: conta('fora') },
+      // As atividades que definem o alvo (as 8 mais comuns entre os clientes).
+      alvo: alvo.filter(x => !x.so_negativo).slice(0, 8)
+        .map(x => ({ c: x.c, freq: x.freq, descricao: desc.get(x.c) || '' })),
+      leads,
+    });
+  } catch (e) { console.error('[qualidade]', e.message); res.status(500).json({ erro: 'erro interno' }); }
 });
 
 app.patch('/api/buscas/:id', requireAuth, requireEditor, async (req, res) => {
