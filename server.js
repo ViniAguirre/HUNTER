@@ -2868,10 +2868,19 @@ app.get('/api/monitor/queues', requireAuth, requireMaster, async (req, res) => {
       dlq = falhasPorFila.flat().sort((a, b) => (b.quando||'').localeCompare(a.quando||'')).slice(0, 10);
     }
 
+    // Versão do motor (worker) × da API: os dois serviços usam a mesma imagem,
+    // mas são atualizados separados — se só a API subiu, o motor roda o código
+    // antigo e as mudanças de busca/envio não acontecem.
+    let motor = null;
+    try {
+      const { rows: [s] } = await pool.query(`SELECT worker_boot, worker_versao FROM motor_status`);
+      if (s) motor = { versao: s.worker_versao, iniciado_em: s.worker_boot };
+    } catch (_) { /* tabela ainda não existe */ }
     res.json({
       queues,
       dlq,
       motor_conectado: !!monitorQueues,
+      versao_api: BUILD.versao, motor,
       leads_hoje: leadsHoje.rows[0].n,
       empresas_total: empresasTotal.rows[0].n,
       buscas_ativas: buscasAtivas.rows[0].n,

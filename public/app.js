@@ -14516,7 +14516,18 @@ function Monitor() {
     style: {
       maxWidth: 1180
     }
-  }, !data.motor_conectado && /*#__PURE__*/React.createElement("div", {
+  }, data.versao_api && data.motor?.versao && data.motor.versao !== data.versao_api && /*#__PURE__*/React.createElement("div", {
+    style: {
+      background: 'rgba(248,113,113,.08)',
+      border: '1px solid ' + C.red,
+      borderRadius: 12,
+      padding: '12px 16px',
+      marginBottom: 18,
+      fontSize: 12.5,
+      color: C.red,
+      lineHeight: 1.5
+    }
+  }, /*#__PURE__*/React.createElement("b", null, "O motor est\xE1 numa vers\xE3o diferente da tela."), " Tela: ", data.versao_api, " \xB7 Motor: ", data.motor.versao, data.motor.iniciado_em ? ` (iniciado ${timeAgo(data.motor.iniciado_em)})` : '', ".", ' ', "Atualize tamb\xE9m o servi\xE7o do motor (hunter-worker) \u2014 sem isso, buscas, envios e o diagn\xF3stico seguem no c\xF3digo antigo."), !data.motor_conectado && /*#__PURE__*/React.createElement("div", {
     style: {
       background: 'rgba(251,191,36,.08)',
       border: '1px solid ' + C.amber,

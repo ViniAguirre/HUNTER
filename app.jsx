@@ -6918,6 +6918,16 @@ function Monitor() {
 
   return (
     <div style={{ maxWidth:1180 }}>
+      {/* Motor com versão diferente da API: o serviço do worker não foi
+          atualizado no deploy. As versões vêm da release da imagem. */}
+      {data.versao_api && data.motor?.versao && data.motor.versao !== data.versao_api && (
+        <div style={{ background:'rgba(248,113,113,.08)', border:'1px solid '+C.red, borderRadius:12,
+          padding:'12px 16px', marginBottom:18, fontSize:12.5, color:C.red, lineHeight:1.5 }}>
+          <b>O motor está numa versão diferente da tela.</b> Tela: {data.versao_api} · Motor: {data.motor.versao}
+          {data.motor.iniciado_em ? ` (iniciado ${timeAgo(data.motor.iniciado_em)})` : ''}.
+          {' '}Atualize também o serviço do motor (hunter-worker) — sem isso, buscas, envios e o diagnóstico seguem no código antigo.
+        </div>
+      )}
       {!data.motor_conectado && (
         <div style={{ background:'rgba(251,191,36,.08)', border:'1px solid '+C.amber, borderRadius:12,
           padding:'12px 16px', marginBottom:18, fontSize:12.5, color:C.amber }}>

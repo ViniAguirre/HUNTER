@@ -148,7 +148,9 @@ async function registrarBoot() {
     await pool.query(
       `INSERT INTO motor_status (tenant_id, worker_boot, worker_versao) VALUES ($1, now(), $2)
        ON CONFLICT (tenant_id) DO UPDATE SET worker_boot=now(), worker_versao=EXCLUDED.worker_versao`,
-      [TENANT_ID, WORKER_VERSAO]);
+      // A release da imagem (a mesma que o rodapé mostra pra API). Com ela o
+      // Monitoramento compara API × motor e avisa quando só um foi atualizado.
+      [TENANT_ID, (process.env.HUNTER_VERSION || '').trim() || WORKER_VERSAO]);
     console.log(`[worker] tenant=${TENANT_ID} versão ${WORKER_VERSAO} — boot registrado`);
   } catch (e) { console.error('[worker] registrarBoot:', e.message); }
 }
