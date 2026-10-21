@@ -505,6 +505,15 @@ function VersaoBuild() {
 
 function Sidebar({ screen, onNav, onLogout, user }) {
   const [modalSenha, setModalSenha] = useState(false);
+  // Menu recolhido à esquerda (só ícones), guardado no navegador. Em telas
+  // estreitas ele já fica recolhido pelo CSS e o botão some.
+  const [recolhido, setRecolhido] = useState(() => {
+    try { return localStorage.getItem('hunter_menu_recolhido') === '1'; } catch (_) { return false; }
+  });
+  const alternarMenu = () => setRecolhido(v => {
+    try { localStorage.setItem('hunter_menu_recolhido', v ? '0' : '1'); } catch (_) {}
+    return !v;
+  });
   const nome = user?.nome || '…';
   const papel = user?.master ? 'Master' : (user?.papel || '');
   const ini = nome.split(' ').slice(0,2).map(w=>w[0]).join('');
@@ -540,12 +549,22 @@ function Sidebar({ screen, onNav, onLogout, user }) {
   // height:100% (não 100vh) porque a casca .h-shell já é do tamanho da janela —
   // e sem sticky, que só fazia sentido quando a página inteira rolava.
   return (
-    <aside className="h-side" style={{ width:236, flexShrink:0, background:'var(--panel)', borderRight:'1px solid var(--border)',
-      display:'flex', flexDirection:'column', height:'100%', minHeight:0 }}>
+    <aside className={'h-side' + (recolhido ? ' h-side-recolhida' : '')}
+      style={{ width:236, flexShrink:0, background:'var(--panel)', borderRight:'1px solid var(--border)',
+      display:'flex', flexDirection:'column', height:'100%', minHeight:0, transition:'width .15s' }}>
       <div className="h-nav-item" style={{ display:'flex', alignItems:'center', gap:10, padding:'20px 20px 22px' }}>
         <img src="hunter_logo_icon.png" alt="Hunter" style={{ width:30, height:30, flexShrink:0 }}/>
-        <span className="h-side-label" style={{ fontSize:16, fontWeight:600, letterSpacing:'.2em' }}>HUNTER</span>
+        <span className="h-side-label" style={{ fontSize:16, fontWeight:600, letterSpacing:'.2em', flex:1 }}>HUNTER</span>
       </div>
+      <button type="button" className="h-side-toggle" onClick={alternarMenu}
+        title={recolhido ? 'Expandir o menu' : 'Recolher o menu à esquerda'}
+        aria-label={recolhido ? 'Expandir o menu' : 'Recolher o menu à esquerda'} aria-expanded={!recolhido}
+        style={{ display:'flex', alignItems:'center', justifyContent: recolhido ? 'center' : 'flex-start', gap:8,
+          margin:'-12px 12px 6px', padding:'6px 12px', borderRadius:8, border:'none', background:'transparent',
+          color:'var(--faint)', fontSize:12, fontFamily:'inherit', cursor:'pointer' }}>
+        <Svg d={recolhido ? 'M9 18l6-6-6-6' : 'M15 18l-6-6 6-6'} w={16} h={16} sw={1.8}/>
+        <span className="h-side-label">Recolher menu</span>
+      </button>
       <nav style={{ display:'flex', flexDirection:'column', gap:2, padding:'4px 12px', flex:1, overflowY:'auto' }}>
         {renderNav(NAV_MAIN)}
         {adminItems.length > 0 && (
@@ -1220,12 +1239,17 @@ function NovoLeadModal({ buscas, onClose, onCriado }) {
 }
 
 // Filtros da aba Leads ficam guardados no navegador: sair da aba (ou recarregar)
-// e voltar mantém a lista de trabalho como estava. A busca por texto não fica.
+// e voltar mantém a lista de trabalho como estava. A busca por texto e o
+// período não ficam: a aba sempre abre nos leads que entraram ESTE MÊS — os
+// anteriores aparecem escolhendo o período (ou buscando pelo nome).
 const FILTROS_LEADS_PADRAO = { status:'abertos', busca:'', local:'', score:'', analise:'', email:false,
-  periodo:'', de:'', ate:'', ordem:'score' };
+  periodo:'mes', de:'', ate:'', ordem:'score' };
+const SEM_GUARDAR = ['periodo', 'de', 'ate'];
 function lerFiltrosLeads() {
-  try { return { ...FILTROS_LEADS_PADRAO, ...JSON.parse(localStorage.getItem('hunter_leads_filtros') || '{}') }; }
-  catch (_) { return { ...FILTROS_LEADS_PADRAO }; }
+  let salvo = {};
+  try { salvo = JSON.parse(localStorage.getItem('hunter_leads_filtros') || '{}') || {}; } catch (_) {}
+  for (const k of SEM_GUARDAR) delete salvo[k];
+  return { ...FILTROS_LEADS_PADRAO, ...salvo };
 }
 
 // Período → datas (YYYY-MM-DD, no fuso do navegador). 'custom' usa de/até.
@@ -1279,6 +1303,24 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
   const patchLead = (id, patch) =>
     setLeads(ls => ls.map(l => (l.id === id ? { ...l, ...patch } : l)));
 
+  // 👎 tira o lead da lista de trabalho: ele foi descartado e não volta. Só
+  // fica à vista em "Todos os status" e em "Descartado / negativado" (onde dá
+  // pra desfazer). A pausa curta deixa ver o "Aprendido" antes de sumir.
+  const ocultaDescartados = !['', 'Descartado'].includes(filterStatus);
+  const tirarDaLista = (ids) => {
+    const set = new Set(ids);
+    setTimeout(() => {
+      setLeads(ls => ls.filter(l => !set.has(l.id)));
+      setSelected(sel => sel.filter(id => !set.has(id)));
+      setTotal(t => Math.max(0, t - ids.length));
+      setFinalizados(f => f + ids.length);
+    }, 1200);
+  };
+  const mudouPerfil = (id, patch) => {
+    patchLead(id, patch);
+    if (patch.status === 'Descartado' && ocultaDescartados) tirarDaLista([id]);
+  };
+
   // Depois de marcar um lead, procura os outros com o MESMO perfil (mesma
   // atividade + mesmo porte) e oferece marcar todos de uma vez.
   const varrerIguais = async (id) => {
@@ -1301,6 +1343,7 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
         const set = new Set(ids);
         setLeads(ls => ls.map(l => set.has(l.id)
           ? { ...l, status:'Descartado', contato_status:'fora_do_perfil' } : l));
+        if (ocultaDescartados) tirarDaLista(ids);
       }
     } catch (_) {}
     setVarredura(null);
@@ -1318,7 +1361,11 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
   const filtrosChave = JSON.stringify({ status:filterStatus, busca:filterBusca, local:debouncedLocal, score:filterScore,
     analise:filterAnalise, email:emailOnly, periodo:filterPeriodo, de:filterDe, ate:filterAte, ordem });
   useEffect(() => {
-    try { localStorage.setItem('hunter_leads_filtros', filtrosChave); } catch (_) {}
+    try {
+      const guardar = JSON.parse(filtrosChave);
+      for (const k of SEM_GUARDAR) delete guardar[k];
+      localStorage.setItem('hunter_leads_filtros', JSON.stringify(guardar));
+    } catch (_) {}
     setSelected([]);
   }, [filtrosChave, debouncedQ]);
   const temFiltro = filtrosChave !== JSON.stringify(FILTROS_LEADS_PADRAO) || !!debouncedQ;
@@ -1372,8 +1419,11 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
     if (debouncedLocal) params.set('local', debouncedLocal);
     if (filterScore) params.set('score_min', filterScore);
     if (filterAnalise) params.set('analise', filterAnalise);
-    if (datas.de) params.set('de', datas.de);
-    if (datas.ate) params.set('ate', datas.ate);
+    // Buscando um lead pelo nome/CNPJ/ID do CRM, o "este mês" padrão não
+    // esconde o que entrou antes (um período escolhido continua valendo).
+    const usaPeriodo = !(debouncedQ && filterPeriodo === 'mes');
+    if (usaPeriodo && datas.de) params.set('de', datas.de);
+    if (usaPeriodo && datas.ate) params.set('ate', datas.ate);
     if (ordem === 'recentes') params.set('ordem', 'recentes');
     params.set('page', page);
     params.set('per_page', PER_PAGE);
@@ -1769,7 +1819,7 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
                 )}
                 <ForaDoPerfil leadId={l.id} compacto
                   marcado={l.contato_status === 'fora_do_perfil'}
-                  onMudou={(patch) => patchLead(l.id, patch)}
+                  onMudou={(patch) => mudouPerfil(l.id, patch)}
                   onVarrer={varrerIguais}/>
               </div>
             </div>
@@ -1782,11 +1832,20 @@ function Leads({ refreshKey, onOpenLead, onCrm, user }) {
         flexWrap:'wrap', marginTop:14, fontSize:12, color:'var(--faint)' }}>
         <span>
           Mostrando {leads.length} de {fmtNum(total)} leads
+          {filterPeriodo === 'mes' && !debouncedQ && <> que entraram este mês</>}
           {finalizados > 0 && (
             <> · {fmtNum(finalizados)} já com definição (enviados ou descartados) fora da lista —{' '}
               <button onClick={() => { setFilterStatus(''); setPage(1); setSelected([]); }}
                 style={{ background:'none', border:'none', padding:0, color:'var(--accent)', fontSize:12,
                   fontFamily:'inherit', cursor:'pointer', textDecoration:'underline' }}>ver todos</button>
+            </>
+          )}
+          {filterPeriodo === 'mes' && !debouncedQ && (
+            <> ·{' '}
+              <button onClick={() => { setFilterPeriodo(''); setPage(1); }}
+                title="Os leads de meses anteriores aparecem escolhendo o período no filtro"
+                style={{ background:'none', border:'none', padding:0, color:'var(--accent)', fontSize:12,
+                  fontFamily:'inherit', cursor:'pointer', textDecoration:'underline' }}>ver todo o período</button>
             </>
           )}
         </span>
@@ -2021,7 +2080,7 @@ function ForaDoPerfil({ leadId, marcado, onMudou, onVarrer, compacto }) {
       // Atualiza SÓ esta linha. Recarregar a lista inteira fazia a página piscar
       // e voltar pro topo — insuportável pra marcar vários leads em sequência.
       onMudou && onMudou(marcado
-        ? { status:'Novo', contato_status:null }
+        ? { status: d.status || 'Novo', contato_status:null }
         : { status:'Descartado', contato_status:'fora_do_perfil' });
       if (!marcado) {
         setMsg(d.aprendeu ? `Aprendido (${d.negativos})` : 'Descartado');

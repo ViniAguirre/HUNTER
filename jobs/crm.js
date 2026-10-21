@@ -213,7 +213,11 @@ module.exports = async function crm(job, pool, queues) {
   }
 
   await pool.query(
-    `UPDATE leads SET status='Enviado', enviado_crm_em=now(), atualizado_em=now() WHERE id=$1`,
+    // Marcado "fora do perfil" (👎) enquanto o envio estava na fila: o envio
+    // fica registrado, mas o lead continua descartado — senão voltava pra lista
+    // como "Enviado · CRM" com a marcação vermelha.
+    `UPDATE leads SET status = CASE WHEN status = 'Descartado' THEN status ELSE 'Enviado' END,
+            enviado_crm_em=now(), atualizado_em=now() WHERE id=$1`,
     [lead_id]
   );
   // Trava definitiva: uma vez no CRM, nenhuma busca (nem outra, nem esta de
