@@ -46,6 +46,7 @@ async function buscar(query, { url, max = 30 } = {}) {
       let origin; try { origin = new URL(r.url).origin; } catch { continue; }
       out.push({
         site: origin,
+        url: String(r.url).slice(0, 300),   // endereço completo: perfil de rede social é path, não domínio
         titulo: (r.title || '').trim().slice(0, 120) || null,
         conteudo: (r.content || '').trim().slice(0, 600) || null,
       });

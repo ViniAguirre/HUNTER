@@ -14797,7 +14797,260 @@ function Monitor() {
       color: 'var(--faint)',
       whiteSpace: 'nowrap'
     }
-  }, d.quando ? timeAgo(d.quando) : '')))));
+  }, d.quando ? timeAgo(d.quando) : '')))), /*#__PURE__*/React.createElement(BuscaContatoSaude, null));
+}
+
+// Saúde da busca de contato na internet (sem Google). Responde: a busca está
+// achando telefone/e-mail? Por qual caminho? Qual fonte está respondendo? E,
+// quando não acha, por quê? Só o master vê (fica no Monitoramento).
+const NOMES_CAMINHO = {
+  site: 'Site próprio da empresa',
+  rede_social: 'Perfil em rede social (Instagram/Facebook)',
+  cache: 'Já conhecido (outra busca achou antes)',
+  pago: 'Provedor pago de contato',
+  nada: 'Não achou'
+};
+const NOMES_FONTE = {
+  searxng: 'SearXNG (próprio, grátis)',
+  tavily: 'Tavily (paga)',
+  ddg: 'DuckDuckGo (último recurso)'
+};
+const NOMES_CONSULTA = {
+  nome: 'Nome + cidade',
+  razao: 'Razão social',
+  cnpj: 'CNPJ',
+  redes: 'Nome + WhatsApp/Instagram'
+};
+const NOMES_MOTIVO = {
+  busca_sem_resultado: 'A busca não trouxe resultado nenhum',
+  nenhum_site_confirmado: 'Achou sites, mas nenhum confirmado como da empresa',
+  so_diretorios_e_redes: 'Só guias, cadastros de CNPJ e redes sem telefone'
+};
+const NOMES_REGRA = {
+  sem_prova: 'Site sem prova de ser da empresa',
+  cnpj_diferente: 'Site mostra outro CNPJ',
+  ddd_outra_uf: 'Telefone de outro estado',
+  diretorio: 'Era guia/diretório',
+  dominio_fraco: 'Domínio parecido, sem confirmação',
+  nao_abriu: 'Site não abriu',
+  aceito_cnpj: 'Aceito pelo CNPJ',
+  aceito_dominio: 'Aceito pelo domínio',
+  aceito_nome: 'Aceito pelo nome'
+};
+function BuscaContatoSaude() {
+  const [dias, setDias] = useState(7);
+  const [d, setD] = useState(null);
+  const [testando, setTestando] = useState(false);
+  const carregar = testar => {
+    if (testar) setTestando(true);
+    return fetch(`/api/monitor/busca-contato?dias=${dias}${testar ? '&testar=1' : ''}`, {
+      credentials: 'same-origin'
+    }).then(r => r.ok ? r.json() : null).then(x => x && setD(x)).catch(() => {}).finally(() => setTestando(false));
+  };
+  useEffect(() => {
+    carregar(false);
+  }, [dias]);
+  if (!d) return null;
+  const pct = (a, b) => b ? Math.round(100 * a / b) : 0;
+  const cartao = {
+    background: 'var(--panel)',
+    border: '1px solid var(--border)',
+    borderRadius: 14,
+    padding: 18,
+    marginTop: 18
+  };
+  const sub = {
+    fontSize: 11.5,
+    fontWeight: 600,
+    letterSpacing: '.04em',
+    color: 'var(--faint)',
+    textTransform: 'uppercase',
+    margin: '16px 0 8px'
+  };
+  const linha = (rotulo, valor, total, cor, extra) => /*#__PURE__*/React.createElement("div", {
+    key: rotulo,
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 10,
+      padding: '5px 0',
+      fontSize: 12.5
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      flex: '0 1 260px',
+      minWidth: 0,
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap'
+    }
+  }, rotulo), /*#__PURE__*/React.createElement("span", {
+    style: {
+      flex: 1,
+      height: 6,
+      borderRadius: 3,
+      background: 'var(--panel2)',
+      overflow: 'hidden',
+      minWidth: 60
+    }
+  }, /*#__PURE__*/React.createElement("span", {
+    style: {
+      display: 'block',
+      width: pct(valor, total) + '%',
+      height: '100%',
+      background: cor
+    }
+  })), /*#__PURE__*/React.createElement("span", {
+    style: {
+      minWidth: 120,
+      textAlign: 'right',
+      color: 'var(--dim)'
+    }
+  }, valor, " ", /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, "(", pct(valor, total), "%)"), extra));
+  // Leitura automática do que os números dizem.
+  const avisos = [];
+  const sx = d.fontes?.searxng;
+  if (!d.configurado?.searxng && !d.configurado?.tavily) avisos.push('Nenhuma busca na web configurada: sobra só o DuckDuckGo, que quase não acha empresa pequena. Configure o SearXNG em Integrações → Busca na web.');
+  if (sx && sx.chamadas >= 10 && pct(sx.com_resultado, sx.chamadas) < 30) avisos.push(`O SearXNG voltou vazio em ${100 - pct(sx.com_resultado, sx.chamadas)}% das buscas — provavelmente está fora do ar ou bloqueado pelos buscadores. Use "Testar SearXNG agora".`);
+  if (d.tentativas >= 10 && pct(d.com_telefone, d.tentativas) < 25) avisos.push(`Só ${pct(d.com_telefone, d.tentativas)}% das buscas acharam telefone.`);
+  if (d.teste && d.teste.resultados === 0) avisos.push('O teste do SearXNG agora voltou sem resultado nenhum.');
+  return /*#__PURE__*/React.createElement("div", {
+    style: cartao
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      display: 'flex',
+      alignItems: 'flex-start',
+      gap: 12,
+      flexWrap: 'wrap'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      flex: '1 1 300px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 15,
+      fontWeight: 600
+    }
+  }, "Busca de contato na internet"), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      color: 'var(--dim)',
+      marginTop: 4,
+      lineHeight: 1.5
+    }
+  }, "Como a busca est\xE1 achando telefone e e-mail dos leads que passaram no perfil \u2014 por qual caminho, por qual fonte e, quando n\xE3o acha, por qu\xEA.")), /*#__PURE__*/React.createElement("select", {
+    value: dias,
+    onChange: e => setDias(parseInt(e.target.value, 10)),
+    "aria-label": "Per\xEDodo do diagn\xF3stico",
+    style: {
+      height: 32,
+      borderRadius: 8,
+      border: '1px solid var(--border)',
+      background: 'var(--panel2)',
+      color: 'var(--text)',
+      padding: '0 8px',
+      fontSize: 12.5,
+      fontFamily: 'inherit'
+    }
+  }, /*#__PURE__*/React.createElement("option", {
+    value: 1
+  }, "\xDAltimas 24 h"), /*#__PURE__*/React.createElement("option", {
+    value: 7
+  }, "\xDAltimos 7 dias"), /*#__PURE__*/React.createElement("option", {
+    value: 30
+  }, "\xDAltimos 30 dias")), /*#__PURE__*/React.createElement("button", {
+    type: "button",
+    onClick: () => carregar(true),
+    disabled: testando || !d.configurado?.searxng,
+    title: d.configurado?.searxng ? 'Faz uma busca de teste agora no SearXNG' : 'SearXNG não configurado',
+    style: {
+      height: 32,
+      padding: '0 12px',
+      borderRadius: 8,
+      border: '1px solid var(--border)',
+      background: 'transparent',
+      color: 'var(--text)',
+      fontSize: 12.5,
+      fontFamily: 'inherit',
+      cursor: 'pointer'
+    }
+  }, testando ? 'Testando…' : 'Testar SearXNG agora')), d.teste && /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12,
+      marginTop: 10,
+      color: d.teste.resultados ? C.green : C.red
+    }
+  }, "Teste do SearXNG: ", d.teste.resultados, " resultado(s) em ", (d.teste.ms / 1000).toFixed(1), " s."), avisos.map(a => /*#__PURE__*/React.createElement("div", {
+    key: a,
+    style: {
+      fontSize: 12.5,
+      color: C.amber,
+      marginTop: 10
+    }
+  }, "\u26A0 ", a)), !d.tentativas ? /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 12.5,
+      color: 'var(--faint)',
+      marginTop: 14
+    }
+  }, "Nenhuma busca de contato registrada neste per\xEDodo. O diagn\xF3stico come\xE7a a contar a partir desta vers\xE3o.") : /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    className: "h-cards",
+    style: {
+      '--card': '140px',
+      gap: 10,
+      marginTop: 14
+    }
+  }, [['Buscas', d.tentativas, 'var(--text)', `${d.leads} lead(s)`], ['Com telefone', pct(d.com_telefone, d.tentativas) + '%', C.green, `${d.com_telefone}`], ['Com e-mail', pct(d.com_email, d.tentativas) + '%', C.blue, `${d.com_email}`], ['Telefone e e-mail', pct(d.completos, d.tentativas) + '%', C.gold, `${d.completos}`], ['Tempo médio', d.ms_medio != null ? (d.ms_medio / 1000).toFixed(1) + ' s' : '—', 'var(--text)', 'por busca']].map(([r, v, c, x]) => /*#__PURE__*/React.createElement("div", {
+    key: r,
+    style: {
+      background: 'var(--panel2)',
+      borderRadius: 10,
+      padding: '10px 12px'
+    }
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11.5,
+      color: 'var(--faint)'
+    }
+  }, r), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 20,
+      fontWeight: 600,
+      color: c
+    }
+  }, v), /*#__PURE__*/React.createElement("div", {
+    style: {
+      fontSize: 11,
+      color: 'var(--faint)'
+    }
+  }, x)))), /*#__PURE__*/React.createElement("div", {
+    style: sub
+  }, "Por onde achou"), (d.caminhos || []).map(c => linha(NOMES_CAMINHO[c.caminho] || c.caminho, c.n, d.tentativas, c.caminho === 'nada' ? C.red : C.green, c.caminho !== 'nada' ? /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, " \xB7 ", c.com_telefone, " c/ tel.") : null)), /*#__PURE__*/React.createElement("div", {
+    style: sub
+  }, "Fontes de busca (cada consulta)"), Object.entries(d.fontes || {}).map(([f, v]) => linha(NOMES_FONTE[f] || f, v.com_resultado, v.chamadas, C.blue, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, " de ", v.chamadas, " \xB7 ", v.com_util, " c/ site"))), /*#__PURE__*/React.createElement("div", {
+    style: sub
+  }, "Consultas (trouxeram site candidato)"), Object.entries(d.consultas || {}).map(([q, v]) => linha(NOMES_CONSULTA[q] || q, v.com_util, v.chamadas, C.cyan, /*#__PURE__*/React.createElement("span", {
+    style: {
+      color: 'var(--faint)'
+    }
+  }, " de ", v.chamadas))), (d.motivos || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: sub
+  }, "Quando n\xE3o achou, por qu\xEA"), d.motivos.map(m => linha(NOMES_MOTIVO[m.motivo] || m.motivo, m.n, d.tentativas, C.red))), (d.regras || []).length > 0 && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+    style: sub
+  }, "Sites avaliados"), d.regras.map(r => linha(NOMES_REGRA[r.regra] || r.regra, r.n, d.regras.reduce((t, x) => t + x.n, 0), /^aceito/.test(r.regra) ? C.green : C.gray)))));
 }
 
 // ── Lead Detail Slideover ─────────────────────────────────────────────────────
@@ -15630,7 +15883,39 @@ function LeadDetailPanel({
         color: 'var(--text)',
         wordBreak: 'break-all'
       }
-    }, l.contato_validado.website)), l.contato_validado?.resumo_site && /*#__PURE__*/React.createElement("div", {
+    }, l.contato_validado.website)), /^https:\/\/([a-z0-9-]+\.)*(instagram\.com|facebook\.com|linktr\.ee)\//i.test(l.contato_validado?.perfil_social || '') && /*#__PURE__*/React.createElement("a", {
+      href: l.contato_validado.perfil_social,
+      target: "_blank",
+      rel: "noopener noreferrer",
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: 11,
+        background: 'var(--panel2)',
+        border: '1px solid var(--border)',
+        borderRadius: 10,
+        padding: '11px 13px',
+        textDecoration: 'none'
+      }
+    }, /*#__PURE__*/React.createElement(Svg, {
+      d: "M7 2h10a5 5 0 0 1 5 5v10a5 5 0 0 1-5 5H7a5 5 0 0 1-5-5V7a5 5 0 0 1 5-5zM12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zM17.5 6.5h.01",
+      color: "var(--dim)",
+      w: 16,
+      h: 16,
+      sw: 1.8
+    }), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 13,
+        flex: 1,
+        color: 'var(--text)',
+        wordBreak: 'break-all'
+      }
+    }, l.contato_validado.perfil_social), /*#__PURE__*/React.createElement("span", {
+      style: {
+        fontSize: 10,
+        color: 'var(--faint)'
+      }
+    }, "rede social")), l.contato_validado?.resumo_site && /*#__PURE__*/React.createElement("div", {
       style: {
         fontSize: 12,
         color: 'var(--dim)',

@@ -151,7 +151,7 @@ function hostBase(host) {
 const COBERTURA_MIN = 0.85;      // token único explicando quase todo o domínio
 // Teto de tempo pra avaliar os candidatos de UM lead. Sem ele, um lead cujos
 // candidatos são todos sites lentos segura o worker e a fila inteira atrás.
-const PRAZO_CANDIDATOS_MS = 45000;
+const PRAZO_CANDIDATOS_MS = 60000;   // todas as consultas do lead somadas
 const COBERTURA_NOME_INTEIRO = 0.6;  // nome completo casou: régua mais folgada
 const RESTO_MAX = 4;                 // letras de enfeite toleradas no domínio ("pet"+mendes)
 // Casa o token no domínio tolerando plural/flexão: "eletronicos" acha
@@ -436,16 +436,51 @@ function filtrarResultados(lista) {
 // inválida ou container fora do ar caem pra próxima sem interromper a busca.
 // Devolve { resultados, fonte } — a fonte fica gravada no lead pra dar pra medir
 // qual camada está sustentando o enriquecimento.
+//
+// `brutos` traz TUDO que as fontes devolveram, sem o filtro de diretório/rede
+// social e com o endereço completo — é dali que sai o perfil da empresa no
+// Instagram/Facebook quando ela não tem site. `tentativas` diz quanto cada fonte
+// devolveu (vai pro diagnóstico da busca de contato). `soGratis` pula a Tavily:
+// as consultas extras de um lead não podem gastar crédito.
 async function buscarResultados(termo, opts = {}) {
+  const brutos = [], tentativas = [];
+  const juntar = (lista) => { for (const r of lista || []) if (r?.url && !brutos.some(b => b.url === r.url)) brutos.push(r); };
   if (opts.searxngUrl) {
-    const r = filtrarResultados(await searxng.buscar(termo, { url: opts.searxngUrl, max: 40 }));
-    if (r.length) return { resultados: r, fonte: 'searxng' };
+    const cru = await searxng.buscar(termo, { url: opts.searxngUrl, max: 40 });
+    juntar(cru);
+    const r = filtrarResultados(cru);
+    tentativas.push({ fonte: 'searxng', n: cru.length, uteis: r.length });
+    if (r.length) return { resultados: r, fonte: 'searxng', brutos, tentativas };
   }
-  if (opts.tavilyKey) {
-    const r = filtrarResultados(await tavily.buscar(termo, { apiKey: opts.tavilyKey, max: 40 }));
-    if (r.length) return { resultados: r, fonte: 'tavily' };
+  if (opts.tavilyKey && !opts.soGratis) {
+    const cru = await tavily.buscar(termo, { apiKey: opts.tavilyKey, max: 40 });
+    juntar(cru);
+    const r = filtrarResultados(cru);
+    tentativas.push({ fonte: 'tavily', n: cru.length, uteis: r.length });
+    if (r.length) return { resultados: r, fonte: 'tavily', brutos, tentativas };
   }
-  return { resultados: resultadosDDG(await buscarDDG(termo)), fonte: 'ddg' };
+  const html = await buscarDDG(termo);
+  juntar(brutosDDG(html));
+  const r = resultadosDDG(html);
+  tentativas.push({ fonte: 'ddg', n: brutos.length, uteis: r.length });
+  return { resultados: r, fonte: r.length ? 'ddg' : null, brutos, tentativas };
+}
+
+// Resultados do DuckDuckGo SEM filtro, com o endereço completo e o texto de
+// cada link (título e trecho vêm em âncoras separadas apontando pro mesmo lugar).
+function brutosDDG(html) {
+  const porUrl = new Map();
+  for (const m of String(html || '').matchAll(/<a[^>]+href="((?:https?:\/\/|\/l\/\?uddg=)[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi)) {
+    let u = m[1];
+    if (u.startsWith('/l/?uddg=')) { try { u = decodeURIComponent(u.match(/uddg=([^&]+)/)[1]); } catch { continue; } }
+    let origin; try { origin = new URL(u).origin; } catch { continue; }
+    if (/duckduckgo\.com$/.test(new URL(u).hostname)) continue;
+    const txt = limpar(m[2]);
+    const atual = porUrl.get(u);
+    if (atual) { if (txt && !atual.conteudo) atual.conteudo = txt.slice(0, 600); }
+    else porUrl.set(u, { site: origin, url: u.slice(0, 300), titulo: txt.slice(0, 120) || null, conteudo: null });
+  }
+  return [...porUrl.values()];
 }
 
 // Acha o site oficial (1º resultado) — usado no fallback de validação.
@@ -506,10 +541,59 @@ function paginaSeApresentaComo(nome, cidade, identidade) {
 // Contato comercial SEM chave paga: acha o site (busca) e faz o scrape rico.
 // Se o scrape não render um resumo, usa o trecho de conteúdo da busca (Tavily)
 // como reserva — dá contexto ao SWOT mesmo em sites pobres em texto.
+// Consultas de um lead, da mais certeira pra mais solta. Só a primeira pode
+// usar a fonte paga; as outras rodam só no que é grátis.
+//   1. nome (fantasia) + cidade + UF — como sempre foi;
+//   2. razão social sem o sufixo jurídico — muita empresa é achada pelo nome do
+//      registro, não pelo fantasia;
+//   3. o CNPJ formatado — acha o site que imprime o CNPJ no rodapé (prova
+//      definitiva) e páginas que o citam;
+//   4. nome + cidade + "whatsapp instagram" — puxa o perfil da empresa nas
+//      redes, onde a loja pequena sem site publica o contato.
+function consultasContato(nome, cidade, uf, opts = {}) {
+  const out = [];
+  const add = (tipo, termo, gratis) => {
+    const t = String(termo || '').replace(/\s+/g, ' ').trim();
+    if (t && !out.some(c => c.termo.toLowerCase() === t.toLowerCase())) out.push({ tipo, termo: t, gratis });
+  };
+  add('nome', [nome, cidade, uf].filter(Boolean).join(' '), false);
+  const razao = String(opts.razao || '').replace(/\b(ltda|me|epp|eireli|s\/?a|ss)\b\.?/gi, ' ').trim();
+  if (razao && razao.toLowerCase() !== String(nome || '').toLowerCase()) add('razao', [razao, cidade].filter(Boolean).join(' '), true);
+  const c = String(opts.cnpj || '').replace(/\D/g, '');
+  if (c.length === 14) add('cnpj', `"${c.slice(0, 2)}.${c.slice(2, 5)}.${c.slice(5, 8)}/${c.slice(8, 12)}-${c.slice(12)}"`, true);
+  add('redes', [nome, cidade, 'whatsapp instagram'].filter(Boolean).join(' '), true);
+  return out;
+}
+
+// Perfil da empresa numa rede social (sem site próprio). Não abre a página — o
+// Instagram/Facebook pedem login —, lê o título e o trecho que a busca devolveu.
+// Aceita só com o NOME confirmado no título/trecho e o DDD do telefone batendo
+// com a UF do cadastro (confirmação positiva, não só "não desmente").
+const HOSTS_SOCIAL = ['instagram.com', 'facebook.com', 'm.facebook.com', 'linktr.ee'];
+function contatoDeRedeSocial(brutos, nome, cidade, uf) {
+  const estado = String(uf || '').trim().toUpperCase();
+  for (const b of brutos || []) {
+    let host; try { host = new URL(b.url || b.site).hostname.replace(/^www\./, ''); } catch { continue; }
+    if (!HOSTS_SOCIAL.some(d => host === d || host.endsWith('.' + d))) continue;
+    const texto = `${b.titulo || ''} ${b.conteudo || ''}`;
+    if (!paginaSeApresentaComo(nome, cidade, `${b.titulo || ''} ${(b.conteudo || '').slice(0, 160)}`)) continue;
+    const tel = extrairWhatsappDe(texto) || extrairTelefoneDe(texto);
+    if (!tel) continue;
+    const dddUf = DDD_UF[parseInt(String(tel).slice(0, 2), 10)];
+    if (!estado || dddUf !== estado) continue;
+    return { telefone: tel, email: extrairEmailDe(texto), perfil: b.url || b.site };
+  }
+  return null;
+}
+
 async function buscarContatoGratis(nome, cidade, uf, opts = {}) {
   const agora = new Date().toISOString();
+  const t0 = Date.now();
   const cnpjAlvo = String(opts.cnpj || '').replace(/\D/g, '');
-  const { resultados: r, fonte: fonteBusca } = await buscarResultados([nome, cidade, uf].filter(Boolean).join(' '), opts);
+  // Diagnóstico desta busca (jobs/validacao.js grava; o Monitoramento resume).
+  const diag = { consultas: [], candidatos: 0, regras: {} };
+  const brutos = [];
+  let fonteBusca = null;
 
   // TRÊS provas independentes de que o site é DESTA empresa, qualquer uma basta:
   //   1. o domínio explica o nome (forcaDominio);
@@ -526,86 +610,141 @@ async function buscarContatoGratis(nome, cidade, uf, opts = {}) {
   // empresas gastava até 18 requisições e travava a fila — foi o que aconteceu
   // quando o SearXNG passou a devolver resultado pra todo mundo.
   const prazo = Date.now() + PRAZO_CANDIDATOS_MS;
-  const olhar = r.slice(0, 6);
   // Modo observação do Jev (providers/typesafe.js): guarda o veredito das regras
   // para cada candidato cuja home foi lida e entrega a lista a quem chamou
   // (opts.aoAvaliar). Não muda nenhuma decisão daqui; o callback nunca é
   // aguardado e um erro nele não afeta a busca.
   const avaliados = [];
-  const anotar = (cand, h0, regra) => avaliados.push({
-    site: cand.site, titulo: cand.titulo || null, identidade: h0.identidade || null,
-    resumo: h0.resumo || null, telefone: h0.telefone || null, cnpj: h0.cnpj || null,
-    qtd_telefones: h0.qtd_telefones || 0, regra,
-  });
+  const anotar = (cand, h0, regra) => {
+    diag.regras[regra] = (diag.regras[regra] || 0) + 1;
+    avaliados.push({
+      site: cand.site, titulo: cand.titulo || null, identidade: h0.identidade || null,
+      resumo: h0.resumo || null, telefone: h0.telefone || null, cnpj: h0.cnpj || null,
+      qtd_telefones: h0.qtd_telefones || 0, regra,
+    });
+  };
   const entregar = () => {
     if (typeof opts.aoAvaliar !== 'function' || !avaliados.length) return;
     try { Promise.resolve(opts.aoAvaliar(avaliados)).catch(() => {}); } catch (_) { /* observação nunca quebra a busca */ }
   };
-  for (const cand of olhar) {
-    // Teto de tempo do laço: um lead nunca pode segurar o worker indefinidamente.
-    // Sai pelo que já tem em vez de arrastar a fila inteira.
+  const vistos = new Set();
+  const fim = (r) => { diag.ms = Date.now() - t0; return { ...r, diag }; };
+
+  for (const consulta of consultasContato(nome, cidade, uf, opts)) {
     if (Date.now() > prazo) break;
-    const f = forcaDominio(nome, cidade, hostDe(cand.site));
-    // Sem sinal no domínio, sem CNPJ pra conferir e sem nome pra procurar: não há
-    // como provar nada. Nem gasta requisição.
-    if (!f.ok && !cnpjAlvo && !tokensNome(nome).length) continue;
-    const h0 = await lerHome(cand.site);
-    if (!h0) continue;
-    const cnpjSite = String(h0.cnpj || '').replace(/\D/g, '');
-    if (cnpjAlvo && cnpjSite && cnpjSite !== cnpjAlvo) { anotar(cand, h0, 'cnpj_diferente'); continue; }   // veto: site de OUTRA empresa
-    const confereCnpj = !!(cnpjAlvo && cnpjSite && cnpjSite === cnpjAlvo);
-    const confereNome = paginaSeApresentaComo(nome, cidade, h0.identidade);
-    if (!f.ok && !confereCnpj && !confereNome) { anotar(cand, h0, 'sem_prova'); continue; }   // nenhuma prova
+    const { resultados: r, fonte, brutos: br, tentativas } = await buscarResultados(consulta.termo,
+      consulta.gratis ? { ...opts, soGratis: true } : opts);
+    diag.consultas.push({ tipo: consulta.tipo, fonte, tentativas });
+    if (fonte && !fonteBusca) fonteBusca = fonte;
+    for (const b of br || []) if (!brutos.some(x => x.url === b.url)) brutos.push(b);
 
-    // Domínio curto que casa com UMA palavra do nome é evidência fraca demais
-    // sozinha: "ASPEN Refrigeração" (MG) casou com aspentech.com (software
-    // americano), "Teixeira Refrigeração" com teixeira.com.br. O token existe no
-    // domínio e explica ele quase todo — mas é sobrenome ou palavra comum, não
-    // marca. Nesses casos exige que a PÁGINA também confirme o nome. Com 2+
-    // tokens no domínio a coincidência já é improvável e o domínio basta.
-    if (f.ok && f.casados < 2 && !confereCnpj && !confereNome) { anotar(cand, h0, 'dominio_fraco'); continue; }
+    const olhar = r.filter(c => !vistos.has(c.site)).slice(0, 6);
+    for (const cand of olhar) {
+      vistos.add(cand.site);
+      // Teto de tempo do laço: um lead nunca pode segurar o worker indefinidamente.
+      // Sai pelo que já tem em vez de arrastar a fila inteira.
+      if (Date.now() > prazo) break;
+      const f = forcaDominio(nome, cidade, hostDe(cand.site));
+      // Sem sinal no domínio, sem CNPJ pra conferir e sem nome pra procurar: não há
+      // como provar nada. Nem gasta requisição.
+      if (!f.ok && !cnpjAlvo && !tokensNome(nome).length) continue;
+      diag.candidatos++;
+      const h0 = await lerHome(cand.site);
+      if (!h0) { diag.regras.nao_abriu = (diag.regras.nao_abriu || 0) + 1; continue; }
+      const cnpjSite = String(h0.cnpj || '').replace(/\D/g, '');
+      if (cnpjAlvo && cnpjSite && cnpjSite !== cnpjAlvo) { anotar(cand, h0, 'cnpj_diferente'); continue; }   // veto: site de OUTRA empresa
+      const confereCnpj = !!(cnpjAlvo && cnpjSite && cnpjSite === cnpjAlvo);
+      const confereNome = paginaSeApresentaComo(nome, cidade, h0.identidade);
+      if (!f.ok && !confereCnpj && !confereNome) { anotar(cand, h0, 'sem_prova'); continue; }   // nenhuma prova
 
-    // O telefone do site desmente a UF do cadastro? Então é outra empresa de
-    // mesmo nome noutro estado — caso clássico em nome genérico de refrigeração,
-    // que se repete em toda cidade do país. O CNPJ conferido é prova definitiva e
-    // passa por cima disso (empresa pode ter número de outro estado); as provas
-    // de nome, não. Nenhuma delas fala de LUGAR — o DDD é a única que fala.
-    if (!confereCnpj && telefoneDesmenteUf(h0.telefone, uf)) { anotar(cand, h0, 'ddd_outra_uf'); continue; }
+      // Domínio curto que casa com UMA palavra do nome é evidência fraca demais
+      // sozinha: "ASPEN Refrigeração" (MG) casou com aspentech.com (software
+      // americano), "Teixeira Refrigeração" com teixeira.com.br. O token existe no
+      // domínio e explica ele quase todo — mas é sobrenome ou palavra comum, não
+      // marca. Nesses casos exige que a PÁGINA também confirme o nome. Com 2+
+      // tokens no domínio a coincidência já é improvável e o domínio basta.
+      if (f.ok && f.casados < 2 && !confereCnpj && !confereNome) { anotar(cand, h0, 'dominio_fraco'); continue; }
 
-    // Descarta diretório ANTES de aprofundar: a página se descreve como guia/
-    // lista/consulta de CNPJ, ou lista muitos negócios (muitos telefones
-    // distintos). Ambos os sinais já estão na home — não vale ler mais páginas
-    // de um catálogo pra depois jogar fora.
-    if (pareceDiretorio(h0.resumo) || pareceDiretorio(cand.titulo) || (h0.qtd_telefones || 0) >= 10) { anotar(cand, h0, 'diretorio'); continue; }
+      // O telefone do site desmente a UF do cadastro? Então é outra empresa de
+      // mesmo nome noutro estado — caso clássico em nome genérico de refrigeração,
+      // que se repete em toda cidade do país. O CNPJ conferido é prova definitiva e
+      // passa por cima disso (empresa pode ter número de outro estado); as provas
+      // de nome, não. Nenhuma delas fala de LUGAR — o DDD é a única que fala.
+      if (!confereCnpj && telefoneDesmenteUf(h0.telefone, uf)) { anotar(cand, h0, 'ddd_outra_uf'); continue; }
 
-    // Passou em tudo: agora sim vale ler "sobre" e "contato".
-    anotar(cand, h0, confereCnpj ? 'aceito_cnpj' : (f.ok ? 'aceito_dominio' : 'aceito_nome'));
-    entregar();
-    const s = await aprofundar(cand.site, h0);
-    const resumo = s.resumo || cand.conteudo || null;
-    return {
-      encontrado: true,
-      telefone: s.telefone || null,
-      whatsapp: s.telefone || null,
-      website: cand.site,
-      email: s.email || null,
-      resumo_site: resumo,
-      resumo_fonte: s.resumo ? s.resumo_fonte : (cand.conteudo ? 'busca' : null),
-      fonte: 'busca_gratis',
-      // Qual camada de busca achou este site (searxng/tavily/ddg) — permite ver
-      // quanto cada uma sustenta sem depender de log.
-      fonte_busca: fonteBusca,
-      // Como o site foi conferido — aparece no lead, pro usuário saber o quanto confiar.
-      site_conferido: confereCnpj ? 'cnpj' : (f.ok ? 'dominio' : 'nome'),
-      validado: !!(s.email || s.telefone || resumo),
-      validado_em: agora,
-    };
+      // Descarta diretório ANTES de aprofundar: a página se descreve como guia/
+      // lista/consulta de CNPJ, ou lista muitos negócios (muitos telefones
+      // distintos). Ambos os sinais já estão na home — não vale ler mais páginas
+      // de um catálogo pra depois jogar fora.
+      if (pareceDiretorio(h0.resumo) || pareceDiretorio(cand.titulo) || (h0.qtd_telefones || 0) >= 10) { anotar(cand, h0, 'diretorio'); continue; }
+
+      // Passou em tudo: agora sim vale ler "sobre" e "contato".
+      anotar(cand, h0, confereCnpj ? 'aceito_cnpj' : (f.ok ? 'aceito_dominio' : 'aceito_nome'));
+      entregar();
+      const s = await aprofundar(cand.site, h0);
+      const resumo = s.resumo || cand.conteudo || null;
+      // Site sem telefone (só formulário): o trecho da busca ou o perfil da
+      // empresa na rede social costumam ter o número.
+      let telefone = s.telefone || null, perfil = null;
+      if (!telefone && cand.conteudo) {
+        const t = extrairWhatsappDe(cand.conteudo) || extrairTelefoneDe(cand.conteudo);
+        if (t && !telefoneDesmenteUf(t, uf)) telefone = t;
+      }
+      if (!telefone) {
+        let rs = contatoDeRedeSocial(brutos, nome, cidade, uf);
+        // O site saiu antes da consulta das redes: faz ela agora (grátis) só
+        // pra procurar o WhatsApp no perfil da empresa.
+        const qRedes = consultasContato(nome, cidade, uf, opts).find(c => c.tipo === 'redes');
+        if (!rs && qRedes && !diag.consultas.some(c => c.tipo === 'redes') && Date.now() < prazo) {
+          const x = await buscarResultados(qRedes.termo, { ...opts, soGratis: true });
+          diag.consultas.push({ tipo: 'redes', fonte: x.fonte, tentativas: x.tentativas });
+          for (const b of x.brutos || []) if (!brutos.some(y => y.url === b.url)) brutos.push(b);
+          rs = contatoDeRedeSocial(brutos, nome, cidade, uf);
+        }
+        if (rs) { telefone = rs.telefone; perfil = rs.perfil; }
+      }
+      diag.resultado = 'site';
+      return fim({
+        encontrado: true,
+        telefone,
+        whatsapp: telefone,
+        website: cand.site,
+        ...(perfil ? { perfil_social: perfil } : {}),
+        email: s.email || null,
+        resumo_site: resumo,
+        resumo_fonte: s.resumo ? s.resumo_fonte : (cand.conteudo ? 'busca' : null),
+        fonte: 'busca_gratis',
+        // Qual camada de busca achou este site (searxng/tavily/ddg) — permite ver
+        // quanto cada uma sustenta sem depender de log.
+        fonte_busca: fonte || fonteBusca,
+        // Como o site foi conferido — aparece no lead, pro usuário saber o quanto confiar.
+        site_conferido: confereCnpj ? 'cnpj' : (f.ok ? 'dominio' : 'nome'),
+        validado: !!(s.email || telefone || resumo),
+        validado_em: agora,
+      });
+    }
   }
-  // Nenhum resultado se PROVOU o site próprio da empresa → melhor não trazer
-  // dado nenhum (fica vermelho "sem contato") do que trazer contato errado.
+
+  // Nenhum site próprio provado: a loja pequena costuma ter só o perfil no
+  // Instagram/Facebook, com o WhatsApp na bio. Nome conferido + DDD da UF.
   entregar();
-  return { encontrado: false, fonte: 'busca_gratis', fonte_busca: fonteBusca, validado: false,
-    validado_em: agora, motivo: 'sem_site_proprio' };
+  const rs = contatoDeRedeSocial(brutos, nome, cidade, uf);
+  if (rs) {
+    diag.resultado = 'rede_social';
+    return fim({
+      encontrado: true, telefone: rs.telefone, whatsapp: rs.telefone, email: rs.email || null,
+      website: null, perfil_social: rs.perfil, resumo_site: null, resumo_fonte: null,
+      fonte: 'busca_gratis', fonte_busca: fonteBusca, site_conferido: 'rede_social',
+      validado: true, validado_em: agora,
+    });
+  }
+  // Nada provado → melhor não trazer dado nenhum (fica vermelho "sem contato")
+  // do que trazer contato errado.
+  diag.resultado = 'nada';
+  diag.motivo = !brutos.length ? 'busca_sem_resultado'
+    : diag.candidatos ? 'nenhum_site_confirmado' : 'so_diretorios_e_redes';
+  return fim({ encontrado: false, fonte: 'busca_gratis', fonte_busca: fonteBusca, validado: false,
+    validado_em: agora, motivo: 'sem_site_proprio' });
 }
 
 // Busca o contato comercial da empresa no Google. Retorna também business_status

@@ -39,6 +39,7 @@ async function buscar(query, { apiKey, max = 30 } = {}) {
       let origin; try { origin = new URL(r.url).origin; } catch { continue; }
       out.push({
         site: origin,
+        url: String(r.url).slice(0, 300),
         titulo: (r.title || '').trim().slice(0, 120) || null,
         conteudo: (r.content || '').trim().slice(0, 600) || null,
       });
