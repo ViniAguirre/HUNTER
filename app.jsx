@@ -303,6 +303,21 @@ const MOTIVO_SWOT = {
   sem_firmografia: 'faltam os dados de cadastro desta empresa. Use “Re-enriquecer” e tente de novo.',
   sem_material: 'não há material sobre a empresa (site ou perfil) para a IA analisar — só com o cadastro a análise sairia genérica. Use “Re-enriquecer” para buscar de novo, ou cadastre o site em “Editar” e clique em “Refazer análise”.',
 };
+// Aderência ao que o cliente vende (a IA avalia no briefing): alta, média ou
+// baixa, com o porquê. Baixa = a atividade do lead não tem ponte com o produto.
+const ADERENCIA = { alta: ['Alta', C.green], media: ['Média', C.amber], baixa: ['Baixa', C.red] };
+// Com a segunda verificação: concordam → confirmada; divergem → vale a mais
+// conservadora e a tela pede pra conferir.
+const verificacaoAderencia = a => !a?.segunda?.nivel ? ''
+  : a.concordam ? 'confirmada por 2 verificações'
+  : a.analise ? `verificações divergem (análise: ${ADERENCIA[a.analise]?.[0] || a.analise}; segunda verificação: ${ADERENCIA[a.segunda.nivel]?.[0] || a.segunda.nivel}) — confira`
+  : 'pela segunda verificação';
+const textoAderencia = a => {
+  if (!a || !ADERENCIA[a.nivel]) return '';
+  const v = verificacaoAderencia(a);
+  return `${ADERENCIA[a.nivel][0]}${v ? ` (${v})` : ''}${a.motivo ? ' — ' + a.motivo : ''}`;
+};
+
 function briefingVazio(sw) {
   if (!sw || typeof sw !== 'object') return true;
   const n = v => Array.isArray(v) ? v.length : 0;
@@ -1129,6 +1144,7 @@ function secaoLeadHtml(l) {
       ${quad('Forças', sw.swot?.forcas)}${quad('Fraquezas', sw.swot?.fraquezas)}
       ${quad('Oportunidades', sw.swot?.oportunidades)}${quad('Ameaças', sw.swot?.ameacas)}
     </div>
+    ${sw.aderencia ? `<div class="callout" style="margin-top:12px"><b>Aderência ao que vendemos:</b> ${esc(textoAderencia(sw.aderencia))}</div>` : ''}
     ${(sw.sinal_comercial || sw.gancho) ? `<div class="callout" style="margin-top:12px"><b>Sinal comercial:</b> ${esc(sw.sinal_comercial || sw.gancho)}</div>` : ''}
   ` : ''}
   <div class="rod">Gerado pelo Hunter em ${esc(new Date().toLocaleString('pt-BR'))}</div>
@@ -3869,6 +3885,96 @@ const ROTULO_EVENTO = {
 // Controle pelo CRM: o CRM informa a fila de leads sem atendimento e o piloto
 // só abre radar novo quando ela cai para o gatilho. Aqui a pessoa liga,
 // escolhe o gatilho e vê o último aviso — e o que passar pro dev do CRM.
+// Qualidade mínima pro envio AUTOMÁTICO ao CRM: o cliente decide quanto quer
+// arriscar. Mínimo baixo = mais leads, alguns menos bons; mínimo alto = menos e
+// mais certeiros. Quem não passa fica na lista pra triagem, com o motivo.
+function QualidadeCrm({ plano, salvando, onSalvar }) {
+  const atual = plano.crm_score_minimo ?? 0;
+  const [min, setMin] = useState(atual);
+  useEffect(() => { setMin(plano.crm_score_minimo ?? 0); }, [plano.crm_score_minimo]);
+  return (
+    <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:20, marginBottom:16 }}>
+      <div style={{ fontSize:14, fontWeight:600, marginBottom:4 }}>Qualidade mínima para ir ao CRM</div>
+      <div style={{ fontSize:12, color:'var(--faint)', lineHeight:1.5, marginBottom:14 }}>
+        Vale para o envio <b>automático</b>. Lead abaixo do mínimo não vai sozinho: fica na lista de Leads para triagem,
+        com o motivo — e você pode enviar manualmente se quiser. Mínimo mais baixo deixa passar mais leads, alguns menos
+        certeiros; mais alto manda menos, e melhores.
+      </div>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:8 }}>
+        <label style={{ fontSize:12.5, color:'var(--dim)' }}>Score mínimo para enviar ao CRM</label>
+        <span style={{ fontSize:13, fontWeight:600, color:C.gold }}>{min ? `${min} pts` : 'sem mínimo'}</span>
+      </div>
+      <input type="range" min={0} max={100} step={5} value={min} disabled={salvando}
+        onChange={e => setMin(+e.target.value)}
+        onMouseUp={() => min !== atual && onSalvar({ crm_score_minimo: min })}
+        onTouchEnd={() => min !== atual && onSalvar({ crm_score_minimo: min })}
+        onKeyUp={() => min !== atual && onSalvar({ crm_score_minimo: min })}
+        style={{ width:'100%', accentColor:'var(--accent)', cursor:'pointer' }}/>
+      <div style={{ display:'flex', justifyContent:'space-between', fontSize:10.5, color:'var(--faint)', marginTop:4 }}>
+        <span>mais leads</span><span>mais certeiros</span>
+      </div>
+      <label style={{ display:'flex', alignItems:'flex-start', gap:10, cursor:'pointer', marginTop:14 }}>
+        <input type="checkbox" checked={!!plano.crm_segurar_baixa} disabled={salvando}
+          onChange={e => onSalvar({ crm_segurar_baixa: e.target.checked })} style={{ marginTop:3, accentColor:'var(--accent)' }}/>
+        <span style={{ fontSize:12.5, lineHeight:1.45 }}>
+          Segurar também os leads com <b>aderência baixa</b> ao que você vende
+          <span style={{ display:'block', fontSize:11.5, color:'var(--faint)', marginTop:2 }}>
+            A aderência sai da análise do lead (e, quando disponível, de uma segunda verificação independente).
+          </span>
+        </span>
+      </label>
+    </div>
+  );
+}
+
+// Checklist do piloto: cada condição que ele confere antes de abrir radar
+// (piloto, pautas no período, vaga, fila do CRM, horário, limites, esteira) e
+// qual seria o próximo radar. Responde "por que não abriu radar?" sem adivinhar.
+function ChecklistPiloto() {
+  const [aberto, setAberto] = useState(false);
+  const [d, setD] = useState(null);
+  const [carregando, setCarregando] = useState(false);
+  const carregar = () => {
+    setCarregando(true);
+    fetch('/api/estrategia/diagnostico', { credentials:'same-origin' })
+      .then(r => r.ok ? r.json() : null).then(setD).catch(() => setD(null))
+      .finally(() => setCarregando(false));
+  };
+  useEffect(() => { if (aberto) carregar(); }, [aberto]);
+  return (
+    <div style={{ marginTop:14 }}>
+      <button type="button" onClick={() => setAberto(a => !a)}
+        style={{ background:'none', border:'none', padding:0, color:'var(--accent)', fontSize:12.5, cursor:'pointer', fontFamily:'inherit' }}>
+        {aberto ? '▾' : '▸'} Checklist do piloto — por que abre (ou não) radar agora
+      </button>
+      {aberto && (
+        <div style={{ marginTop:10, border:'1px solid var(--border)', borderRadius:11, overflow:'hidden' }}>
+          {!d && <div style={{ padding:'12px 14px', fontSize:12.5, color:'var(--faint)' }}>{carregando ? 'Conferindo…' : 'Não consegui conferir agora.'}</div>}
+          {d && d.itens.map((it, i) => (
+            <div key={i} style={{ display:'flex', gap:10, padding:'9px 14px', borderTop: i ? '1px solid var(--border)' : 'none',
+              background: it.ok === false ? `color-mix(in srgb, ${C.amber} 7%, transparent)` : 'transparent' }}>
+              <span style={{ width:16, flexShrink:0, fontWeight:700, color: it.ok === false ? C.amber : C.green }}>{it.ok === false ? '✗' : '✓'}</span>
+              <span style={{ fontSize:12.5, lineHeight:1.45, minWidth:0 }}>
+                <span style={{ color:'var(--text)' }}>{it.titulo}</span>
+                {it.detalhe && <span style={{ display:'block', fontSize:11.5, color:'var(--faint)' }}>{it.detalhe}</span>}
+              </span>
+            </div>
+          ))}
+          {d && (
+            <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, padding:'9px 14px',
+              borderTop:'1px solid var(--border)', fontSize:11.5, color:'var(--faint)' }}>
+              <span>{d.pode_abrir ? 'Tudo liberado: o piloto abre o próximo radar no próximo minuto.' : 'Os itens marcados com ✗ estão segurando o próximo radar.'}</span>
+              <button type="button" onClick={carregar} disabled={carregando}
+                style={{ background:'none', border:'1px solid var(--border)', borderRadius:7, padding:'4px 10px', color:'var(--dim)',
+                  fontSize:11.5, cursor:'pointer', fontFamily:'inherit' }}>{carregando ? 'Conferindo…' : 'Conferir de novo'}</button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ControleCrm({ plano, crm, salvando, onSalvar }) {
   const [gatilho, setGatilho] = useState(String(plano.crm_fila_gatilho ?? 5));
   const [mostrarComo, setMostrarComo] = useState(false);
@@ -4396,9 +4502,13 @@ function Estrategia({ onNovaPauta, onEditarPauta, onUsarRadar, onAbrirRadar, use
           Segue os limites de Configurações: {lim.limite_diario ? <>até <b>{lim.limite_diario} leads/dia</b></> : 'sem teto diário'} · {horaTxt} · {diasTxt}.
           Só abre radar novo quando a esteira tem espaço — se já há empresa aprovada esperando vaga ou mais de {d.constantes.limiar_fila} em análise, ele espera.
         </div>
+        <ChecklistPiloto/>
         <ControleCrm plano={plano} crm={d.crm} salvando={salvando}
           onSalvar={corpo => enviar('/api/estrategia', 'PATCH', corpo)}/>
       </div>
+
+      {/* ── Qualidade mínima pro envio automático ao CRM ───────────────── */}
+      <QualidadeCrm plano={plano} salvando={salvando} onSalvar={corpo => enviar('/api/estrategia', 'PATCH', corpo)}/>
 
       {/* ── Filas do CRM: leads aguardando atendimento (só CRM GK) ─────── */}
       {d.crm?.provedor === 'gk' && <FilasAtendimento/>}
@@ -7801,6 +7911,15 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
             </section>
           )}
 
+          {/* Retido pela qualidade mínima da Estratégia: não foi ao CRM sozinho. */}
+          {l.crm_retido && !l.enviado_crm_em && status !== 'Descartado' && (
+            <div style={{ padding:'10px 14px', borderRadius:11, border:`1px solid ${C.amber}`, fontSize:12.5, lineHeight:1.5,
+              background:`color-mix(in srgb, ${C.amber} 8%, transparent)`, color:'var(--text)' }}>
+              <b style={{ color:C.amber }}>Não foi ao CRM sozinho:</b> {l.crm_retido}. É a qualidade mínima escolhida na
+              Estratégia — se quiser, envie manualmente.
+            </div>
+          )}
+
           {l.swot && (
             <section style={{ borderTop:'1px solid var(--border)', paddingTop:18 }}>
               <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:12 }}>
@@ -7867,6 +7986,26 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                 ))}
               </div>
               )}
+              {l.swot.aderencia && ADERENCIA[l.swot.aderencia.nivel] && (() => {
+                const [rot, cor] = ADERENCIA[l.swot.aderencia.nivel];
+                return (
+                  <div style={{ display:'flex', alignItems:'flex-start', gap:10, padding:'10px 14px', marginBottom:10, borderRadius:11,
+                    border:`1px solid ${cor}`, background:`color-mix(in srgb, ${cor} 8%, transparent)` }}>
+                    <span style={{ fontSize:10.5, fontWeight:600, color:cor, textTransform:'uppercase', letterSpacing:'.06em', whiteSpace:'nowrap', marginTop:2 }}>
+                      Aderência {rot}
+                    </span>
+                    <span style={{ fontSize:12.5, lineHeight:1.5, color:'var(--text)' }}>
+                      {l.swot.aderencia.motivo}
+                      {verificacaoAderencia(l.swot.aderencia) && (
+                        <span style={{ display:'block', fontSize:11.5, marginTop: l.swot.aderencia.motivo ? 3 : 0,
+                          color: l.swot.aderencia.concordam === false ? C.amber : 'var(--faint)' }}>
+                          {l.swot.aderencia.concordam ? '✓ ' : ''}{verificacaoAderencia(l.swot.aderencia)}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                );
+              })()}
               {(l.swot.sinal_comercial || l.swot.gancho) && (
                 <div style={{ background:'rgba(58,142,255,.07)', border:'1px solid rgba(58,142,255,.22)', borderRadius:11, padding:14, marginBottom:10 }}>
                   <div style={{ fontSize:10.5, fontWeight:600, color:C.blue, marginBottom:5, textTransform:'uppercase', letterSpacing:'.06em' }}>Sinal comercial</div>
@@ -7887,6 +8026,7 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                     [l.swot.resumo,
                      l.swot.fatos_uteis?.length ? 'Fatos úteis:\n- ' + l.swot.fatos_uteis.join('\n- ') : '',
                      l.swot.dores_provaveis?.length ? 'Dores prováveis:\n- ' + l.swot.dores_provaveis.join('\n- ') : '',
+                     l.swot.aderencia ? 'Aderência ao que vendemos: ' + textoAderencia(l.swot.aderencia) : '',
                      (l.swot.sinal_comercial || l.swot.gancho) ? 'Sinal comercial: ' + (l.swot.sinal_comercial || l.swot.gancho) : ''].filter(Boolean).join('\n\n')).catch(()=>{})}
                   style={{ display:'flex', alignItems:'center', gap:6, height:31, padding:'0 12px',
                     borderRadius:7, border:'1px solid rgba(58,142,255,.3)', background:'transparent',

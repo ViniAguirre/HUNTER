@@ -15,6 +15,54 @@ const google = require('../providers/google');
 const MATERIAL_MIN = 40;
 const temMaterial = cv => String(cv?.resumo_site || '').trim().length >= MATERIAL_MIN;
 const { swotSemOrigem } = require('../sigilo');
+const typesafe = require('../providers/typesafe');
+
+// ── Aderência: segunda verificação ──────────────────────────────────────────
+// A IA do briefing diz o quanto a empresa tem a ver com o que o cliente vende
+// (alta/média/baixa). Com a integração de Decisões ativa, um segundo avaliador,
+// independente, responde a mesma pergunta ("esta empresa compraria isto?").
+// Concordando, o selo sai confirmado; divergindo, vale o MAIS CONSERVADOR dos
+// dois e a tela pede pra conferir. Nada aqui diz qual ferramenta avaliou.
+const ORDEM_ADERENCIA = ['baixa', 'media', 'alta'];
+// Escala do avaliador: 0 improvável, 1 possível, 2 provável, 3 ideal.
+const nivelDaEscala = n => (n == null ? null : Math.round(n) <= 0 ? 'baixa' : Math.round(n) === 1 ? 'media' : 'alta');
+
+async function segundaVerificacao(pool, { empresa, cv, contexto, busca_id, cnpj }) {
+  const ig = await typesafe.integracao(pool).catch(() => null);
+  if (!ig) return null;
+  const perfil = await typesafe.perfilComprador(pool).catch(() => null);
+  if (!String(contexto || '').trim() && !perfil) return null;   // sem saber o que se vende, não há o que julgar
+  // O Score 1 já pode ter pedido essa opinião (modo observação): reaproveita.
+  const { rows: [ja] } = await pool.query(
+    `SELECT jev_score, jev_confianca FROM decisoes_jev WHERE tipo='score1' AND busca_id=$1 AND cnpj=$2
+       AND jev_score IS NOT NULL AND erro IS NULL ORDER BY id DESC LIMIT 1`, [busca_id, cnpj]).catch(() => ({ rows: [] }));
+  if (ja) return { nivel: nivelDaEscala(ja.jev_score * 3), confianca: ja.jev_confianca ?? null };
+  try {
+    const r = await typesafe.avaliarEmpresa(ig.apiKey, contexto || '',
+      { ...empresa, resumo_site: cv?.resumo_site || null }, { modelo: ig.modelo, timeout: 12000, perfil });
+    return r?.nivel == null ? null : { nivel: nivelDaEscala(r.nivel), confianca: r.confianca ?? null };
+  } catch (e) {
+    console.warn(`[swot] ${cnpj}: segunda verificação da aderência falhou (${e.message}) — fica só a da análise.`);
+    return null;
+  }
+}
+
+function combinarAderencia(ia, segunda) {
+  if (!segunda?.nivel) return ia || null;
+  if (!ia?.nivel) return { nivel: segunda.nivel, motivo: '', segunda, concordam: null };
+  const final = ORDEM_ADERENCIA[Math.min(ORDEM_ADERENCIA.indexOf(ia.nivel), ORDEM_ADERENCIA.indexOf(segunda.nivel))];
+  return { nivel: final, motivo: ia.motivo || '', analise: ia.nivel, segunda, concordam: ia.nivel === segunda.nivel };
+}
+
+// O lead vai ao CRM sozinho? A qualidade mínima é escolha do cliente
+// (Estratégia): score mínimo e, opcional, segurar aderência baixa. Devolve o
+// motivo da retenção, ou null.
+function motivoRetencao(lead, aderencia, e) {
+  const min = e?.crm_score_minimo || 0;
+  if (min > 0 && (lead?.score ?? 0) < min) return `score ${lead?.score ?? 0} abaixo do mínimo de ${min} para o CRM`;
+  if (e?.crm_segurar_baixa && aderencia?.nivel === 'baixa') return 'aderência baixa ao que você vende';
+  return null;
+}
 
 // Rótulos do fichamento comercial (tela "Agente SWOT", master). Precisa casar
 // com as perguntas do front — é o que transforma as respostas salvas num bloco
@@ -137,6 +185,8 @@ module.exports = async function swot(job, pool, queues) {
           usado = { provedor: ig.provedor, modelo: briefing.modelo,
                     ...(falhas.length ? { caiu_de: falhas } : {}) };
           briefing = swotSemOrigem(briefing);
+          briefing.aderencia = combinarAderencia(briefing.aderencia,
+            await segundaVerificacao(pool, { empresa, cv, contexto, busca_id, cnpj }));
           break;
         } catch (e) {
           falhas.push({ provedor: ig.provedor, modelo: ig.config?.modelo || null, erro: e.message.slice(0, 200) });
@@ -170,12 +220,28 @@ module.exports = async function swot(job, pool, queues) {
     contatoOk = !!((cv.whatsapp || cv.telefone) && cv.email);
   }
 
-  if (crmAuto && contatoOk && queues?.crm) {
+  // Qualidade mínima pro envio automático (Estratégia). Quem não passa fica na
+  // lista pra triagem, com o motivo — o envio manual continua liberado.
+  let retido = null;
+  if (crmAuto && contatoOk) {
+    const [{ rows: [e] }, { rows: [l] }] = await Promise.all([
+      pool.query(`SELECT crm_score_minimo, crm_segurar_baixa FROM estrategia`).catch(() => ({ rows: [] })),
+      pool.query(`SELECT score, swot FROM leads WHERE id=$1`, [lead_id]),
+    ]);
+    retido = motivoRetencao(l, l?.swot?.aderencia, e);
+    await pool.query(`UPDATE leads SET crm_retido=$2 WHERE id=$1`, [lead_id, retido]);
+    if (retido) console.log(`[swot] lead ${lead_id} (${cnpj}): não vai ao CRM sozinho — ${retido}. Fica pra triagem.`);
+  }
+
+  if (crmAuto && contatoOk && !retido && queues?.crm) {
     await queues.crm.add('crm', { lead_id },
       { jobId: `crm-${lead_id}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 4, backoff: { type: 'exponential', delay: 15000 } });
   }
 
-  return { cnpj, lead_id, swot: igs.length > 0, crm_auto: crmAuto, contato_ok: contatoOk, ...(usado ? { ia: usado } : {}) };
+  return { cnpj, lead_id, swot: igs.length > 0, crm_auto: crmAuto, contato_ok: contatoOk,
+    ...(retido ? { retido } : {}), ...(usado ? { ia: usado } : {}) };
 };
 
 module.exports.motivoFalhaIA = motivoFalhaIA;
+module.exports.combinarAderencia = combinarAderencia;
+module.exports.motivoRetencao = motivoRetencao;
