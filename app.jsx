@@ -4037,9 +4037,7 @@ function QualidadeCrm({ plano, salvando, onSalvar }) {
       </div>
       <div style={{ fontSize:12.5, fontWeight:600, color:'var(--dim)', margin:'16px 0 2px' }}>Contato</div>
       {[['crm_so_whatsapp', <>Enviar com <b>WhatsApp</b>, mesmo sem e-mail</>,
-          'O CRM atende pelo WhatsApp. Sem isso, lead sem e-mail fica "aguardando decisão" e não vai sozinho.'],
-        ['crm_receita_celular', <>Usar o <b>celular do cadastro da Receita</b> quando a internet não achar telefone</>,
-          'Só celular, com DDD do estado da empresa e que não se repete em nenhuma outra empresa (número de contador costuma se repetir). Vai marcado como "não confirmado" para o vendedor.']]
+          'O CRM atende pelo WhatsApp. Sem isso, lead sem e-mail fica "aguardando decisão" e não vai sozinho.']]
         .map(([k, rot, ajuda]) => (
           <label key={k} style={{ display:'flex', alignItems:'flex-start', gap:10, cursor:'pointer', marginTop:10 }}>
             <input type="checkbox" checked={!!plano[k]} disabled={salvando}
