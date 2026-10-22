@@ -364,6 +364,15 @@ async function contarFila(q, estados) {
   return Object.values(c).reduce((s, n) => s + (n || 0), 0);
 }
 
+async function estadoEsteira(queues) {
+  const esperandoVaga = queues.score1 ? await queues.score1.getDelayedCount() : 0;
+  const emAnalise =
+    await contarFila(queues.enriquecimento, ['waiting', 'active', 'delayed', 'prioritized'])
+    + await contarFila(queues.filtroContador, ['waiting', 'active', 'delayed', 'prioritized'])
+    + await contarFila(queues.score1, ['waiting', 'active', 'prioritized']);
+  return { esperandoVaga, emAnalise };
+}
+
 async function portao(pool, queues, { filaLivre } = {}) {
   const v = await orcamento.disponivel(pool, { filaLivre });
   if (v.foraDaJanela) return { livre: false, motivo: v.motivo || 'fora do horário de funcionamento' };
@@ -373,14 +382,10 @@ async function portao(pool, queues, { filaLivre } = {}) {
   try {
     // Empresa APROVADA esperando vaga (Score 1 adiado pelo limite): o gargalo é
     // o limite, não a falta de empresa. Radar novo só aumentaria essa fila.
-    const esperandoVaga = queues.score1 ? await queues.score1.getDelayedCount() : 0;
+    const { esperandoVaga, emAnalise } = await estadoEsteira(queues);
     if (esperandoVaga > 0) {
       return { livre: false, motivo: `${esperandoVaga} empresa(s) aprovada(s) já esperam vaga no limite diário — radar novo só aumentaria a fila` };
     }
-    const emAnalise =
-      await contarFila(queues.enriquecimento, ['waiting', 'active', 'delayed', 'prioritized'])
-      + await contarFila(queues.filtroContador, ['waiting', 'active', 'delayed', 'prioritized'])
-      + await contarFila(queues.score1, ['waiting', 'active', 'prioritized']);
     if (emAnalise >= LIMIAR_FILA) {
       return { livre: false, motivo: `${emAnalise} empresa(s) ainda em análise — o próximo radar abre quando a esteira esvaziar` };
     }
@@ -491,7 +496,6 @@ async function passo(db, pool, queues) {
   const { rows: pautas } = await db.query(`SELECT * FROM estrategia_pautas ORDER BY ordem, id`);
   const elegiveis = pautas.filter(p => p.ativo && noPeriodo(p, per));
   const idsEleg = elegiveis.map(p => p.id);
-  const posicao = new Map(elegiveis.map((p, i) => [p.id, i]));
   const nomePauta = new Map(pautas.map(p => [p.id, p.nome]));
   const acoes = [];
 
@@ -539,56 +543,106 @@ async function passo(db, pool, queues) {
   if (!gate.livre) return { acoes, estado: `aguardando: ${gate.motivo}` };
   if (!crm.livre) return { acoes, estado: `aguardando: ${crm.motivo}` };
 
-  const porOrdem = rows => rows.sort((a, b) =>
-    (posicao.get(a.estrategia_pauta_id) - posicao.get(b.estrategia_pauta_id)) || (a.id - b.id));
-
   // Um radar por ciclo (60s): abrir vários de uma vez despejaria a descoberta
   // de todos na esteira antes de o portão ter a chance de ver a fila crescer.
+  const d = await escolherProximo(db, plano, elegiveis);
+  for (const n of d.naoExpandiu) {
+    const { rows: ja } = await db.query(
+      `SELECT 1 FROM estrategia_eventos WHERE acao='nao_expandiu' AND pauta_id=$1 LIMIT 1`, [n.pauta.id]);
+    if (!ja.length) {
+      await evento(db, 'nao_expandiu', { pauta_id: n.pauta.id,
+        detalhe: `${n.pauta.nome}: ${n.encontrados} empresas encontradas e nenhuma virou lead — revise os filtros antes de levar a pauta pra outras regiões` });
+    }
+  }
 
-  // 2a) Volta o que o piloto mesmo pausou por período.
-  const { rows: pausadosAuto } = await db.query(
-    `SELECT id, nome, estrategia_pauta_id FROM buscas
-      WHERE status='Pausada' AND pausa_auto AND estrategia_pauta_id = ANY($1::int[])`, [idsEleg]);
-  if (pausadosAuto.length) {
-    const b = porOrdem(pausadosAuto)[0];
+  if (d.acao === 'retomar') {
+    const b = d.busca;
     await db.query(`UPDATE buscas SET status='Ativa', pausa_auto=false, ultima_ativ=now() WHERE id=$1`, [b.id]);
     await evento(db, 'retomou', { pauta_id: b.estrategia_pauta_id, busca_id: b.id, detalhe: `${b.nome}: a pauta voltou ao período` });
     return { acoes: [...acoes, { acao: 'retomou', busca_id: b.id }], estado: `retomou "${b.nome}"` };
   }
-
-  // 2b) Radar que parou no teto de páginas da varredura (a descoberta marca
-  //     Esgotada mas guarda o cursor): ainda tem empresa — continua dele antes
-  //     de abrir região nova.
-  const { rows: comCursor } = await db.query(
-    `SELECT id, nome, estrategia_pauta_id FROM buscas
-      WHERE status='Esgotada' AND descoberta_token IS NOT NULL
-        AND estrategia_pauta_id = ANY($1::int[])`, [idsEleg]);
-  if (comCursor.length) {
-    const b = porOrdem(comCursor)[0];
+  if (d.acao === 'continuar') {
+    const b = d.busca;
     await db.query(`UPDATE buscas SET status='Ativa', ultima_ativ=now() WHERE id=$1`, [b.id]);
     await evento(db, 'continuou', { pauta_id: b.estrategia_pauta_id, busca_id: b.id,
       detalhe: `${b.nome}: a varredura anterior parou no teto de páginas — continua de onde parou` });
     return { acoes: [...acoes, { acao: 'continuou', busca_id: b.id }], estado: `continuou "${b.nome}"` };
   }
+  if (d.acao === 'abrir') {
+    const b = await abrirRegiao(db, d.pauta, d.reg);
+    await evento(db, 'criou', { pauta_id: d.pauta.id, busca_id: b.id, detalhe: `criou e ligou "${b.nome}"` });
+    return { acoes: [...acoes, { acao: 'criou', busca_id: b.id }], estado: `abriu "${b.nome}"` };
+  }
+  if (d.acao === 'expandir') {
+    const { pauta: p, reg, prox } = d;
+    await db.query(
+      `UPDATE estrategia_pautas SET regioes = regioes || $2::jsonb, atualizado_em=now() WHERE id=$1`,
+      [p.id, JSON.stringify([reg])]);
+    await evento(db, 'sugeriu', { pauta_id: p.id,
+      detalhe: `${p.nome}: acabaram as regiões — escolheu ${prox.municipio ? `${prox.municipio.n}/${prox.municipio.uf}` : prox.uf}, ${prox.motivo}` });
+    const b = await abrirRegiao(db, { ...p, regioes: [...p.regioes, reg] }, reg);
+    await evento(db, 'criou', { pauta_id: p.id, busca_id: b.id, detalhe: `criou e ligou "${b.nome}"` });
+    return { acoes: [...acoes, { acao: 'sugeriu', busca_id: b.id }], estado: `expandiu a pauta e abriu "${b.nome}"` };
+  }
+  if (d.acao === 'recomecar') {
+    const b = d.busca;
+    const crit = b.criterios || {};
+    // Semelhantes refaz o perfil: a lista pode ter crescido (conversões do CRM).
+    if (b.tipo === 'lookalike') crit.reperfilar = true;
+    await db.query(
+      `UPDATE buscas SET status='Ativa', criterios=$2::jsonb, descoberta_token=NULL, descoberta_fase=1,
+                         ultima_ativ=now() WHERE id=$1`, [b.id, JSON.stringify(crit)]);
+    await evento(db, 'recomecou', { pauta_id: b.estrategia_pauta_id, busca_id: b.id,
+      detalhe: `${b.nome}: varre de novo atrás de empresas novas (${DIAS_RECOMECO}+ dias desde a última varredura)` });
+    return { acoes: [...acoes, { acao: 'recomecou', busca_id: b.id }], estado: `recomeçou "${b.nome}"` };
+  }
 
-  // 2c) Próxima região ainda não varrida, na ordem da linha editorial.
+  // Concluiu. Avisa UMA vez (e não a cada minuto): só registra o evento se o
+  // estado anterior ainda não era este.
+  if (plano.estado !== d.estado) {
+    await evento(db, 'concluiu', { detalhe: `todas as regiões das pautas deste período já foram varridas` });
+  }
+  return { acoes, estado: d.estado };
+}
+
+// O que o piloto faria agora, na ordem — SEM fazer. O passo executa a escolha;
+// o diagnóstico (tela Estratégia) mostra a mesma escolha, sem abrir nada.
+//   retomar   radar que o próprio piloto pausou por período
+//   continuar radar que parou no teto de páginas (ainda tem empresa)
+//   abrir     próxima região ainda não varrida, na ordem da linha editorial
+//   expandir  acabaram as regiões e a pauta tem "expandir": próxima cidade/estado
+//   recomecar modo "recomeçar": radar esgotado há DIAS_RECOMECO+ dias
+//   concluir  nada a fazer (estado diz por quê)
+// `naoExpandiu`: pautas que varreram 200+ empresas sem nenhum lead — não
+// expandem (o problema é o filtro, não a região).
+async function escolherProximo(db, plano, elegiveis) {
+  const idsEleg = elegiveis.map(p => p.id);
+  const posicao = new Map(elegiveis.map((p, i) => [p.id, i]));
+  const porOrdem = rows => rows.sort((a, b) =>
+    (posicao.get(a.estrategia_pauta_id) - posicao.get(b.estrategia_pauta_id)) || (a.id - b.id));
+  const naoExpandiu = [];
+
+  const { rows: pausadosAuto } = await db.query(
+    `SELECT id, nome, estrategia_pauta_id FROM buscas
+      WHERE status='Pausada' AND pausa_auto AND estrategia_pauta_id = ANY($1::int[])`, [idsEleg]);
+  if (pausadosAuto.length) return { acao: 'retomar', busca: porOrdem(pausadosAuto)[0], naoExpandiu };
+
+  const { rows: comCursor } = await db.query(
+    `SELECT id, nome, estrategia_pauta_id FROM buscas
+      WHERE status='Esgotada' AND descoberta_token IS NOT NULL
+        AND estrategia_pauta_id = ANY($1::int[])`, [idsEleg]);
+  if (comCursor.length) return { acao: 'continuar', busca: porOrdem(comCursor)[0], naoExpandiu };
+
   const { rows: usados } = await db.query(`SELECT pauta_id, regiao_chave FROM estrategia_slots`);
   const usado = new Set(usados.map(s => `${s.pauta_id}|${s.regiao_chave}`));
   for (const p of elegiveis) {
     for (const reg of regioesDa(p)) {
-      if (usado.has(`${p.id}|${reg.chave}`)) continue;
-      const b = await abrirRegiao(db, p, reg);
-      await evento(db, 'criou', { pauta_id: p.id, busca_id: b.id, detalhe: `criou e ligou "${b.nome}"` });
-      return { acoes: [...acoes, { acao: 'criou', busca_id: b.id }], estado: `abriu "${b.nome}"` };
+      if (!usado.has(`${p.id}|${reg.chave}`)) return { acao: 'abrir', pauta: p, reg, naoExpandiu };
     }
   }
 
-  // 2c') Expansão automática: acabaram as regiões que a pessoa escolheu numa
-  //      pauta com "expandir" ligado → o piloto escolhe a próxima (ver
-  //      proximaExpansao), grava na pauta — fica visível e editável na tela —
-  //      e já abre o radar dela.
-  //      Sem região escolhida, sempre por cidades (por estados precisa de onde
-  //      partir) — vale também pra pauta antiga que gravou "estados".
+  // Sem região escolhida, sempre por cidades (por estados precisa de onde
+  // partir) — vale também pra pauta antiga que gravou "estados".
   const expansiveis = elegiveis.filter(p => p.expandir);
   if (expansiveis.length) {
     const { rows: desemp } = await db.query(
@@ -598,74 +652,146 @@ async function passo(db, pool, queues) {
          FROM estrategia_slots s LEFT JOIN buscas b ON b.id = s.busca_id
         WHERE s.pauta_id = ANY($1::int[])`, [expansiveis.map(p => p.id)]);
     for (const p of expansiveis) {
-      const meus = desemp.filter(d => d.pauta_id === p.id);
-      const total = meus.reduce((t, d) => ({ enc: t.enc + d.encontrados, leads: t.leads + d.leads }), { enc: 0, leads: 0 });
+      const meus = desemp.filter(x => x.pauta_id === p.id);
+      const total = meus.reduce((t, x) => ({ enc: t.enc + x.encontrados, leads: t.leads + x.leads }), { enc: 0, leads: 0 });
       if (total.enc >= EXPANSAO_MIN_AMOSTRA && total.leads === 0) {
-        const { rows: ja } = await db.query(
-          `SELECT 1 FROM estrategia_eventos WHERE acao='nao_expandiu' AND pauta_id=$1 LIMIT 1`, [p.id]);
-        if (!ja.length) {
-          await evento(db, 'nao_expandiu', { pauta_id: p.id,
-            detalhe: `${p.nome}: ${total.enc} empresas encontradas e nenhuma virou lead — revise os filtros antes de levar a pauta pra outras regiões` });
-        }
+        naoExpandiu.push({ pauta: p, encontrados: total.enc });
         continue;
       }
-      const desempenho = Object.fromEntries(meus.map(d => [d.regiao_chave, d]));
-      const usadas = new Set(meus.map(d => d.regiao_chave));
+      const desempenho = Object.fromEntries(meus.map(x => [x.regiao_chave, x]));
+      const usadas = new Set(meus.map(x => x.regiao_chave));
       const porCidade = p.expandir_modo === 'cidades' || !(p.regioes || []).some(r => !r.auto);
       // Os estados que o radar sem região varreu (o perfil grava em params.ufs).
-      const ufsBase = [...new Set(meus.filter(d => d.regiao_chave === REGIAO_UNICA.chave)
-        .flatMap(d => Array.isArray(d.ufs) ? d.ufs : []))];
+      const ufsBase = [...new Set(meus.filter(x => x.regiao_chave === REGIAO_UNICA.chave)
+        .flatMap(x => Array.isArray(x.ufs) ? x.ufs : []))];
       const prox = porCidade ? proximaCidade(p, usadas, ufsBase) : proximaExpansao(p, usadas, desempenho);
       if (!prox) continue;
       const reg = prox.municipio
         ? normalizarRegiao({ municipios_rotulos: [prox.municipio], auto: true, motivo: prox.motivo })
         : normalizarRegiao({ ufs: [prox.uf], auto: true, motivo: prox.motivo });
-      await db.query(
-        `UPDATE estrategia_pautas SET regioes = regioes || $2::jsonb, atualizado_em=now() WHERE id=$1`,
-        [p.id, JSON.stringify([reg])]);
-      await evento(db, 'sugeriu', { pauta_id: p.id,
-        detalhe: `${p.nome}: acabaram as regiões — escolheu ${prox.municipio ? `${prox.municipio.n}/${prox.municipio.uf}` : prox.uf}, ${prox.motivo}` });
-      const b = await abrirRegiao(db, { ...p, regioes: [...p.regioes, reg] }, reg);
-      await evento(db, 'criou', { pauta_id: p.id, busca_id: b.id, detalhe: `criou e ligou "${b.nome}"` });
-      return { acoes: [...acoes, { acao: 'sugeriu', busca_id: b.id }], estado: `expandiu a pauta e abriu "${b.nome}"` };
+      return { acao: 'expandir', pauta: p, reg, prox, naoExpandiu };
     }
   }
 
-  // 2d) Linha editorial toda varrida. No modo "recomeçar", volta ao radar
-  //     esgotado há mais tempo (só depois de DIAS_RECOMECO): nesse meio-tempo
-  //     abriram empresas novas, e as já vistas o portão de existência pula.
   if (plano.ao_concluir === 'recomecar') {
     const { rows: [b] } = await db.query(
       `SELECT id, nome, tipo, criterios, estrategia_pauta_id FROM buscas
         WHERE status='Esgotada' AND estrategia_pauta_id = ANY($1::int[])
           AND COALESCE(ultimo_heartbeat, criado_em) < now() - make_interval(days => $2)
         ORDER BY COALESCE(ultimo_heartbeat, criado_em) LIMIT 1`, [idsEleg, DIAS_RECOMECO]);
-    if (b) {
-      const crit = b.criterios || {};
-      // Semelhantes refaz o perfil: a lista pode ter crescido (conversões do CRM).
-      if (b.tipo === 'lookalike') crit.reperfilar = true;
-      await db.query(
-        `UPDATE buscas SET status='Ativa', criterios=$2::jsonb, descoberta_token=NULL, descoberta_fase=1,
-                           ultima_ativ=now() WHERE id=$1`, [b.id, JSON.stringify(crit)]);
-      await evento(db, 'recomecou', { pauta_id: b.estrategia_pauta_id, busca_id: b.id,
-        detalhe: `${b.nome}: varre de novo atrás de empresas novas (${DIAS_RECOMECO}+ dias desde a última varredura)` });
-      return { acoes: [...acoes, { acao: 'recomecou', busca_id: b.id }], estado: `recomeçou "${b.nome}"` };
-    }
+    if (b) return { acao: 'recomecar', busca: b, naoExpandiu };
   }
 
-  // Avisa UMA vez que acabou (e não a cada minuto): só registra o evento se o
-  // estado anterior ainda não era este.
   // Pauta sem expansão é o motivo mais comum de o piloto parar cedo: diz qual.
   const semExpandir = elegiveis.find(p => !p.expandir);
   const estado = plano.ao_concluir === 'recomecar'
     ? `linha editorial concluída — os radares voltam a varrer ${DIAS_RECOMECO} dias depois de esgotar`
     : semExpandir
       ? `linha editorial concluída — ligue a expansão "Por cidades" na pauta "${semExpandir.nome}" (ou adicione pautas e regiões) para o piloto continuar abrindo radares`
-      : 'linha editorial concluída — adicione pautas ou regiões para continuar';
-  if (plano.estado !== estado) {
-    await evento(db, 'concluiu', { detalhe: `todas as regiões das pautas deste período já foram varridas` });
+      : naoExpandiu.length
+        ? `linha editorial concluída — a pauta "${naoExpandiu[0].pauta.nome}" varreu ${naoExpandiu[0].encontrados} empresas sem nenhum lead e não expande: revise os filtros dela`
+        : 'linha editorial concluída — adicione pautas ou regiões para continuar';
+  return { acao: 'concluir', estado, naoExpandiu };
+}
+
+// ── Diagnóstico: o que segura (ou libera) o próximo radar, item por item ────
+// Mesmas regras do passo, sem abrir nada: a tela mostra cada condição com ✓/✗
+// e números, e o "próximo radar" é a mesma escolha que o piloto faria.
+const descrevePeriodo = p => {
+  const s = p.semanas || [], m = p.meses || [];
+  const sem = s.length ? `${s.map(n => n + 'ª').join(', ')} semana${s.length > 1 ? 's' : ''}` : 'todas as semanas';
+  return m.length ? `${sem} de ${m.map(n => MESES[n - 1]).join(', ')}` : sem;
+};
+
+async function diagnostico(pool, queues) {
+  const itens = [];
+  const add = (ok, titulo, detalhe = '') => itens.push({ ok, titulo, detalhe });
+  const plano = await lerPlano(pool);
+  if (!plano) return { itens: [{ ok: false, titulo: 'Estratégia ainda não configurada', detalhe: '' }] };
+  add(!!plano.ativo, plano.ativo ? 'Piloto ligado' : 'Piloto desligado',
+    plano.ativo ? '' : 'Com ele desligado, nenhum radar é aberto sozinho.');
+
+  const per = await periodoAtual(pool);
+  const { rows: pautas } = await pool.query(`SELECT * FROM estrategia_pautas ORDER BY ordem, id`);
+  const ativas = pautas.filter(p => p.ativo);
+  const eleg = ativas.filter(p => noPeriodo(p, per));
+  const fora = ativas.filter(p => !noPeriodo(p, per));
+  const hoje = `hoje é ${per.semana}ª semana de ${MESES[per.mes - 1]}`;
+  add(eleg.length > 0,
+    eleg.length ? `${eleg.length} pauta(s) valendo agora` : ativas.length ? 'Nenhuma pauta vale agora' : 'Nenhuma pauta ativa',
+    [fora.length ? `Fora do período (${hoje}): ${fora.map(p => `"${p.nome}" vale na ${descrevePeriodo(p)}`).join('; ')}` : '',
+     pautas.length > ativas.length ? `Desligadas: ${pautas.filter(p => !p.ativo).map(p => `"${p.nome}"`).join(', ')}` : '']
+      .filter(Boolean).join(' · '));
+
+  const { rows: rodando } = await pool.query(
+    `SELECT nome FROM buscas WHERE estrategia_pauta_id IS NOT NULL AND status='Ativa' ORDER BY id`);
+  const simult = Math.max(1, Math.min(MAX_SIMULTANEOS, plano.simultaneos || 1));
+  add(rodando.length < simult,
+    rodando.length < simult ? `Há vaga para radar (${rodando.length} de ${simult} rodando)`
+      : `${rodando.length} radar(es) rodando — o máximo é ${simult} ao mesmo tempo; o próximo abre quando um esgotar`,
+    rodando.length ? `Rodando: ${rodando.map(r => `"${r.nome}"`).join(', ')}` : '');
+
+  let crm = { livre: true };
+  if (plano.crm_controle) {
+    plano.crm_carga = await cargaHunter(pool).catch(() => null);
+    plano.crm_fila_hunter = plano.crm_carga ? plano.crm_carga.total : null;
+    crm = portaoCrm(plano);
+    const unid = plano.crm_carga?.unidades || [];
+    add(crm.livre, crm.livre ? 'Fila do CRM liberada' : 'Fila do CRM segurando',
+      [crm.motivo || '', unid.length ? `Aguardando atendimento: ${unid.map(u => `${u.nome} ${u.n}`).join(' · ')}` : '']
+        .filter(Boolean).join(' — '));
+  } else {
+    add(true, 'Controle pelo CRM desligado', 'Radar novo não depende da fila do CRM.');
   }
-  return { acoes, estado };
+
+  const filaLivre = !!(plano.crm_controle && crm.livre);
+  const v = await orcamento.disponivel(pool, { filaLivre });
+  add(!v.foraDaJanela, v.foraDaJanela ? 'Fora do horário de funcionamento' : 'Dentro do horário de funcionamento',
+    v.foraDaJanela ? (v.motivo || '') : '');
+  if (!v.foraDaJanela) {
+    const { rows: [cfg] } = await pool.query(`SELECT limite_diario FROM config`).catch(() => ({ rows: [] }));
+    const limite = cfg?.limite_diario || 0;
+    if (limite) {
+      add(v.dia > 0, v.dia > 0 ? `Limite do dia: ${limite - v.dia} de ${limite} leads usados` : `Limite do dia atingido (${limite} leads)`,
+        v.dia > 0 ? '' : 'A captação volta no próximo dia de funcionamento.');
+      add(v.hora > 0,
+        v.hora <= 0 ? 'Cota de leads desta hora já usada'
+          : v.filaLivre ? 'Cota da hora liberada (fila do CRM livre)' : `Cota desta hora: ${v.hora} vaga(s)`,
+        v.hora > 0 ? '' : plano.crm_controle ? 'Volta na próxima hora, ou antes, assim que a fila do CRM ficar livre.'
+          : 'Volta na próxima hora. Com o controle pelo CRM ligado, a fila livre solta a cota por hora.');
+    } else {
+      add(true, 'Sem limite diário de leads');
+    }
+  }
+
+  if (queues) {
+    try {
+      const { esperandoVaga, emAnalise } = await estadoEsteira(queues);
+      add(esperandoVaga === 0, esperandoVaga ? `${esperandoVaga} empresa(s) aprovada(s) esperando vaga no limite`
+        : 'Nenhuma empresa aprovada esperando vaga',
+        esperandoVaga ? 'Radar novo só aumentaria essa fila: o piloto espera elas virarem lead.' : '');
+      add(emAnalise < LIMIAR_FILA, `${emAnalise} empresa(s) em análise na esteira`,
+        emAnalise >= LIMIAR_FILA ? `Radar novo abre quando ficar abaixo de ${LIMIAR_FILA}.` : '');
+    } catch (e) {
+      add(false, 'Não consegui ler a esteira do motor', e.message);
+    }
+  }
+
+  if (eleg.length) {
+    const d = await escolherProximo(pool, plano, eleg);
+    const nome = d.pauta && d.reg ? montarRadar(d.pauta, d.reg).nome : d.busca?.nome;
+    const frase = {
+      retomar: `retomaria "${nome}" (a pauta voltou ao período)`,
+      continuar: `continuaria "${nome}" de onde parou`,
+      abrir: `abriria "${nome}"`,
+      expandir: d.prox ? `abriria "${nome}" — ${d.prox.motivo}` : '',
+      recomecar: `recomeçaria "${nome}"`,
+    }[d.acao];
+    add(d.acao !== 'concluir', d.acao === 'concluir' ? 'Não há próximo radar' : `Próximo radar: ${frase}`,
+      d.acao === 'concluir' ? d.estado.replace(/^linha editorial concluída — /, '') : '');
+  }
+
+  return { itens, pode_abrir: itens.every(i => i.ok !== false), estado: plano.estado, estado_em: plano.estado_em };
 }
 
 // Roda um passo com trava por cliente: dois workers (ou um deploy com o antigo
@@ -693,7 +819,7 @@ async function executar(pool, queues) {
 }
 
 module.exports = {
-  executar, portao, portaoCrm, proximaExpansao, proximaCidade, VIZINHOS, periodoAtual, semanaDoMes, noPeriodo, montarRadar, regioesDa,
+  executar, diagnostico, portao, portaoCrm, proximaExpansao, proximaCidade, VIZINHOS, periodoAtual, semanaDoMes, noPeriodo, montarRadar, regioesDa,
   normalizarPauta, normalizarRegioes, ErroEstrategia,
   LIMIAR_FILA, DIAS_RECOMECO, MAX_SIMULTANEOS, MAX_PAUTAS, REGIAO_UNICA,
 };

@@ -461,6 +461,9 @@ async function init() {
   await pool.query(`
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS empresa_cnpj    TEXT REFERENCES empresas(cnpj) ON DELETE SET NULL;
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS motivo_descarte TEXT;
+    -- Por que o lead NÃO foi ao CRM sozinho (abaixo do score mínimo, aderência
+    -- baixa): fica pra triagem, e a tela diz o motivo.
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS crm_retido      TEXT;
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS tentativas      INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS processado_em   TIMESTAMPTZ;
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS swot            JSONB;
@@ -732,6 +735,11 @@ async function init() {
     -- hora da esteira enquanto o time está sem lead (jobs/orcamento.js).
     ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_fila_livre     BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_fila_livre_em  TIMESTAMPTZ;
+    -- Qualidade mínima pro envio AUTOMÁTICO ao CRM (o cliente escolhe na
+    -- Estratégia): score mínimo (0 = sem mínimo) e segurar aderência baixa.
+    -- Quem não passa fica na lista pra triagem (leads.crm_retido diz por quê).
+    ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_score_minimo   INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_segurar_baixa  BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_fila_pendentes INTEGER;
     ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_fila_em        TIMESTAMPTZ;
     -- Gatilho: 'total' (o total cai pro crm_fila_gatilho) ou 'fila' (alguma
@@ -1930,7 +1938,7 @@ async function planoEstrategia() {
   const { rows: [p] } = await pool.query(
     `SELECT ativo, simultaneos, ao_concluir, estado, estado_em,
             crm_controle, crm_fila_gatilho, crm_fila_pendentes, crm_fila_em,
-            crm_gatilho_modo, crm_fila_minimo, crm_total_maximo,
+            crm_gatilho_modo, crm_fila_minimo, crm_total_maximo, crm_score_minimo, crm_segurar_baixa,
             distrib_ativo, distrib_modo, distrib_conexoes,
             (distrib_token IS NOT NULL AND distrib_token <> '') AS distrib_tem_token FROM estrategia`);
   return p;
@@ -2002,6 +2010,15 @@ app.get('/api/estrategia', requireAuth, async (req, res) => {
   } catch (e) { erroEstrategia(res, e); }
 });
 
+// Checklist do piloto: cada condição que ele confere antes de abrir radar, com
+// ✓/✗ e números — e qual seria o próximo radar.
+app.get('/api/estrategia/diagnostico', requireAuth, async (req, res) => {
+  try {
+    await planoEstrategia();
+    res.json(await estrategiaMotor.diagnostico(pool, monitorQueues));
+  } catch (e) { erroEstrategia(res, e); }
+});
+
 app.patch('/api/estrategia', requireAuth, requireEditor, async (req, res) => {
   try {
     await planoEstrategia();
@@ -2029,6 +2046,12 @@ app.patch('/api/estrategia', requireAuth, requireEditor, async (req, res) => {
       if (!['total', 'fila'].includes(b.crm_gatilho_modo)) return res.status(400).json({ erro: 'gatilho: "total" ou "fila"' });
       vals.push(b.crm_gatilho_modo); sets.push(`crm_gatilho_modo=$${vals.length}`);
     }
+    if (b.crm_score_minimo != null) {
+      const n = parseInt(b.crm_score_minimo, 10);
+      if (!(n >= 0 && n <= 100)) return res.status(400).json({ erro: 'score mínimo pro CRM: de 0 a 100' });
+      vals.push(n); sets.push(`crm_score_minimo=$${vals.length}`);
+    }
+    if (typeof b.crm_segurar_baixa === 'boolean') { vals.push(b.crm_segurar_baixa); sets.push(`crm_segurar_baixa=$${vals.length}`); }
     for (const k of ['crm_fila_minimo', 'crm_total_maximo']) {
       if (b[k] == null) continue;
       const n = parseInt(b[k], 10);
