@@ -11,6 +11,24 @@ const { registrar } = require('./tracking');
 const google = require('../providers/google');
 const fontes = require('./fontes');
 const typesafe = require('../providers/typesafe');
+const glasser = require('../providers/glasser');
+
+// Glasser (Google Maps) como ÚLTIMO recurso pago: só no lead que a busca grátis
+// não resolveu (sem telefone), na última tentativa (não paga duas vezes o mesmo
+// lead) e dentro do limite diário de consultas escolhido em Integrações.
+async function glasserDisponivel(pool) {
+  const { rows: [ig] } = await pool.query(
+    `SELECT key_cifrada, config FROM integracoes
+      WHERE categoria='contato' AND provedor='glasser' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> ''
+      LIMIT 1`).catch(() => ({ rows: [] }));
+  if (!ig || !ig.config?.maps?.endpoint) return null;
+  const limite = Number.isInteger(ig.config.limite_dia) ? ig.config.limite_dia : glasser.LIMITE_DIA_PADRAO;
+  const { rows: [{ n }] } = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM busca_contato_log
+      WHERE pago_fonte='glasser'
+        AND (criado_em AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date`);
+  return n < limite ? ig : null;
+}
 
 // Modo observação do Jev (só para o tenant com a integração decisao|typesafe
 // ativa): opina sobre os mesmos candidatos a site que as regras do google.js
@@ -88,7 +106,7 @@ module.exports = async function validacao(job, pool, queues) {
 
   const { rows: [ig] } = await pool.query(
     `SELECT provedor, key_cifrada, config FROM integracoes
-     WHERE categoria='contato' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> ''
+     WHERE categoria='contato' AND provedor <> 'glasser' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> ''
      ORDER BY ordem LIMIT 1`
   );
 
@@ -189,6 +207,39 @@ module.exports = async function validacao(job, pool, queues) {
       }
     }
 
+    // 3) Google Maps pelo Glasser (pago, último recurso): a busca grátis não
+    //    achou telefone, é a última tentativa e há cota no dia.
+    let pagoFonte = null, custoUsd = null;
+    if (!(c && (c.telefone || c.whatsapp)) && tentativa >= MAX_TENT_CONTATO) {
+      const ig = await glasserDisponivel(pool).catch(() => null);
+      if (ig) {
+        pagoFonte = 'glasser';
+        try {
+          const m = await glasser.buscarNoMaps(nome, emp?.cidade, emp?.uf, ig.key_cifrada, ig.config);
+          custoUsd = m.custo_usd ?? null;
+          if (m.encontrado && (m.telefone || m.website || m.perfil_social)) {
+            if (m.website && !(c && c.resumo_site)) {
+              const sx = await google.scrapeSite(m.website).catch(() => null);
+              if (sx) { m.email = m.email || sx.email || null; m.resumo_site = sx.resumo || null; m.resumo_fonte = sx.resumo_fonte || null; }
+            }
+            if (!c) { c = m; origem = 'glasser'; }
+            else {
+              c.telefone = c.telefone || m.telefone; c.whatsapp = c.whatsapp || m.whatsapp;
+              c.website = c.website || m.website; c.email = c.email || m.email;
+              c.perfil_social = c.perfil_social || m.perfil_social || null;
+              if (!c.resumo_site && m.resumo_site) { c.resumo_site = m.resumo_site; c.resumo_fonte = m.resumo_fonte; }
+              c.validado = c.validado || m.validado;
+              c.fonte = c.fonte ? `${c.fonte}+glasser` : 'glasser';
+            }
+            delete c.custo_usd;
+          }
+        } catch (e) {
+          custoUsd = e.custo_usd ?? null;
+          console.warn(`[validacao] lead ${lead_id} (${cnpj}): Google Maps (Glasser) falhou — ${e.message}`);
+        }
+      }
+    }
+
     // O contato comercial (telefone/e-mail/site) vem de fontes comerciais (site
     // da empresa / Places / Econodata / rede social). A Receita costuma ter o
     // número do contador — só entra como ÚLTIMO recurso, se o cliente ligou a
@@ -242,12 +293,12 @@ module.exports = async function validacao(job, pool, queues) {
     // internet está achando contato, por qual caminho e por que falha.
     await pool.query(
       `INSERT INTO busca_contato_log (lead_id, busca_id, tentativa, origem, resultado, conferido, fonte_busca,
-                                      consultas, regras, motivo, telefone, email, ms)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11,$12,$13)`,
+                                      consultas, regras, motivo, telefone, email, ms, pago_fonte, custo_usd)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11,$12,$13,$14,$15)`,
       [lead_id, busca_id || null, tentativa, origem || (diagBusca ? 'gratis' : 'nenhum'),
        diagBusca?.resultado || (c ? 'site' : 'nada'), c?.site_conferido || null, c?.fonte_busca || null,
        JSON.stringify(diagBusca?.consultas || []), JSON.stringify(diagBusca?.regras || {}),
-       diagBusca?.motivo || null, hasPhone, hasEmail, Date.now() - t0]
+       diagBusca?.motivo || null, hasPhone, hasEmail, Date.now() - t0, pagoFonte, custoUsd]
     ).catch(e => console.error('[validacao] log da busca:', e.message));
 
     // Incompleto (falta telefone OU e-mail): 1 re-enriquecimento (busca fresca).

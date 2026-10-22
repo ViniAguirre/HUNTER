@@ -882,6 +882,9 @@ async function init() {
       ms          INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_busca_contato_log_data ON busca_contato_log(criado_em DESC);
+    -- Consulta paga (Glasser/Google Maps) nesta tentativa e quanto custou (USD).
+    ALTER TABLE busca_contato_log ADD COLUMN IF NOT EXISTS pago_fonte TEXT;
+    ALTER TABLE busca_contato_log ADD COLUMN IF NOT EXISTS custo_usd  NUMERIC(12,6);
   `);
 
   for (const t of ['usuarios', 'buscas', 'leads', 'integracoes', 'sementes', 'contadores', 'contadores_hora', 'propostas_valor', 'listas_semelhantes', 'chaves_api',
@@ -1002,6 +1005,7 @@ async function init() {
     INSERT INTO integracoes (categoria, provedor, ativo, ordem)
     VALUES ('descoberta', 'cnpja', false, 10),
            ('contato', 'google', false, 18),
+           ('contato', 'glasser', false, 19),
            ('contato', 'econodata', false, 20),
            ('ia', 'openai', false, 60),
            ('crm', 'gk', false, 35),
@@ -2955,7 +2959,7 @@ app.get('/api/monitor/busca-contato', requireAuth, requireMaster, async (req, re
                          COUNT(*) FILTER (WHERE telefone AND email)::int AS completos,
                          round(avg(ms))::int AS ms_medio, max(criado_em) AS ultima
                     FROM busca_contato_log WHERE ${janela}`, [dias]),
-      pool.query(`SELECT CASE WHEN origem IN ('cache','pago') THEN origem ELSE COALESCE(resultado, 'nada') END AS caminho,
+      pool.query(`SELECT CASE WHEN origem IN ('cache','pago','glasser','receita') THEN origem ELSE COALESCE(resultado, 'nada') END AS caminho,
                          COUNT(*)::int AS n, COUNT(*) FILTER (WHERE telefone)::int AS com_telefone
                     FROM busca_contato_log WHERE ${janela} GROUP BY 1 ORDER BY 2 DESC`, [dias]),
       // Cada consulta de cada tentativa, por fonte: quantas vezes foi chamada e
@@ -2978,6 +2982,19 @@ app.get('/api/monitor/busca-contato', requireAuth, requireMaster, async (req, re
       const q = porConsulta[r.consulta] ||= { chamadas: 0, com_util: 0 };
       q.chamadas += r.chamadas; q.com_util += r.com_util;
     }
+    // Consultas pagas (Glasser/Google Maps): quantas, quanto custaram e quantas
+    // trouxeram telefone — e o mesmo só de hoje, pra comparar com o limite diário.
+    const { rows: [pago] } = await pool.query(
+      `SELECT COUNT(*)::int AS consultas, COUNT(*) FILTER (WHERE telefone)::int AS com_telefone,
+              COALESCE(SUM(custo_usd), 0)::float AS custo_usd,
+              COUNT(*) FILTER (WHERE (criado_em AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date)::int AS hoje,
+              COALESCE(SUM(custo_usd) FILTER (WHERE (criado_em AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date), 0)::float AS custo_hoje_usd
+         FROM busca_contato_log WHERE ${janela} AND pago_fonte = 'glasser'`, [dias]).catch(() => ({ rows: [null] }));
+    const { rows: [igG] } = await pool.query(
+      `SELECT ativo, config FROM integracoes WHERE categoria='contato' AND provedor='glasser' LIMIT 1`).catch(() => ({ rows: [] }));
+    const glasserInfo = igG ? { ativo: !!igG.ativo && !!igG.config?.maps?.endpoint,
+      limite_dia: Number.isInteger(igG.config?.limite_dia) ? igG.config.limite_dia : require('./providers/glasser').LIMITE_DIA_PADRAO,
+      ...(pago || {}) } : null;
     const busca = await fontes.fontesBuscaWeb(pool);
     let teste = null;
     if (req.query.testar === '1' && busca.searxngUrl) {
@@ -2986,7 +3003,7 @@ app.get('/api/monitor/busca-contato', requireAuth, requireMaster, async (req, re
       teste = { resultados: r.length, ms: Date.now() - t0 };
     }
     res.json({ dias, ...tot, caminhos, fontes: porFonte, consultas: porConsulta, motivos, regras,
-               configurado: { searxng: !!busca.searxngUrl, tavily: !!busca.tavilyKey }, teste });
+               configurado: { searxng: !!busca.searxngUrl, tavily: !!busca.tavilyKey }, teste, glasser: glasserInfo });
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
@@ -3388,6 +3405,28 @@ app.get('/api/crm/filas', requireAuth, async (req, res) => {
 
 // Testa a chave de IA salva (OpenRouter ou OpenAI) com o modelo salvo e diz
 // qual modelo de fato respondeu. Não grava nada.
+// Glasser: confere a chave pelo saldo (grátis), descobre o endpoint do Google
+// Maps pela busca e pelo Inspect do catálogo (grátis) e guarda a escolha na
+// integração. Nenhuma consulta paga acontece aqui.
+app.post('/api/integracoes/glasser/testar', requireAuth, requireMaster, async (req, res) => {
+  try {
+    const { rows: [ig] } = await pool.query(
+      `SELECT id, key_cifrada, config FROM integracoes WHERE categoria='contato' AND provedor='glasser' LIMIT 1`);
+    if (!ig?.key_cifrada) return res.status(400).json({ erro: 'Salve a chave antes de testar.' });
+    const glasser = require('./providers/glasser');
+    const s = await glasser.saldo(ig.key_cifrada);
+    const d = await glasser.descobrirMaps(ig.key_cifrada);
+    if (d.endpoint) {
+      await pool.query(`UPDATE integracoes SET config = COALESCE(config, '{}'::jsonb) || $2::jsonb WHERE id=$1`,
+        [ig.id, JSON.stringify({ maps: d.endpoint })]);
+    }
+    res.json({ ok: !!d.endpoint, saldo: s, maps: d.endpoint, candidatos: d.candidatos,
+      ...(d.endpoint ? {} : { erro: 'Não achei no catálogo um endpoint do Google Maps para esta chave.' }) });
+  } catch (e) {
+    res.json({ ok: false, erro: String(e.message || e).slice(0, 300) });
+  }
+});
+
 app.post('/api/integracoes/ia/testar', requireAuth, requireMaster, async (req, res) => {
   const provedor = String(req.body.provedor || '');
   if (!openai.PROVEDORES[provedor]) return res.status(400).json({ erro: 'provedor inválido' });

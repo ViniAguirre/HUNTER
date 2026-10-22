@@ -5919,6 +5919,9 @@ const INTEGRACOES_META = {
     icon:'M14 2v6h6M14 2l6 6v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z', editavel:true },
   'contato|google': { nome:'Contato comercial (Google Meu Negócio)', provedor:'Places API — telefone/WhatsApp + site → e-mail',
     icon:'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18M3 12h18', editavel:true, placeholder:'Colar chave da Places API…' },
+  'contato|glasser': { nome:'Contato no Google Maps (último recurso)', provedor:'Glasser — paga só o uso. Entra só no lead que a busca grátis deixou sem telefone, até o limite de consultas por dia',
+    icon:'M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11zM12 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z', editavel:true,
+    placeholder:'Colar chave do Glasser…', temLimite:true, limitePadrao:100 },
   'contato|econodata': { nome:'Contato do decisor (premium)', provedor:'Econodata (match por CNPJ) — opcional',
     icon:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 11l-3 3-1.5-1.5', editavel:true, placeholder:'Colar x-api-token…' },
   'busca_web|searxng': { nome:'Busca na web (grátis, própria)', provedor:'SearXNG — servidor próprio, sem cota. É tentado ANTES da Tavily, então o que ele achar não gasta crédito',
@@ -5949,7 +5952,7 @@ const INTEGRACOES_META = {
     icon:'M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11', editavel:true,
     placeholder:'Colar chave da TypeSafe…', temModelo:true, modeloPlaceholder:'modelo (padrão jev-latest)' },
 };
-const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'contato|google', 'contato|econodata', 'busca_web|searxng', 'busca_web|tavily', 'ia|openrouter', 'ia|openai', 'decisao|typesafe', 'crm|gk', 'crm|webhook', 'crm|afiliados', 'tracking|hub'];
+const INTEGRACOES_ORDEM = ['descoberta|cnpja', 'contato|google', 'contato|glasser', 'contato|econodata', 'busca_web|searxng', 'busca_web|tavily', 'ia|openrouter', 'ia|openai', 'decisao|typesafe', 'crm|gk', 'crm|webhook', 'crm|afiliados', 'tracking|hub'];
 
 // Card do Tracking Hub: a URL de webhook carrega o token dentro, então é
 // tratada como segredo (vai pro mesmo campo das outras chaves, que a API nunca
@@ -6385,6 +6388,7 @@ function Integracoes() {
   const chaveRefs = useRef({});
   const segredoRefs = useRef({});
   const modeloRefs = useRef({});
+  const limiteRefs = useRef({});
 
   const carregar = () => {
     setErro(null);
@@ -6402,12 +6406,14 @@ function Integracoes() {
     const key = (chaveRefs.current[chave]?.value || '').trim();
     const segredo = (segredoRefs.current[chave]?.value || '').trim();
     const modelo = (modeloRefs.current[chave]?.value || '').trim();
+    const limite = parseInt(limiteRefs.current[chave]?.value, 10);
     const existente = porChave[chave];
     setSalvando(chave);
     try {
       const cfgExtra = {};
       if (segredo) cfgExtra.secret = segredo;
       if (modelo) cfgExtra.modelo = modelo;
+      if (Number.isInteger(limite) && limite >= 0) cfgExtra.limite_dia = limite;
       const corpoConfig = Object.keys(cfgExtra).length
         ? { config: { ...(existente?.config || {}), ...cfgExtra } } : {};
       if (existente) {
@@ -6437,12 +6443,13 @@ function Integracoes() {
   const testarIa = async (chave, provedor) => {
     setTestando(chave);
     try {
-      const r = await fetch('/api/integracoes/ia/testar', {
+      const r = await fetch(provedor === 'glasser' ? '/api/integracoes/glasser/testar' : '/api/integracoes/ia/testar', {
         method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
         body: JSON.stringify({ provedor })
       });
       const d = await r.json().catch(() => ({}));
       setTestes(t => ({ ...t, [chave]: r.ok ? d : { ok:false, erro: d.erro || 'Falha no teste.' } }));
+      if (provedor === 'glasser') carregar();   // o teste grava o endpoint do Maps na integração
     } finally { setTestando(null); }
   };
 
@@ -6499,6 +6506,8 @@ function Integracoes() {
                     O nome antigo do card ("OpenAI (gpt-4o-mini)") não mudava com o
                     modelo salvo e deixava dúvida sobre qual estava valendo. */}
                 {meta.temModelo ? ' · modelo usado: ' + (row?.config?.modelo || (meta.modeloPadrao ? meta.modeloPadrao + ' (padrão)' : 'padrão')) : ''}
+                {meta.temLimite ? ` · até ${Number.isInteger(row?.config?.limite_dia) ? row.config.limite_dia : meta.limitePadrao} consultas/dia`
+                  + (row?.config?.maps?.endpoint ? ` · Google Maps: ${row.config.maps.provider} ${row.config.maps.endpoint}` : ' · clique em Testar para configurar o Google Maps') : ''}
               </div>
             </div>
             {meta.editavel ? (
@@ -6527,6 +6536,13 @@ function Integracoes() {
                       background:'var(--panel2)', color:'var(--dim)', padding:'0 12px', fontSize:12,
                       fontFamily:'inherit' }}/>
                 )}
+                {meta.temLimite && (
+                  <input ref={el => limiteRefs.current[chave] = el} type="number" min={0}
+                    defaultValue={Number.isInteger(row?.config?.limite_dia) ? row.config.limite_dia : meta.limitePadrao}
+                    title="Consultas pagas por dia (0 = nenhuma)"
+                    style={{ width:90, height:38, borderRadius:9, border:'1px solid var(--border)',
+                      background:'var(--panel2)', color:'var(--dim)', padding:'0 10px', fontSize:12, fontFamily:'inherit' }}/>
+                )}
                 <button onClick={() => salvar(chave, categoria, provedor)} disabled={salvando === chave}
                   style={{ height:38, padding:'0 15px', borderRadius:9, border:'1px solid var(--border)',
                     background:'transparent', color:'var(--text)', fontSize:12.5, fontFamily:'inherit',
@@ -6534,7 +6550,7 @@ function Integracoes() {
                     opacity: salvando === chave ? .6 : 1 }}>
                   {salvando === chave ? 'Salvando…' : 'Salvar'}
                 </button>
-                {categoria === 'ia' && row?.tem_chave && (
+                {(categoria === 'ia' || provedor === 'glasser') && row?.tem_chave && (
                   <button onClick={() => testarIa(chave, provedor)} disabled={testando === chave}
                     style={{ height:38, padding:'0 12px', borderRadius:9, border:'1px solid var(--border)',
                       background:'transparent', color:'var(--text)', fontSize:12.5, fontFamily:'inherit',
@@ -6558,7 +6574,10 @@ function Integracoes() {
               <div style={{ flexBasis:'100%', fontSize:12, lineHeight:1.5, borderRadius:9, padding:'9px 11px',
                 color: testes[chave].ok ? C.green : C.red,
                 background: testes[chave].ok ? 'rgba(52,211,153,.08)' : 'rgba(248,113,113,.08)' }}>
-                {testes[chave].ok
+                {testes[chave].ok && testes[chave].maps
+                  ? <>Funcionando: saldo disponível <b>US$ {testes[chave].saldo?.disponivel_usd ?? '—'}</b>. Google Maps pelo endpoint{' '}
+                      <b>{testes[chave].maps.provider} {testes[chave].maps.endpoint}</b>{testes[chave].maps.preco ? ` (${testes[chave].maps.preco})` : ''}.</>
+                  : testes[chave].ok
                   ? <>Funcionando: o modelo <b>{testes[chave].respondeu}</b> respondeu em {(testes[chave].ms / 1000).toFixed(1)} s
                       {testes[chave].respondeu !== testes[chave].pedido ? ` (pedido: ${testes[chave].pedido})` : ''}.</>
                   : <>Não funcionou{testes[chave].dica ? <> — <b>{testes[chave].dica}</b></> : ''}. {testes[chave].erro}</>}
@@ -7502,7 +7521,8 @@ function Monitor() {
 // achando telefone/e-mail? Por qual caminho? Qual fonte está respondendo? E,
 // quando não acha, por quê? Só o master vê (fica no Monitoramento).
 const NOMES_CAMINHO = { site:'Site próprio da empresa', rede_social:'Perfil em rede social (Instagram/Facebook)',
-  cache:'Já conhecido (outra busca achou antes)', pago:'Provedor pago de contato', nada:'Não achou' };
+  cache:'Já conhecido (outra busca achou antes)', pago:'Provedor pago de contato',
+  glasser:'Google Maps (Glasser, pago — último recurso)', receita:'Celular do cadastro da Receita', nada:'Não achou' };
 const NOMES_FONTE = { searxng:'SearXNG (próprio, grátis)', tavily:'Tavily (paga)', ddg:'DuckDuckGo (último recurso)' };
 const NOMES_CONSULTA = { nome:'Nome + cidade', razao:'Razão social', cnpj:'CNPJ', redes:'Nome + WhatsApp/Instagram' };
 const NOMES_MOTIVO = { busca_sem_resultado:'A busca não trouxe resultado nenhum',
@@ -7588,6 +7608,21 @@ function BuscaContatoSaude() {
             </div>
           ))}
         </div>
+        {d.glasser && (
+          <>
+            <div style={sub}>Google Maps pelo Glasser (pago, só para quem ficou sem telefone)</div>
+            <div style={{ fontSize:12.5, color:'var(--dim)', lineHeight:1.5 }}>
+              {!d.glasser.ativo ? 'Desligado (ou sem o endpoint configurado — Integrações → Glasser → Testar).' : <>
+                Hoje: <b style={{ color:'var(--text)' }}>{d.glasser.hoje || 0}</b> de {d.glasser.limite_dia} consultas
+                · US$ {Number(d.glasser.custo_hoje_usd || 0).toFixed(3)}.{' '}
+                Em {d.dias} dias: {d.glasser.consultas || 0} consultas, {d.glasser.com_telefone || 0} com telefone
+                {d.glasser.consultas ? ` (${Math.round((d.glasser.com_telefone || 0) / d.glasser.consultas * 100)}%)` : ''}
+                · US$ {Number(d.glasser.custo_usd || 0).toFixed(3)}
+                {d.glasser.com_telefone ? ` (US$ ${(d.glasser.custo_usd / d.glasser.com_telefone).toFixed(4)} por telefone achado)` : ''}.
+              </>}
+            </div>
+          </>
+        )}
         <div style={sub}>Por onde achou</div>
         {(d.caminhos || []).map(c => linha(NOMES_CAMINHO[c.caminho] || c.caminho, c.n, d.tentativas,
           c.caminho === 'nada' ? C.red : C.green, c.caminho !== 'nada' ? <span style={{ color:'var(--faint)' }}> · {c.com_telefone} c/ tel.</span> : null))}
