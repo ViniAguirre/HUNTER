@@ -55,38 +55,11 @@ function observarSites(pool, jev, empresa) {
 
 const MAX_TENT_CONTATO = 1;   // 1 re-enriquecimento se o contato vier incompleto
 
-// Opções de contato da Estratégia (o cliente escolhe): WhatsApp basta pro envio
-// automático, e celular da Receita como último recurso.
+// Opção de contato da Estratégia (o cliente escolhe): WhatsApp basta pro envio
+// automático.
 async function opcoesContato(pool) {
-  const { rows: [e] } = await pool.query(
-    `SELECT crm_so_whatsapp, crm_receita_celular FROM estrategia`).catch(() => ({ rows: [] }));
-  return { soWhatsapp: !!e?.crm_so_whatsapp, receitaCelular: !!e?.crm_receita_celular };
-}
-
-// Celular do cadastro da Receita, quando a internet não achou telefone. O
-// telefone da Receita costuma ser do CONTADOR — por isso as travas: só celular
-// (DDD + 9 dígitos, o número de WhatsApp do dono da loja pequena), DDD do
-// estado da empresa, empresa não marcada como de contador e número que NÃO
-// aparece em nenhuma outra empresa da base (escritório de contabilidade repete
-// o mesmo número em dezenas de clientes). Vai marcado como não confirmado.
-async function celularDaReceita(pool, cnpj, emp) {
-  const tels = Array.isArray(emp?.contato_receita?.telefones) ? emp.contato_receita.telefones : [];
-  if (!tels.length) return null;
-  const { rows: [f] } = await pool.query(`SELECT flag_contador FROM empresas WHERE cnpj=$1`, [cnpj]);
-  if (f?.flag_contador) return null;
-  for (const t of tels) {
-    let d = String(t || '').replace(/\D/g, '');
-    if (d.length >= 12 && d.startsWith('55')) d = d.slice(2);
-    if (d.startsWith('0')) d = d.slice(1);
-    if (d.length !== 11 || d[2] !== '9') continue;
-    if (google.telefoneDesmenteUf(d, emp.uf)) continue;
-    const { rows: [{ n }] } = await pool.query(
-      `SELECT COUNT(*)::int AS n FROM empresas WHERE cnpj <> $1 AND EXISTS (
-         SELECT 1 FROM jsonb_array_elements_text(contato_receita->'telefones') AS x(v) WHERE x.v = $2)`, [cnpj, t]);
-    if (n > 0) continue;
-    return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
-  }
-  return null;
+  const { rows: [e] } = await pool.query(`SELECT crm_so_whatsapp FROM estrategia`).catch(() => ({ rows: [] }));
+  return { soWhatsapp: !!e?.crm_so_whatsapp };
 }
 
 async function seguirParaSwot(queues, data) {
@@ -240,20 +213,11 @@ module.exports = async function validacao(job, pool, queues) {
       }
     }
 
-    // O contato comercial (telefone/e-mail/site) vem de fontes comerciais (site
-    // da empresa / Places / Econodata / rede social). A Receita costuma ter o
-    // número do contador — só entra como ÚLTIMO recurso, se o cliente ligou a
-    // opção, com as travas de celularDaReceita e marcada como não confirmada.
+    // IMPORTANTE: o contato comercial (telefone/e-mail/site) SÓ vem de fontes
+    // comerciais (site da empresa / rede social / Google Maps / Places /
+    // Econodata) — NUNCA da Receita/CNPJá: aquilo costuma ser o contato do
+    // contador. `contato_receita` serve só pra CONFERIR.
     const opcoes = await opcoesContato(pool);
-    if (opcoes.receitaCelular && !(c && (c.telefone || c.whatsapp))) {
-      const cel = await celularDaReceita(pool, cnpj, emp || {}).catch(() => null);
-      if (cel) {
-        c = c || { fonte: 'receita', validado_em: new Date().toISOString() };
-        c.telefone = cel; c.whatsapp = cel; c.telefone_origem = 'receita';
-        c.validado = true;
-        origem = origem || 'receita';
-      }
-    }
     if (c) {
       const cr = emp?.contato_receita || {};
       const telReceita = (Array.isArray(cr.telefones) && cr.telefones[0] || '').replace(/\D/g, '');
@@ -266,9 +230,7 @@ module.exports = async function validacao(job, pool, queues) {
         await pool.query(
           `UPDATE empresas SET contatos_verificados=$2::jsonb WHERE cnpj=$1`,
           [cnpj, JSON.stringify({
-            // O celular da Receita é escolha DESTE cliente (opção da Estratégia):
-            // não vai pro cadastro global, que outros clientes reaproveitam.
-            telefone: c.telefone_origem === 'receita' ? null : c.telefone, email: c.email, website: c.website || null,
+            telefone: c.telefone, email: c.email, website: c.website || null,
             resumo_site: c.resumo_site || null, resumo_fonte: c.resumo_fonte || null,
             fonte: c.fonte,
             // Guarda a prova junto com o contato — é o que permite auditar
@@ -370,4 +332,3 @@ module.exports = async function validacao(job, pool, queues) {
   }
 };
 
-module.exports.celularDaReceita = celularDaReceita;

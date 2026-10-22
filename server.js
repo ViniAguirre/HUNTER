@@ -744,10 +744,11 @@ async function init() {
     ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_score_minimo   INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_segurar_baixa  BOOLEAN NOT NULL DEFAULT false;
     -- Contato pro envio automático: WhatsApp basta (sem exigir e-mail — o CRM
-    -- atende pelo WhatsApp) e, sem telefone na internet, usar o celular do
-    -- cadastro da Receita (com travas contra número de contador).
+    -- atende pelo WhatsApp).
     ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_so_whatsapp    BOOLEAN NOT NULL DEFAULT false;
-    ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_receita_celular BOOLEAN NOT NULL DEFAULT false;
+    -- O telefone da Receita NUNCA vira contato (costuma ser do contador): a
+    -- opção que existiu por um tempo foi retirada.
+    ALTER TABLE estrategia DROP COLUMN IF EXISTS crm_receita_celular;
     ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_fila_pendentes INTEGER;
     ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_fila_em        TIMESTAMPTZ;
     -- Gatilho: 'total' (o total cai pro crm_fila_gatilho) ou 'fila' (alguma
@@ -962,6 +963,27 @@ async function init() {
     .then(() => score1Job.revisarPeloPortao(pool))
     .then(r => { if (r?.descartados || r?.enviados_fora) console.log('[migração] portão de perfil:', JSON.stringify(r)); })
     .catch(e => console.error('[migração] portão de perfil:', e.message));
+
+  // Celular da Receita (opção retirada — costuma ser do contador): sai dos leads
+  // que ainda não foram ao CRM. Sem outro telefone, o lead volta pra "sem
+  // contato" (Incompleto), como qualquer lead que a busca não achou. Os que já
+  // foram enviados só são contados.
+  await pool.query(`
+    WITH alvo AS (
+      SELECT id FROM leads
+       WHERE contato_validado->>'telefone_origem' = 'receita'
+         AND enviado_crm_em IS NULL AND COALESCE(status, '') NOT IN ('Enviado', 'Descartado'))
+    UPDATE leads l SET
+      contato_validado = (l.contato_validado - 'telefone' - 'whatsapp' - 'telefone_origem'),
+      contato_status = 'sem_contato', contato_pendente = true, crm_retido = NULL,
+      status = CASE WHEN l.status IN ('Novo', 'Qualificado') THEN 'Incompleto' ELSE l.status END,
+      atualizado_em = now()
+      FROM alvo WHERE l.id = alvo.id
+  `).then(async r => {
+    const { rows: [e] } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM leads WHERE contato_validado->>'telefone_origem' = 'receita' AND enviado_crm_em IS NOT NULL`);
+    if (r.rowCount || e.n) console.log(`[migração] celular da Receita: removido de ${r.rowCount} lead(s) ainda não enviado(s); ${e.n} já tinham ido ao CRM`);
+  }).catch(e => console.error('[migração] celular da Receita:', e.message));
 
   // Lead marcado "fora do perfil" que o envio ao CRM (já na fila) carimbou
   // depois como 'Enviado': a marcação vale — volta pra descartado.
@@ -1998,7 +2020,7 @@ async function planoEstrategia() {
     `SELECT ativo, simultaneos, ao_concluir, estado, estado_em,
             crm_controle, crm_fila_gatilho, crm_fila_pendentes, crm_fila_em,
             crm_gatilho_modo, crm_fila_minimo, crm_total_maximo, crm_score_minimo, crm_segurar_baixa,
-            crm_so_whatsapp, crm_receita_celular,
+            crm_so_whatsapp,
             distrib_ativo, distrib_modo, distrib_conexoes,
             (distrib_token IS NOT NULL AND distrib_token <> '') AS distrib_tem_token FROM estrategia`);
   return p;
@@ -2111,7 +2133,7 @@ app.patch('/api/estrategia', requireAuth, requireEditor, async (req, res) => {
       if (!(n >= 0 && n <= 100)) return res.status(400).json({ erro: 'score mínimo pro CRM: de 0 a 100' });
       vals.push(n); sets.push(`crm_score_minimo=$${vals.length}`);
     }
-    for (const k of ['crm_segurar_baixa', 'crm_so_whatsapp', 'crm_receita_celular']) {
+    for (const k of ['crm_segurar_baixa', 'crm_so_whatsapp']) {
       if (typeof b[k] === 'boolean') { vals.push(b[k]); sets.push(`${k}=$${vals.length}`); }
     }
     for (const k of ['crm_fila_minimo', 'crm_total_maximo']) {
