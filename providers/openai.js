@@ -191,9 +191,9 @@ DADOS ÚTEIS sobre a empresa antes de ele fazer o contato. Regras:
     transforme isso em oportunidade: diga com clareza que a aderência é baixa.
 Responda SEMPRE em português do Brasil e SOMENTE com um JSON válido no formato pedido.`;
 
-function montarPrompt(empresa, contexto, perfilEmpresa) {
+function linhasCadastro(empresa) {
   const e = empresa || {};
-  const linhas = [
+  return [
     `Razão social: ${e.razao || '—'}`,
     `Nome fantasia: ${e.fantasia || '—'}`,
     `Atividade (CNAE): ${e.setor || '—'} (${e.cnae || '—'})`,
@@ -206,6 +206,10 @@ function montarPrompt(empresa, contexto, perfilEmpresa) {
     `Optante pelo Simples: ${e.opcao_simples == null ? '—' : (e.opcao_simples ? 'Sim' : 'Não')}`,
     `Decisor (sócio/administrador): ${e.decisor || '—'} (${e.cargo || '—'})`,
   ];
+}
+
+function montarPrompt(empresa, contexto, perfilEmpresa) {
+  const linhas = linhasCadastro(empresa);
   const ctx = (contexto || '').trim();
   // Resumo do PRÓPRIO SITE da empresa (validado como contato comercial, não do
   // contador) — dá ao modelo algo concreto sobre o que ela realmente faz/vende,
@@ -402,6 +406,101 @@ async function sugerirCnae(texto, catalogo, { apiKey, modelo, max = 8, provedor 
   }
 }
 
+// ── Abordagem sem material ────────────────────────────────────────────────────
+// Lead sem site nem perfil: não há o que analisar sobre a empresa, mas o
+// vendedor ainda precisa saber COMO chegar nela. O agente orienta a abordagem
+// a partir do que é fato — o cadastro (atividade, porte, tempo de mercado,
+// cidade, sócio) — e da nossa proposta de valor, deixando claro que não há
+// informação da internet: o que for do ramo é hipótese, a confirmar no contato.
+const SYSTEM_ABORDAGEM = `Você é um analista de inteligência comercial B2B brasileiro. Desta empresa-alvo NÃO
+há informação da internet (nem site, nem perfil em rede social): só o cadastro oficial (Receita) e o que NÓS vendemos.
+Sua tarefa é ORIENTAR o vendedor sobre como abordá-la. Regras:
+(1) NÃO invente fatos sobre a empresa (produtos, marcas, clientes, tamanho real, problemas). O que vier do ramo é
+    HIPÓTESE e deve soar como hipótese ("empresas desse ramo costumam…", "vale confirmar se…").
+(2) Conecte a NOSSA proposta ao ramo e ao porte da empresa: por que faria sentido para um negócio assim.
+(3) Oriente a abordagem: o melhor canal, como abrir a conversa sem fingir que já conhece a empresa, perguntas curtas
+    para qualificar logo no primeiro contato (o que ela faz de fato, se tem a necessidade, quem decide) e os cuidados.
+    É orientação para o vendedor, não um roteiro para ler palavra por palavra.
+(4) ENCAIXE HONESTO: se a atividade não tem relação com o que vendemos, diga que a aderência é baixa e sugira
+    qualificar rápido antes de investir tempo — não invente uma oportunidade.
+Responda SEMPRE em português do Brasil e SOMENTE com um JSON válido no formato pedido.`;
+
+function montarPromptAbordagem(empresa, contexto, perfilEmpresa) {
+  const ctx = (contexto || '').trim();
+  const breakdown = Array.isArray(perfilEmpresa?.breakdown) ? perfilEmpresa.breakdown : [];
+  const motivo = breakdown.filter(b => b.pts > 0).map(b => b.item).join('; ');
+  const tel = perfilEmpresa?.temTelefone ? 'Temos um telefone/WhatsApp da empresa.' : 'Ainda não temos telefone validado da empresa.';
+  return `Empresa a abordar (só dados do cadastro oficial):\n${linhasCadastro(empresa).join('\n')}\n` +
+    (motivo ? `\nPor que ela entrou na nossa lista (semelhança com nossos clientes): ${motivo}\n` : '') +
+    `\n${tel}\n` +
+    (ctx ? `\nO que estamos vendendo / cliente ideal:\n${ctx}\n` : '') +
+    `\nProduza a orientação no formato JSON:
+{
+  "resumo": "1-2 frases só com o que o cadastro diz: o que a empresa faz (atividade), porte, há quanto tempo existe, cidade. Nada inventado.",
+  "abordagem": {
+    "canal": "o melhor canal para o primeiro contato e por quê (1 frase)",
+    "gancho": "1-2 frases: como abrir a conversa ligando a nossa proposta ao ramo dela, sem fingir que já a conhece",
+    "perguntas": ["3 a 4 perguntas curtas para qualificar no primeiro contato"],
+    "cuidados": ["1 a 3 cuidados: o que confirmar antes de ofertar, o que evitar"]
+  },
+  "dores_provaveis": ["2 a 3 dores típicas desse ramo que a nossa proposta resolve — como hipótese"],
+  "sinal_comercial": "1 frase: o que priorizar nesse contato",
+  "aderencia": { "nivel": "alta | media | baixa — o quanto a atividade desta empresa tem a ver com o que NÓS vendemos", "motivo": "1 frase com o porquê" }
+}`;
+}
+
+async function gerarAbordagem(empresa, { apiKey, modelo, contexto, perfilEmpresa, provedor, instrucoesCliente } = {}) {
+  const prov = provedorDe(provedor);
+  if (!apiKey) throw new Error(`${prov.rotulo}: chave obrigatória (configure em Integrações → Inteligência).`);
+  const extra = (instrucoesCliente || '').trim();
+  const body = {
+    model: modelo || prov.modelo,
+    messages: [
+      { role: 'system', content: extra
+        ? `${SYSTEM_ABORDAGEM}\n\nPersonalização deste cliente (respeite, desde que NÃO contrarie as regras acima nem invente dados):\n${extra}`
+        : SYSTEM_ABORDAGEM },
+      { role: 'user', content: montarPromptAbordagem(empresa, contexto, perfilEmpresa) },
+    ],
+    temperature: 0.4,
+    max_tokens: 3000,
+    response_format: { type: 'json_object' },
+  };
+  const arr = v => Array.isArray(v) ? v.filter(Boolean).map(x => String(x)) : (v ? [String(v)] : []);
+  try {
+    const { data } = await postChat(prov.url, body, apiKey);
+    const escolha = data?.choices?.[0] || {};
+    const txt = escolha.message?.content || '';
+    if (!txt.trim()) throw new Error(motivoRespostaVazia(escolha, data));
+    const parsed = extrairJson(txt);
+    const a = parsed.abordagem || {};
+    const briefing = {
+      modo: 'abordagem',
+      resumo: parsed.resumo || '',
+      abordagem: { canal: String(a.canal || ''), gancho: String(a.gancho || ''), perguntas: arr(a.perguntas), cuidados: arr(a.cuidados) },
+      dores_provaveis: arr(parsed.dores_provaveis),
+      fatos_uteis: [],
+      swot: { forcas: [], fraquezas: [], oportunidades: [], ameacas: [] },
+      sinal_comercial: parsed.sinal_comercial || '',
+      aderencia: aderenciaDe(parsed.aderencia),
+      baseado_em_site: false,
+      modelo: body.model,
+      gerado_em: new Date().toISOString(),
+    };
+    if (!briefing.abordagem.gancho && !briefing.abordagem.perguntas.length && !briefing.resumo) {
+      throw new Error(`a IA devolveu JSON sem orientação de abordagem — veio: "${String(txt).replace(/\s+/g, ' ').slice(0, 180)}"`);
+    }
+    return briefing;
+  } catch (err) {
+    if (err.response) {
+      const msg = err.response.data?.error?.message || JSON.stringify(err.response.data).slice(0, 200);
+      const e = new Error(`${prov.rotulo} HTTP ${err.response.status}: ${msg}`);
+      e.status = err.response.status;
+      throw e;
+    }
+    throw err;
+  }
+}
+
 // Palavras do ramo (providers/palavras.js): das palavras que se repetem nos
 // nomes dos clientes, quais são do RAMO (empresa com ela no nome quase certamente
 // faz o mesmo que os clientes) e quais são genéricas (aparecem em muitos negócios
@@ -502,4 +601,4 @@ async function integracoesIA(pool) {
   return rows;
 }
 
-module.exports = { gerarSwot, sugerirCnae, avaliarPalavras, integracoesIA, testarChave, PROVEDORES, MODELO_PADRAO };
+module.exports = { gerarSwot, gerarAbordagem, sugerirCnae, avaliarPalavras, integracoesIA, testarChave, PROVEDORES, MODELO_PADRAO };

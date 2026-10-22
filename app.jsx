@@ -301,7 +301,7 @@ const MOTIVO_SWOT = {
   ia_tempo: 'a IA demorou demais para responder. Tente de novo.',
   ia_falhou: 'a IA não respondeu. Tente de novo em alguns minutos.',
   sem_firmografia: 'faltam os dados de cadastro desta empresa. Use “Re-enriquecer” e tente de novo.',
-  sem_material: 'não há material sobre a empresa (site ou perfil) para a IA analisar — só com o cadastro a análise sairia genérica. Use “Re-enriquecer” para buscar de novo, ou cadastre o site em “Editar” e clique em “Refazer análise”.',
+  sem_material: 'não há material sobre a empresa (site ou perfil) para a IA analisar — só com o cadastro a análise sairia genérica. Use “Buscar contato de novo” (no lead) ou “Re-enriquecer” (na lista), ou cadastre o site em “Editar” e clique em “Refazer análise”.',
 };
 // Aderência ao que o cliente vende (a IA avalia no briefing): alta, média ou
 // baixa, com o porquê. Baixa = a atividade do lead não tem ponte com o produto.
@@ -312,6 +312,13 @@ const verificacaoAderencia = a => !a?.segunda?.nivel ? ''
   : a.concordam ? 'confirmada por 2 verificações'
   : a.analise ? `verificações divergem (análise: ${ADERENCIA[a.analise]?.[0] || a.analise}; segunda verificação: ${ADERENCIA[a.segunda.nivel]?.[0] || a.segunda.nivel}) — confira`
   : 'pela segunda verificação';
+// Orientação de abordagem (lead sem site/perfil) em texto, pro "Copiar briefing".
+const textoAbordagem = a => !a ? '' : [
+  'Como abordar (sem informações da internet — confirme no primeiro contato):',
+  a.canal ? `Canal: ${a.canal}` : '', a.gancho ? `Abertura: ${a.gancho}` : '',
+  Array.isArray(a.perguntas) && a.perguntas.length ? 'Perguntas para qualificar:\n- ' + a.perguntas.join('\n- ') : '',
+  Array.isArray(a.cuidados) && a.cuidados.length ? 'Cuidados:\n- ' + a.cuidados.join('\n- ') : '',
+].filter(Boolean).join('\n');
 const textoAderencia = a => {
   if (!a || !ADERENCIA[a.nivel]) return '';
   const v = verificacaoAderencia(a);
@@ -322,7 +329,9 @@ function briefingVazio(sw) {
   if (!sw || typeof sw !== 'object') return true;
   const n = v => Array.isArray(v) ? v.length : 0;
   const s = sw.swot || {};
+  const a = sw.abordagem || {};
   return !String(sw.resumo || '').trim() && !String(sw.sinal_comercial || sw.gancho || '').trim()
+    && !String(a.gancho || '').trim() && !n(a.perguntas)
     && !n(sw.fatos_uteis) && !n(sw.dores_provaveis)
     && !n(s.forcas) && !n(s.fraquezas) && !n(s.oportunidades) && !n(s.ameacas);
 }
@@ -1136,14 +1145,15 @@ function secaoLeadHtml(l) {
   </table>
   ${cv.resumo_site ? `<div class="callout"><b>Sobre a empresa (site):</b><br>${esc(cv.resumo_site)}</div>` : ''}
 
-  ${sw.resumo || sw.swot ? `<h3>Análise SWOT · briefing</h3>
+  ${sw.resumo || sw.swot ? `<h3>${sw.modo === 'abordagem' ? 'Como abordar · IA' : 'Análise SWOT · briefing'}</h3>
     ${sw.resumo ? `<p>${esc(sw.resumo)}</p>` : ''}
     ${(Array.isArray(sw.fatos_uteis) && sw.fatos_uteis.length) ? `<div class="q"><h4>Fatos úteis pro contato</h4>${listaHtml(sw.fatos_uteis)}</div>` : ''}
-    ${(Array.isArray(sw.dores_provaveis) && sw.dores_provaveis.length) ? `<div class="q"><h4>Dores prováveis</h4>${listaHtml(sw.dores_provaveis)}</div>` : ''}
-    <div class="swot" style="margin-top:12px">
+    ${(Array.isArray(sw.dores_provaveis) && sw.dores_provaveis.length) ? `<div class="q"><h4>${sw.modo === 'abordagem' ? 'Dores prováveis do ramo (hipótese)' : 'Dores prováveis'}</h4>${listaHtml(sw.dores_provaveis)}</div>` : ''}
+    ${sw.modo !== 'abordagem' ? `<div class="swot" style="margin-top:12px">
       ${quad('Forças', sw.swot?.forcas)}${quad('Fraquezas', sw.swot?.fraquezas)}
       ${quad('Oportunidades', sw.swot?.oportunidades)}${quad('Ameaças', sw.swot?.ameacas)}
-    </div>
+    </div>` : ''}
+    ${sw.modo === 'abordagem' && sw.abordagem ? `<div class="callout" style="margin-top:12px; white-space:pre-line">${esc(textoAbordagem(sw.abordagem))}</div>` : ''}
     ${sw.aderencia ? `<div class="callout" style="margin-top:12px"><b>Aderência ao que vendemos:</b> ${esc(textoAderencia(sw.aderencia))}</div>` : ''}
     ${(sw.sinal_comercial || sw.gancho) ? `<div class="callout" style="margin-top:12px"><b>Sinal comercial:</b> ${esc(sw.sinal_comercial || sw.gancho)}</div>` : ''}
   ` : ''}
@@ -7734,6 +7744,54 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
   // briefing mudar: sem isso o usuário clica, nada acontece na tela e parece
   // que quebrou (a IA leva alguns segundos).
   const [regSwot, setRegSwot] = useState(false);
+
+  // Buscar o contato de novo (o mesmo "Re-enriquecer" da lista, pra um lead):
+  // busca grátis e, sem telefone, o Google Maps (Integrações). Só pra lead SEM
+  // contato nenhum — a busca nova limpa o contato antes, e num lead com telefone
+  // (até digitado à mão) isso arriscaria perder o número. Acompanha até achar ou
+  // a busca terminar (a 2ª tentativa sai ~2 min depois da 1ª).
+  const [buscandoContato, setBuscandoContato] = useState(false);
+  const semContatoNenhum = l => { const cv = l?.contato_validado || {};
+    return !(cv.telefone || cv.whatsapp || cv.email || cv.website || cv.perfil_social); };
+  const buscarContato = async () => {
+    if (buscandoContato) return;
+    setBuscandoContato(true);
+    try {
+      const r = await fetch('/api/leads/acoes', {
+        method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ ids: [leadId], acao: 'reenriquecer' })
+      });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); window.alert(d.erro || 'Não foi possível buscar agora.'); return; }
+      for (let i = 0; i < 75; i++) {   // ~5 min
+        await new Promise(res => setTimeout(res, 4000));
+        const novo = await fetch('/api/leads/' + leadId, { credentials:'same-origin' })
+          .then(x => x.ok ? x.json() : null).catch(() => null);
+        if (!novo) continue;
+        const cv = novo.contato_validado || {};
+        const temContato = cv.telefone || cv.whatsapp || cv.email;
+        const temMaterial = cv.website || cv.perfil_social;
+        if (temContato || temMaterial) {
+          setLead(novo);
+          const inicio = temContato ? 'Contato encontrado. ' : 'Site/perfil encontrado. ';
+          const detalhe = temMaterial
+            ? 'A análise começa sozinha com o material do site/perfil — aparece aqui em instantes.'
+            : cv.telefone || cv.whatsapp
+              ? 'Sem site nem perfil, a análise continua sem material, mas o lead já pode ir para o CRM.'
+              : 'Encontramos um e-mail, mas ainda não telefone/WhatsApp. O lead pode ser abordado por e-mail; cadastre um site em “Editar” para análise completa.';
+          window.alert(inicio + detalhe);
+          return;
+        }
+        if (i > 3 && novo.contato_pendente) {
+          setLead(novo);
+          window.alert('A busca terminou sem achar telefone, e-mail, site nem perfil desta empresa (internet e mapas, dentro do limite do dia). '
+            + 'Se você souber o site, cadastre em "Editar" e clique em "Refazer análise".');
+          return;
+        }
+      }
+      window.alert('A busca ainda está rodando. Reabra o lead daqui a pouco para ver o resultado.');
+    } finally { setBuscandoContato(false); }
+  };
+
   const regerarSwot = async () => {
     if (regSwot) return;
     setRegSwot(true);
@@ -7766,6 +7824,17 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
         // ainda tenta de novo sozinho; se der certo, o briefing aparece ao reabrir.
         if (novo?.swot_erro_em && String(novo.swot_erro_em) !== erroAntes) {
           setLead(novo);
+          // Sem material porque o lead nem tem contato: em vez de só avisar,
+          // oferece buscar o contato (e o site) agora — a análise sai sozinha depois.
+          if (novo.swot_erro === 'sem_material' && semContatoNenhum(novo)) {
+            if (window.confirm('A análise precisa de material sobre a empresa (site ou perfil), e este lead ainda não tem '
+              + 'contato nem site.\n\nBuscar o contato de novo agora (internet e mapas)? Se achar o site ou o perfil, '
+              + 'a análise sai sozinha em seguida.')) {
+              setRegSwot(false);
+              buscarContato();
+            }
+            return;
+          }
           window.alert('A análise não saiu: ' + (MOTIVO_SWOT[novo.swot_erro] || MOTIVO_SWOT.ia_falhou));
           return;
         }
@@ -8013,7 +8082,18 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
               )}
               {!temContato && !editandoContato && (
                 <div style={{ fontSize:12, color:'var(--faint)', lineHeight:1.5, marginBottom:12 }}>
-                  O enriquecimento não achou telefone/e-mail válidos. Use "Editar" pra inserir manualmente.
+                  O enriquecimento não achou telefone/e-mail válidos. Use "Editar" pra inserir manualmente
+                  {semContatoNenhum(l) ? ', ou busque de novo (internet e mapas):' : '.'}
+                  {semContatoNenhum(l) && (
+                    <div style={{ marginTop:8 }}>
+                      <button type="button" onClick={buscarContato} disabled={buscandoContato}
+                        style={{ height:31, padding:'0 12px', borderRadius:7, border:`1px solid ${C.blue}`, background:'transparent',
+                          color: buscandoContato ? 'var(--faint)' : C.blue, fontSize:12, fontFamily:'inherit',
+                          cursor: buscandoContato ? 'default' : 'pointer' }}>
+                        {buscandoContato ? 'Buscando contato… (até ~5 min)' : 'Buscar contato de novo'}
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
               <div style={{ display:'flex', flexDirection:'column', gap:9 }}>
@@ -8103,7 +8183,7 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                   <circle cx={12} cy={12} r={4}/>
                 </SvgMulti>
                 <span style={{ fontSize:11, fontWeight:600, letterSpacing:'.08em', color:C.blue, textTransform:'uppercase', flex:1 }}>
-                  Briefing SWOT · IA
+                  {l.swot?.modo === 'abordagem' ? 'Como abordar · IA' : 'Briefing SWOT · IA'}
                 </span>
               </div>
               {/* Sem briefing: diz POR QUÊ. Lead sem contato não ganha análise
@@ -8116,15 +8196,49 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                     : l.swot_erro
                     ? <>A última tentativa de análise falhou{l.swot_erro_em ? ` (${timeAgo(l.swot_erro_em)})` : ''}: {MOTIVO_SWOT[l.swot_erro] || MOTIVO_SWOT.ia_falhou}</>
                     : l.contato_status === 'sem_contato'
-                    ? <>A análise é feita com o material encontrado sobre a empresa (site ou perfil), e ainda não encontramos contato nem site
-                        deste lead. Ela sai sozinha quando o contato e o material forem encontrados — use “Re-enriquecer”, ou cadastre o site
-                        em “Editar” e clique em “Refazer análise”.</>
+                    ? <>Ainda não encontramos contato deste lead. Quando o contato for encontrado, a análise sai sozinha — completa se houver
+                        site ou perfil da empresa, ou como orientação de abordagem se não houver. Use “Buscar contato de novo” na seção Contato,
+                        ou clique em “Refazer análise” para gerar já a orientação de abordagem.</>
                     : <>A análise ainda não foi gerada para este lead. Clique em “Refazer análise” abaixo. Os contatos não são alterados.</>}
                 </p>
+              )}
+              {l.swot.modo === 'abordagem' && (
+                <div style={{ fontSize:12, lineHeight:1.5, color:'var(--dim)', padding:'9px 12px', borderRadius:9, marginBottom:12,
+                  border:'1px dashed var(--border)' }}>
+                  Não encontramos site nem perfil desta empresa na internet. Esta orientação usa só o <b>cadastro oficial</b> e a
+                  <b> nossa proposta</b> — o que for do ramo é hipótese: confirme o que a empresa faz logo no primeiro contato.
+                </div>
               )}
               {l.swot.resumo && (
                 <p style={{ fontSize:13, lineHeight:1.6, margin:'0 0 14px', color:'var(--text)' }}>{l.swot.resumo}</p>
               )}
+              {l.swot.modo === 'abordagem' && l.swot.abordagem && (() => {
+                const a = l.swot.abordagem;
+                const caixa = (titulo, cor, conteudo) => (
+                  <div style={{ background:`color-mix(in srgb, ${cor} 8%, transparent)`, border:`1px solid color-mix(in srgb, ${cor} 26%, transparent)`,
+                    borderRadius:11, padding:'12px 14px', marginBottom:12 }}>
+                    <div style={{ fontSize:10.5, fontWeight:600, color:cor, marginBottom:6, textTransform:'uppercase', letterSpacing:'.06em' }}>{titulo}</div>
+                    {conteudo}
+                  </div>
+                );
+                const lista = itens => (
+                  <ul style={{ margin:0, padding:'0 0 0 16px', fontSize:12.5, lineHeight:1.6, color:'var(--text)' }}>
+                    {itens.map((x, i) => <li key={i}>{x}</li>)}
+                  </ul>
+                );
+                return (
+                  <>
+                    {(a.canal || a.gancho) && caixa('Como abordar', C.blue, (
+                      <div style={{ fontSize:12.5, lineHeight:1.6, color:'var(--text)' }}>
+                        {a.canal && <div><b>Canal:</b> {a.canal}</div>}
+                        {a.gancho && <div style={{ marginTop: a.canal ? 4 : 0 }}><b>Abertura:</b> {a.gancho}</div>}
+                      </div>
+                    ))}
+                    {Array.isArray(a.perguntas) && a.perguntas.length > 0 && caixa('Perguntas para qualificar', C.green, lista(a.perguntas))}
+                    {Array.isArray(a.cuidados) && a.cuidados.length > 0 && caixa('Cuidados', C.gray, lista(a.cuidados))}
+                  </>
+                );
+              })()}
               {Array.isArray(l.swot.fatos_uteis) && l.swot.fatos_uteis.length > 0 && (
                 <div style={{ background:'color-mix(in srgb, '+C.green+' 9%, transparent)', border:'1px solid color-mix(in srgb, '+C.green+' 28%, transparent)',
                   borderRadius:11, padding:'12px 14px', marginBottom:14 }}>
@@ -8137,13 +8251,15 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
               {Array.isArray(l.swot.dores_provaveis) && l.swot.dores_provaveis.length > 0 && (
                 <div style={{ background:'color-mix(in srgb, '+C.amber+' 9%, transparent)', border:'1px solid color-mix(in srgb, '+C.amber+' 28%, transparent)',
                   borderRadius:11, padding:'12px 14px', marginBottom:14 }}>
-                  <div style={{ fontSize:10.5, fontWeight:600, color:C.amber, marginBottom:6, textTransform:'uppercase', letterSpacing:'.06em' }}>Dores prováveis</div>
+                  <div style={{ fontSize:10.5, fontWeight:600, color:C.amber, marginBottom:6, textTransform:'uppercase', letterSpacing:'.06em' }}>
+                    {l.swot.modo === 'abordagem' ? 'Dores prováveis do ramo (hipótese)' : 'Dores prováveis'}
+                  </div>
                   <ul style={{ margin:0, padding:'0 0 0 16px', fontSize:12.5, lineHeight:1.6, color:'var(--text)' }}>
                     {l.swot.dores_provaveis.map((d,i) => <li key={i}>{d}</li>)}
                   </ul>
                 </div>
               )}
-              {!briefingVazio(l.swot) && (
+              {!briefingVazio(l.swot) && l.swot.modo !== 'abordagem' && (
               <div className="h-split" style={{ gap:10, marginBottom:14 }}>
                 {[
                   ['Forças', l.swot.swot?.forcas, C.green],
@@ -8200,7 +8316,10 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                 <button onClick={() => navigator.clipboard?.writeText(
                     [l.swot.resumo,
                      l.swot.fatos_uteis?.length ? 'Fatos úteis:\n- ' + l.swot.fatos_uteis.join('\n- ') : '',
-                     l.swot.dores_provaveis?.length ? 'Dores prováveis:\n- ' + l.swot.dores_provaveis.join('\n- ') : '',
+                     l.swot.dores_provaveis?.length
+                       ? (l.swot.modo === 'abordagem' ? 'Dores prováveis do ramo (hipótese):\n- ' : 'Dores prováveis:\n- ') + l.swot.dores_provaveis.join('\n- ')
+                       : '',
+                     l.swot.modo === 'abordagem' ? textoAbordagem(l.swot.abordagem) : '',
                      l.swot.aderencia ? 'Aderência ao que vendemos: ' + textoAderencia(l.swot.aderencia) : '',
                      (l.swot.sinal_comercial || l.swot.gancho) ? 'Sinal comercial: ' + (l.swot.sinal_comercial || l.swot.gancho) : ''].filter(Boolean).join('\n\n')).catch(()=>{})}
                   style={{ display:'flex', alignItems:'center', gap:6, height:31, padding:'0 12px',

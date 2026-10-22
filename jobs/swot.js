@@ -3,8 +3,8 @@
  * Hunter — agente SWOT (Fase 3.2).
  * Roda depois do Score 1 aprovar. Pega a firmografia (que já temos de graça) +
  * o motivo do match (breakdown do Score 1) e monta um briefing analítico pro
- * closer. Se não houver chave OpenAI ativa, deixa o lead como 'scored' (sem
- * gasto, sem erro) — a formulação da abordagem em si é feita no CRM, não aqui.
+ * closer. Sem material do site/perfil, gera uma orientação de abordagem com base
+ * apenas no cadastro oficial e na proposta de valor — sem inventar fatos.
  */
 const openai = require('../providers/openai');
 const google = require('../providers/google');
@@ -154,12 +154,14 @@ module.exports = async function swot(job, pool, queues) {
         await pool.query(`UPDATE leads SET contato_validado=$2::jsonb WHERE id=$1`, [lead_id, JSON.stringify(cvLead)]);
       }
     }
-    if (empresa && !temMaterial(cvLead)) {
-      console.log(`[swot] lead ${lead_id} (${cnpj}): sem material da empresa (site/perfil) — análise não gerada.`);
-      await registrarFalha(pool, lead_id, 'sem_material');
-    } else if (empresa) {
+    if (empresa) {
       const crit = busca?.criterios || {};
       const contexto = crit.params?.proposta_valor || crit.proposta_valor || crit.texto || '';
+      // Com material (site/perfil): análise completa da empresa. Sem material:
+      // ORIENTAÇÃO DE ABORDAGEM — o agente não tem o que analisar sobre ela, mas
+      // diz como chegar nela a partir do cadastro e da nossa proposta, deixando
+      // claro que não há informação da internet (o lead mostra o aviso).
+      const comMaterial = temMaterial(cvLead);
       // Contato validado (Google/Econodata) traz o resumo REAL do site da empresa
       // — dá ao agente algo específico pra falar, além do CNAE genérico. O
       // breakdown do Score 1 fundamenta a análise em POR QUE essa empresa deu match.
@@ -167,8 +169,10 @@ module.exports = async function swot(job, pool, queues) {
       const perfilEmpresa = {
         resumoSite: cv.resumo_site || null, siteValidado: !!cv.validado, fonteContato: cv.fonte || null,
         score: lead?.score ?? null, breakdown: Array.isArray(lead?.breakdown) ? lead.breakdown : [],
-        prova: jev?.prova || null,
+        prova: jev?.prova || null, temTelefone: !!(cv.telefone || cv.whatsapp),
       };
+      if (!comMaterial) console.log(`[swot] lead ${lead_id} (${cnpj}): sem material da empresa (site/perfil) — orientação de abordagem.`);
+      const gerar = comMaterial ? openai.gerarSwot : openai.gerarAbordagem;
       // Guarda a falha de CADA provedor: antes só a última ia pro erro do job,
       // e com OpenRouter e OpenAI falhando a tela mostrava só a da OpenAI —
       // sem dizer que a OpenRouter tinha sido tentada antes (e por que caiu).
@@ -176,7 +180,7 @@ module.exports = async function swot(job, pool, queues) {
       const falhas = [];
       for (const ig of igs) {
         try {
-          briefing = await openai.gerarSwot(empresa, {
+          briefing = await gerar(empresa, {
             apiKey: ig.key_cifrada, modelo: ig.config?.modelo, contexto, perfilEmpresa, provedor: ig.provedor,
             instrucoesCliente,
           });
@@ -202,7 +206,7 @@ module.exports = async function swot(job, pool, queues) {
         `UPDATE leads SET swot=$2::jsonb, estagio='pronto', swot_erro=NULL, swot_erro_em=NULL, atualizado_em=now() WHERE id=$1`,
         [lead_id, JSON.stringify(briefing)]
       );
-      console.log(`[swot] lead ${lead_id} (${cnpj}): briefing gerado (${usado.provedor} · ${usado.modelo || 'padrão'}).`);
+      console.log(`[swot] lead ${lead_id} (${cnpj}): ${comMaterial ? 'briefing' : 'orientação de abordagem'} gerado (${usado.provedor} · ${usado.modelo || 'padrão'}).`);
     } else {
       console.warn(`[swot] lead ${lead_id}: empresa ${cnpj} não encontrada na base — briefing não gerado.`);
       await registrarFalha(pool, lead_id, 'sem_firmografia');
