@@ -433,7 +433,7 @@ function montarBriefing(empresa, lead, extras = {}) {
     ].filter(Boolean).join('\n'),
     sw.resumo ? `*Resumo*\n${sw.resumo}` : '',
     lista('Fatos úteis', sw.fatos_uteis),
-    lista('Dores prováveis', sw.dores_provaveis),
+    lista(sw.modo === 'abordagem' ? 'Dores prováveis do ramo (hipótese)' : 'Dores prováveis', sw.dores_provaveis),
     lista('Forças', s.forcas),
     lista('Fraquezas', s.fraquezas),
     lista('Oportunidades', s.oportunidades),

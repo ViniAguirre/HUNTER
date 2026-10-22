@@ -3,8 +3,8 @@
  * Hunter — agente SWOT (Fase 3.2).
  * Roda depois do Score 1 aprovar. Pega a firmografia (que já temos de graça) +
  * o motivo do match (breakdown do Score 1) e monta um briefing analítico pro
- * closer. Se não houver chave OpenAI ativa, deixa o lead como 'scored' (sem
- * gasto, sem erro) — a formulação da abordagem em si é feita no CRM, não aqui.
+ * closer. Sem material do site/perfil, gera uma orientação de abordagem com base
+ * apenas no cadastro oficial e na proposta de valor — sem inventar fatos.
  */
 const openai = require('../providers/openai');
 const google = require('../providers/google');

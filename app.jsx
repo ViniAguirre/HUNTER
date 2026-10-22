@@ -1145,14 +1145,14 @@ function secaoLeadHtml(l) {
   </table>
   ${cv.resumo_site ? `<div class="callout"><b>Sobre a empresa (site):</b><br>${esc(cv.resumo_site)}</div>` : ''}
 
-  ${sw.resumo || sw.swot ? `<h3>Análise SWOT · briefing</h3>
+  ${sw.resumo || sw.swot ? `<h3>${sw.modo === 'abordagem' ? 'Como abordar · IA' : 'Análise SWOT · briefing'}</h3>
     ${sw.resumo ? `<p>${esc(sw.resumo)}</p>` : ''}
     ${(Array.isArray(sw.fatos_uteis) && sw.fatos_uteis.length) ? `<div class="q"><h4>Fatos úteis pro contato</h4>${listaHtml(sw.fatos_uteis)}</div>` : ''}
-    ${(Array.isArray(sw.dores_provaveis) && sw.dores_provaveis.length) ? `<div class="q"><h4>Dores prováveis</h4>${listaHtml(sw.dores_provaveis)}</div>` : ''}
-    <div class="swot" style="margin-top:12px">
+    ${(Array.isArray(sw.dores_provaveis) && sw.dores_provaveis.length) ? `<div class="q"><h4>${sw.modo === 'abordagem' ? 'Dores prováveis do ramo (hipótese)' : 'Dores prováveis'}</h4>${listaHtml(sw.dores_provaveis)}</div>` : ''}
+    ${sw.modo !== 'abordagem' ? `<div class="swot" style="margin-top:12px">
       ${quad('Forças', sw.swot?.forcas)}${quad('Fraquezas', sw.swot?.fraquezas)}
       ${quad('Oportunidades', sw.swot?.oportunidades)}${quad('Ameaças', sw.swot?.ameacas)}
-    </div>
+    </div>` : ''}
     ${sw.modo === 'abordagem' && sw.abordagem ? `<div class="callout" style="margin-top:12px; white-space:pre-line">${esc(textoAbordagem(sw.abordagem))}</div>` : ''}
     ${sw.aderencia ? `<div class="callout" style="margin-top:12px"><b>Aderência ao que vendemos:</b> ${esc(textoAderencia(sw.aderencia))}</div>` : ''}
     ${(sw.sinal_comercial || sw.gancho) ? `<div class="callout" style="margin-top:12px"><b>Sinal comercial:</b> ${esc(sw.sinal_comercial || sw.gancho)}</div>` : ''}
@@ -7768,16 +7768,22 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
           .then(x => x.ok ? x.json() : null).catch(() => null);
         if (!novo) continue;
         const cv = novo.contato_validado || {};
-        if (cv.telefone || cv.whatsapp || cv.website || cv.perfil_social) {
+        const temContato = cv.telefone || cv.whatsapp || cv.email;
+        const temMaterial = cv.website || cv.perfil_social;
+        if (temContato || temMaterial) {
           setLead(novo);
-          window.alert('Contato encontrado. ' + (cv.website || cv.perfil_social
+          const inicio = temContato ? 'Contato encontrado. ' : 'Site/perfil encontrado. ';
+          const detalhe = temMaterial
             ? 'A análise começa sozinha com o material do site/perfil — aparece aqui em instantes.'
-            : 'Sem site nem perfil, a análise continua sem material, mas o lead já pode ir para o CRM.'));
+            : cv.telefone || cv.whatsapp
+              ? 'Sem site nem perfil, a análise continua sem material, mas o lead já pode ir para o CRM.'
+              : 'Encontramos um e-mail, mas ainda não telefone/WhatsApp. O lead pode ser abordado por e-mail; cadastre um site em “Editar” para análise completa.';
+          window.alert(inicio + detalhe);
           return;
         }
         if (i > 3 && novo.contato_pendente) {
           setLead(novo);
-          window.alert('A busca terminou sem achar telefone nem site desta empresa (internet e mapas, dentro do limite do dia). '
+          window.alert('A busca terminou sem achar telefone, e-mail, site nem perfil desta empresa (internet e mapas, dentro do limite do dia). '
             + 'Se você souber o site, cadastre em "Editar" e clique em "Refazer análise".');
           return;
         }
@@ -8310,7 +8316,9 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                 <button onClick={() => navigator.clipboard?.writeText(
                     [l.swot.resumo,
                      l.swot.fatos_uteis?.length ? 'Fatos úteis:\n- ' + l.swot.fatos_uteis.join('\n- ') : '',
-                     l.swot.dores_provaveis?.length ? 'Dores prováveis:\n- ' + l.swot.dores_provaveis.join('\n- ') : '',
+                     l.swot.dores_provaveis?.length
+                       ? (l.swot.modo === 'abordagem' ? 'Dores prováveis do ramo (hipótese):\n- ' : 'Dores prováveis:\n- ') + l.swot.dores_provaveis.join('\n- ')
+                       : '',
                      l.swot.modo === 'abordagem' ? textoAbordagem(l.swot.abordagem) : '',
                      l.swot.aderencia ? 'Aderência ao que vendemos: ' + textoAderencia(l.swot.aderencia) : '',
                      (l.swot.sinal_comercial || l.swot.gancho) ? 'Sinal comercial: ' + (l.swot.sinal_comercial || l.swot.gancho) : ''].filter(Boolean).join('\n\n')).catch(()=>{})}
