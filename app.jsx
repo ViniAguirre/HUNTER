@@ -6576,7 +6576,8 @@ function Integracoes() {
                 background: testes[chave].ok ? 'rgba(52,211,153,.08)' : 'rgba(248,113,113,.08)' }}>
                 {testes[chave].ok && testes[chave].maps
                   ? <>Funcionando: saldo disponível <b>US$ {testes[chave].saldo?.disponivel_usd ?? '—'}</b>. Google Maps pelo endpoint{' '}
-                      <b>{testes[chave].maps.provider} {testes[chave].maps.endpoint}</b>{testes[chave].maps.preco ? ` (${testes[chave].maps.preco})` : ''}.</>
+                      <b>{testes[chave].maps.provider} {testes[chave].maps.endpoint}</b>
+                      {testes[chave].maps.preco ? ` (${typeof testes[chave].maps.preco === 'string' ? testes[chave].maps.preco : JSON.stringify(testes[chave].maps.preco)})` : ''}.</>
                   : testes[chave].ok
                   ? <>Funcionando: o modelo <b>{testes[chave].respondeu}</b> respondeu em {(testes[chave].ms / 1000).toFixed(1)} s
                       {testes[chave].respondeu !== testes[chave].pedido ? ` (pedido: ${testes[chave].pedido})` : ''}.</>
