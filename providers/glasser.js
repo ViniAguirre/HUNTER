@@ -72,7 +72,7 @@ async function descobrirMaps(apiKey) {
   const insp = await inspecionar(apiKey, escolhido.provider, escolhido.endpoint).catch(() => null);
   return {
     endpoint: { provider: escolhido.provider, endpoint: escolhido.endpoint, versao: insp?.versao || escolhido.versao || null,
-      campos: insp?.campos || [], preco: insp?.preco || null },
+      campos: insp?.campos || [], preco: insp?.preco || null, preco_bruto: insp?.preco_bruto || null },
     candidatos: cands.slice(0, 8).map(({ provider, endpoint }) => ({ provider, endpoint })),
   };
 }
@@ -84,7 +84,30 @@ async function inspecionar(apiKey, provider, endpoint) {
   const campos = Object.keys(sch.properties || sch || {});
   const p = data?.price || data?.pricing || data?.endpoint?.price || null;
   return { versao: data?.endpoint_version || data?.version || data?.endpoint?.version || null, campos,
-    preco: p ? (typeof p === 'string' ? p : (p.display || p.amount_usd || p.unit_price_usd || JSON.stringify(p).slice(0, 120))) : null };
+    preco: textoPreco(p), preco_bruto: p == null ? null : JSON.stringify(p).slice(0, 400) };
+}
+
+// Preço do Inspect em texto ("US$ 0.001 por chamada"). O formato não é fixo
+// (texto, número, objeto com valor/unidade, objeto aninhado por desfecho):
+// procura o primeiro valor em USD e a unidade; sem achar, resume o objeto.
+function textoPreco(p) {
+  if (p == null) return null;
+  if (typeof p === 'string' || typeof p === 'number') return String(p);
+  if (typeof p !== 'object') return null;
+  if (typeof p.display === 'string') return p.display;
+  let valor = null, unidade = null;
+  const andar = (o, prof) => {
+    if (!o || typeof o !== 'object' || prof > 3) return;
+    for (const [k, v] of Object.entries(o)) {
+      if (valor == null && (typeof v === 'string' || typeof v === 'number') && /usd|amount|price|valor|unit_price|rate/i.test(k)
+          && /^\d*\.?\d+$/.test(String(v))) valor = String(v);
+      if (unidade == null && typeof v === 'string' && /^(unit|per|billing_unit|meter|kind|type)$/i.test(k)) unidade = v;
+      if (v && typeof v === 'object') andar(v, prof + 1);
+    }
+  };
+  andar(p, 0);
+  if (valor != null) return `US$ ${valor}${unidade ? ` (${unidade})` : ''}`;
+  return JSON.stringify(p).slice(0, 120);
 }
 
 // Entrada pro endpoint conforme o schema: Serper usa `q` (+ gl/hl); outros
@@ -178,4 +201,4 @@ async function buscarNoMaps(nome, cidade, uf, apiKey, cfg = {}) {
   };
 }
 
-module.exports = { saldo, descobrirMaps, inspecionar, executar, buscarNoMaps, lugaresDe, confere, entradaMaps, LIMITE_DIA_PADRAO };
+module.exports = { saldo, descobrirMaps, inspecionar, executar, buscarNoMaps, lugaresDe, confere, entradaMaps, textoPreco, LIMITE_DIA_PADRAO };
