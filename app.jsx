@@ -301,7 +301,7 @@ const MOTIVO_SWOT = {
   ia_tempo: 'a IA demorou demais para responder. Tente de novo.',
   ia_falhou: 'a IA não respondeu. Tente de novo em alguns minutos.',
   sem_firmografia: 'faltam os dados de cadastro desta empresa. Use “Re-enriquecer” e tente de novo.',
-  sem_material: 'não há material sobre a empresa (site ou perfil) para a IA analisar — só com o cadastro a análise sairia genérica. Use “Re-enriquecer” para buscar de novo, ou cadastre o site em “Editar” e clique em “Refazer análise”.',
+  sem_material: 'não há material sobre a empresa (site ou perfil) para a IA analisar — só com o cadastro a análise sairia genérica. Use “Buscar contato de novo” (no lead) ou “Re-enriquecer” (na lista), ou cadastre o site em “Editar” e clique em “Refazer análise”.',
 };
 // Aderência ao que o cliente vende (a IA avalia no briefing): alta, média ou
 // baixa, com o porquê. Baixa = a atividade do lead não tem ponte com o produto.
@@ -7734,6 +7734,48 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
   // briefing mudar: sem isso o usuário clica, nada acontece na tela e parece
   // que quebrou (a IA leva alguns segundos).
   const [regSwot, setRegSwot] = useState(false);
+
+  // Buscar o contato de novo (o mesmo "Re-enriquecer" da lista, pra um lead):
+  // busca grátis e, sem telefone, o Google Maps (Integrações). Só pra lead SEM
+  // contato nenhum — a busca nova limpa o contato antes, e num lead com telefone
+  // (até digitado à mão) isso arriscaria perder o número. Acompanha até achar ou
+  // a busca terminar (a 2ª tentativa sai ~2 min depois da 1ª).
+  const [buscandoContato, setBuscandoContato] = useState(false);
+  const semContatoNenhum = l => { const cv = l?.contato_validado || {};
+    return !(cv.telefone || cv.whatsapp || cv.email || cv.website || cv.perfil_social); };
+  const buscarContato = async () => {
+    if (buscandoContato) return;
+    setBuscandoContato(true);
+    try {
+      const r = await fetch('/api/leads/acoes', {
+        method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ ids: [leadId], acao: 'reenriquecer' })
+      });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); window.alert(d.erro || 'Não foi possível buscar agora.'); return; }
+      for (let i = 0; i < 75; i++) {   // ~5 min
+        await new Promise(res => setTimeout(res, 4000));
+        const novo = await fetch('/api/leads/' + leadId, { credentials:'same-origin' })
+          .then(x => x.ok ? x.json() : null).catch(() => null);
+        if (!novo) continue;
+        const cv = novo.contato_validado || {};
+        if (cv.telefone || cv.whatsapp || cv.website || cv.perfil_social) {
+          setLead(novo);
+          window.alert('Contato encontrado. ' + (cv.website || cv.perfil_social
+            ? 'A análise começa sozinha com o material do site/perfil — aparece aqui em instantes.'
+            : 'Sem site nem perfil, a análise continua sem material, mas o lead já pode ir para o CRM.'));
+          return;
+        }
+        if (i > 3 && novo.contato_pendente) {
+          setLead(novo);
+          window.alert('A busca terminou sem achar telefone nem site desta empresa (internet e mapas, dentro do limite do dia). '
+            + 'Se você souber o site, cadastre em "Editar" e clique em "Refazer análise".');
+          return;
+        }
+      }
+      window.alert('A busca ainda está rodando. Reabra o lead daqui a pouco para ver o resultado.');
+    } finally { setBuscandoContato(false); }
+  };
+
   const regerarSwot = async () => {
     if (regSwot) return;
     setRegSwot(true);
@@ -7766,6 +7808,17 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
         // ainda tenta de novo sozinho; se der certo, o briefing aparece ao reabrir.
         if (novo?.swot_erro_em && String(novo.swot_erro_em) !== erroAntes) {
           setLead(novo);
+          // Sem material porque o lead nem tem contato: em vez de só avisar,
+          // oferece buscar o contato (e o site) agora — a análise sai sozinha depois.
+          if (novo.swot_erro === 'sem_material' && semContatoNenhum(novo)) {
+            if (window.confirm('A análise precisa de material sobre a empresa (site ou perfil), e este lead ainda não tem '
+              + 'contato nem site.\n\nBuscar o contato de novo agora (internet e mapas)? Se achar o site ou o perfil, '
+              + 'a análise sai sozinha em seguida.')) {
+              setRegSwot(false);
+              buscarContato();
+            }
+            return;
+          }
           window.alert('A análise não saiu: ' + (MOTIVO_SWOT[novo.swot_erro] || MOTIVO_SWOT.ia_falhou));
           return;
         }
@@ -8013,7 +8066,18 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
               )}
               {!temContato && !editandoContato && (
                 <div style={{ fontSize:12, color:'var(--faint)', lineHeight:1.5, marginBottom:12 }}>
-                  O enriquecimento não achou telefone/e-mail válidos. Use "Editar" pra inserir manualmente.
+                  O enriquecimento não achou telefone/e-mail válidos. Use "Editar" pra inserir manualmente
+                  {semContatoNenhum(l) ? ', ou busque de novo (internet e mapas):' : '.'}
+                  {semContatoNenhum(l) && (
+                    <div style={{ marginTop:8 }}>
+                      <button type="button" onClick={buscarContato} disabled={buscandoContato}
+                        style={{ height:31, padding:'0 12px', borderRadius:7, border:`1px solid ${C.blue}`, background:'transparent',
+                          color: buscandoContato ? 'var(--faint)' : C.blue, fontSize:12, fontFamily:'inherit',
+                          cursor: buscandoContato ? 'default' : 'pointer' }}>
+                        {buscandoContato ? 'Buscando contato… (até ~5 min)' : 'Buscar contato de novo'}
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
               <div style={{ display:'flex', flexDirection:'column', gap:9 }}>
