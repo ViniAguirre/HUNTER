@@ -3894,7 +3894,7 @@ function QualidadeCrm({ plano, salvando, onSalvar }) {
   useEffect(() => { setMin(plano.crm_score_minimo ?? 0); }, [plano.crm_score_minimo]);
   return (
     <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:20, marginBottom:16 }}>
-      <div style={{ fontSize:14, fontWeight:600, marginBottom:4 }}>Qualidade mínima para ir ao CRM</div>
+      <div style={{ fontSize:14, fontWeight:600, marginBottom:4 }}>O que vai sozinho para o CRM</div>
       <div style={{ fontSize:12, color:'var(--faint)', lineHeight:1.5, marginBottom:14 }}>
         Vale para o envio <b>automático</b>. Lead abaixo do mínimo não vai sozinho: fica na lista de Leads para triagem,
         com o motivo — e você pode enviar manualmente se quiser. Mínimo mais baixo deixa passar mais leads, alguns menos
@@ -3913,7 +3913,23 @@ function QualidadeCrm({ plano, salvando, onSalvar }) {
       <div style={{ display:'flex', justifyContent:'space-between', fontSize:10.5, color:'var(--faint)', marginTop:4 }}>
         <span>mais leads</span><span>mais certeiros</span>
       </div>
-      <label style={{ display:'flex', alignItems:'flex-start', gap:10, cursor:'pointer', marginTop:14 }}>
+      <div style={{ fontSize:12.5, fontWeight:600, color:'var(--dim)', margin:'16px 0 2px' }}>Contato</div>
+      {[['crm_so_whatsapp', <>Enviar com <b>WhatsApp</b>, mesmo sem e-mail</>,
+          'O CRM atende pelo WhatsApp. Sem isso, lead sem e-mail fica "aguardando decisão" e não vai sozinho.'],
+        ['crm_receita_celular', <>Usar o <b>celular do cadastro da Receita</b> quando a internet não achar telefone</>,
+          'Só celular, com DDD do estado da empresa e que não se repete em nenhuma outra empresa (número de contador costuma se repetir). Vai marcado como "não confirmado" para o vendedor.']]
+        .map(([k, rot, ajuda]) => (
+          <label key={k} style={{ display:'flex', alignItems:'flex-start', gap:10, cursor:'pointer', marginTop:10 }}>
+            <input type="checkbox" checked={!!plano[k]} disabled={salvando}
+              onChange={e => onSalvar({ [k]: e.target.checked })} style={{ marginTop:3, accentColor:'var(--accent)' }}/>
+            <span style={{ fontSize:12.5, lineHeight:1.45 }}>
+              {rot}
+              <span style={{ display:'block', fontSize:11.5, color:'var(--faint)', marginTop:2 }}>{ajuda}</span>
+            </span>
+          </label>
+        ))}
+      <div style={{ fontSize:12.5, fontWeight:600, color:'var(--dim)', margin:'16px 0 2px' }}>Aderência</div>
+      <label style={{ display:'flex', alignItems:'flex-start', gap:10, cursor:'pointer', marginTop:10 }}>
         <input type="checkbox" checked={!!plano.crm_segurar_baixa} disabled={salvando}
           onChange={e => onSalvar({ crm_segurar_baixa: e.target.checked })} style={{ marginTop:3, accentColor:'var(--accent)' }}/>
         <span style={{ fontSize:12.5, lineHeight:1.45 }}>
@@ -7850,7 +7866,10 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                     border:'1px solid rgba(74,222,128,.25)', borderRadius:10, padding:'11px 13px' }}>
                     <Svg d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3 19.5 19.5 0 0 1-6-6 19.8 19.8 0 0 1-3-8.6A2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1.9.3 1.8.6 2.6a2 2 0 0 1-.5 2.1L8 9.6a16 16 0 0 0 6 6l1.2-1.2a2 2 0 0 1 2.1-.5c.8.3 1.7.5 2.6.6a2 2 0 0 1 1.7 2z" color={C.green} w={16} h={16} sw={1.8}/>
                     <span style={{ fontSize:13.5, flex:1 }}>{l.contato_validado.telefone}</span>
-                    <span style={{ fontSize:10, fontWeight:600, color:C.green }}>✓ validado</span>
+                    {l.contato_validado.telefone_origem === 'receita'
+                      ? <span title="Celular do cadastro da Receita: não apareceu no site nem nas redes da empresa. Pode ser de quem fez o cadastro."
+                          style={{ fontSize:10, fontWeight:600, color:C.amber }}>cadastro da Receita · não confirmado</span>
+                      : <span style={{ fontSize:10, fontWeight:600, color:C.green }}>✓ validado</span>}
                   </div>
                 )}
                 {l.contato_validado?.email && (
@@ -7915,8 +7934,8 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
           {l.crm_retido && !l.enviado_crm_em && status !== 'Descartado' && (
             <div style={{ padding:'10px 14px', borderRadius:11, border:`1px solid ${C.amber}`, fontSize:12.5, lineHeight:1.5,
               background:`color-mix(in srgb, ${C.amber} 8%, transparent)`, color:'var(--text)' }}>
-              <b style={{ color:C.amber }}>Não foi ao CRM sozinho:</b> {l.crm_retido}. É a qualidade mínima escolhida na
-              Estratégia — se quiser, envie manualmente.
+              <b style={{ color:C.amber }}>Não foi ao CRM sozinho:</b> {l.crm_retido}. É a regra escolhida na Estratégia
+              ("O que vai sozinho para o CRM") — se quiser, envie manualmente.
             </div>
           )}
 

@@ -424,7 +424,8 @@ function montarBriefing(empresa, lead, extras = {}) {
     [
       '*Contato*',
       linha('Decisor', [de('decisor'), de('cargo')].filter(Boolean).join(' — ')),
-      linha('Telefone', normalizarNumero(cv.telefone || extras.telefone)),
+      linha('Telefone', normalizarNumero(cv.telefone || extras.telefone)
+        + (cv.telefone && cv.telefone_origem === 'receita' ? ' (cadastro da Receita — não confirmado)' : '')),
       linha('WhatsApp', normalizarNumero(cv.whatsapp)),
       linha('E-mail', cv.email || extras.email),
       linha('Site', cv.website),

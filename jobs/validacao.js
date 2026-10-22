@@ -37,6 +37,40 @@ function observarSites(pool, jev, empresa) {
 
 const MAX_TENT_CONTATO = 1;   // 1 re-enriquecimento se o contato vier incompleto
 
+// Opções de contato da Estratégia (o cliente escolhe): WhatsApp basta pro envio
+// automático, e celular da Receita como último recurso.
+async function opcoesContato(pool) {
+  const { rows: [e] } = await pool.query(
+    `SELECT crm_so_whatsapp, crm_receita_celular FROM estrategia`).catch(() => ({ rows: [] }));
+  return { soWhatsapp: !!e?.crm_so_whatsapp, receitaCelular: !!e?.crm_receita_celular };
+}
+
+// Celular do cadastro da Receita, quando a internet não achou telefone. O
+// telefone da Receita costuma ser do CONTADOR — por isso as travas: só celular
+// (DDD + 9 dígitos, o número de WhatsApp do dono da loja pequena), DDD do
+// estado da empresa, empresa não marcada como de contador e número que NÃO
+// aparece em nenhuma outra empresa da base (escritório de contabilidade repete
+// o mesmo número em dezenas de clientes). Vai marcado como não confirmado.
+async function celularDaReceita(pool, cnpj, emp) {
+  const tels = Array.isArray(emp?.contato_receita?.telefones) ? emp.contato_receita.telefones : [];
+  if (!tels.length) return null;
+  const { rows: [f] } = await pool.query(`SELECT flag_contador FROM empresas WHERE cnpj=$1`, [cnpj]);
+  if (f?.flag_contador) return null;
+  for (const t of tels) {
+    let d = String(t || '').replace(/\D/g, '');
+    if (d.length >= 12 && d.startsWith('55')) d = d.slice(2);
+    if (d.startsWith('0')) d = d.slice(1);
+    if (d.length !== 11 || d[2] !== '9') continue;
+    if (google.telefoneDesmenteUf(d, emp.uf)) continue;
+    const { rows: [{ n }] } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM empresas WHERE cnpj <> $1 AND EXISTS (
+         SELECT 1 FROM jsonb_array_elements_text(contato_receita->'telefones') AS x(v) WHERE x.v = $2)`, [cnpj, t]);
+    if (n > 0) continue;
+    return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  }
+  return null;
+}
+
 async function seguirParaSwot(queues, data) {
   if (queues?.swot) {
     await queues.swot.add('swot', data,
@@ -155,9 +189,20 @@ module.exports = async function validacao(job, pool, queues) {
       }
     }
 
-    // IMPORTANTE: o contato comercial (telefone/e-mail/site) SÓ vem de fontes
-    // comerciais (site da empresa / Places / Econodata) — NUNCA da Receita/CNPJá
-    // (aquilo é o contato do contador). `contato_receita` é usado só pra CONFERIR.
+    // O contato comercial (telefone/e-mail/site) vem de fontes comerciais (site
+    // da empresa / Places / Econodata / rede social). A Receita costuma ter o
+    // número do contador — só entra como ÚLTIMO recurso, se o cliente ligou a
+    // opção, com as travas de celularDaReceita e marcada como não confirmada.
+    const opcoes = await opcoesContato(pool);
+    if (opcoes.receitaCelular && !(c && (c.telefone || c.whatsapp))) {
+      const cel = await celularDaReceita(pool, cnpj, emp || {}).catch(() => null);
+      if (cel) {
+        c = c || { fonte: 'receita', validado_em: new Date().toISOString() };
+        c.telefone = cel; c.whatsapp = cel; c.telefone_origem = 'receita';
+        c.validado = true;
+        origem = origem || 'receita';
+      }
+    }
     if (c) {
       const cr = emp?.contato_receita || {};
       const telReceita = (Array.isArray(cr.telefones) && cr.telefones[0] || '').replace(/\D/g, '');
@@ -170,7 +215,9 @@ module.exports = async function validacao(job, pool, queues) {
         await pool.query(
           `UPDATE empresas SET contatos_verificados=$2::jsonb WHERE cnpj=$1`,
           [cnpj, JSON.stringify({
-            telefone: c.telefone, email: c.email, website: c.website || null,
+            // O celular da Receita é escolha DESTE cliente (opção da Estratégia):
+            // não vai pro cadastro global, que outros clientes reaproveitam.
+            telefone: c.telefone_origem === 'receita' ? null : c.telefone, email: c.email, website: c.website || null,
             resumo_site: c.resumo_site || null, resumo_fonte: c.resumo_fonte || null,
             fonte: c.fonte,
             // Guarda a prova junto com o contato — é o que permite auditar
@@ -229,12 +276,15 @@ module.exports = async function validacao(job, pool, queues) {
       return { lead_id, contato: 'completo' };
     }
 
-    // 2) Só telefone (sem e-mail) → NÃO vai ao CRM automático; entra na fila de
-    //    DECISÃO manual (popup no próximo login). Gera o SWOT pra ter o briefing.
+    // 2) Só telefone (sem e-mail) → por padrão NÃO vai ao CRM automático; entra
+    //    na fila de DECISÃO manual (popup no próximo login). Com a opção "WhatsApp
+    //    basta" (Estratégia), segue pro envio automático como o completo — o CRM
+    //    atende pelo WhatsApp. O SWOT roda nos dois casos.
     if (hasPhone && !hasEmail) {
-      await pool.query(`UPDATE leads SET contato_status='decisao', contato_pendente=true WHERE id=$1`, [lead_id]);
-      await seguirParaSwot(queues, { cnpj, busca_id, lead_id, contato_ok: false });
-      return { lead_id, contato: 'decisao_so_telefone' };
+      await pool.query(`UPDATE leads SET contato_status='decisao', contato_pendente=$2 WHERE id=$1`,
+        [lead_id, !opcoes.soWhatsapp]);
+      await seguirParaSwot(queues, { cnpj, busca_id, lead_id, contato_ok: opcoes.soWhatsapp });
+      return { lead_id, contato: opcoes.soWhatsapp ? 'so_telefone_envia' : 'decisao_so_telefone' };
     }
 
     // 3) SEM telefone: o lead FICA, marcado como 'Incompleto'.
@@ -268,3 +318,5 @@ module.exports = async function validacao(job, pool, queues) {
     return { lead_id, erro: err.message };
   }
 };
+
+module.exports.celularDaReceita = celularDaReceita;

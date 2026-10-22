@@ -211,13 +211,15 @@ module.exports = async function swot(job, pool, queues) {
   // Sem chave IA: o lead segue 'scored' (sem gasto). Mesmo assim pode ir ao CRM.
 
   // Gate de contato: envio AUTOMÁTICO ao CRM só acontece com telefone E e-mail
-  // validados. Sem os dois, fica pendente/decisão manual — o envio manual pela
-  // triagem continua liberado.
+  // validados — ou só com o telefone/WhatsApp, se o cliente escolheu "WhatsApp
+  // basta" na Estratégia. Fora disso fica pendente/decisão manual — o envio
+  // manual pela triagem continua liberado.
   let contatoOk = job.data.contato_ok;
   if (contatoOk === undefined) {
     const { rows: [l] } = await pool.query(`SELECT contato_validado FROM leads WHERE id=$1`, [lead_id]);
     const cv = l?.contato_validado || {};
-    contatoOk = !!((cv.whatsapp || cv.telefone) && cv.email);
+    const { rows: [op] } = await pool.query(`SELECT crm_so_whatsapp FROM estrategia`).catch(() => ({ rows: [] }));
+    contatoOk = !!((cv.whatsapp || cv.telefone) && (cv.email || op?.crm_so_whatsapp));
   }
 
   // Qualidade mínima pro envio automático (Estratégia). Quem não passa fica na
