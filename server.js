@@ -740,6 +740,11 @@ async function init() {
     -- Quem não passa fica na lista pra triagem (leads.crm_retido diz por quê).
     ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_score_minimo   INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_segurar_baixa  BOOLEAN NOT NULL DEFAULT false;
+    -- Contato pro envio automático: WhatsApp basta (sem exigir e-mail — o CRM
+    -- atende pelo WhatsApp) e, sem telefone na internet, usar o celular do
+    -- cadastro da Receita (com travas contra número de contador).
+    ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_so_whatsapp    BOOLEAN NOT NULL DEFAULT false;
+    ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_receita_celular BOOLEAN NOT NULL DEFAULT false;
     ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_fila_pendentes INTEGER;
     ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS crm_fila_em        TIMESTAMPTZ;
     -- Gatilho: 'total' (o total cai pro crm_fila_gatilho) ou 'fila' (alguma
@@ -1939,6 +1944,7 @@ async function planoEstrategia() {
     `SELECT ativo, simultaneos, ao_concluir, estado, estado_em,
             crm_controle, crm_fila_gatilho, crm_fila_pendentes, crm_fila_em,
             crm_gatilho_modo, crm_fila_minimo, crm_total_maximo, crm_score_minimo, crm_segurar_baixa,
+            crm_so_whatsapp, crm_receita_celular,
             distrib_ativo, distrib_modo, distrib_conexoes,
             (distrib_token IS NOT NULL AND distrib_token <> '') AS distrib_tem_token FROM estrategia`);
   return p;
@@ -2051,7 +2057,9 @@ app.patch('/api/estrategia', requireAuth, requireEditor, async (req, res) => {
       if (!(n >= 0 && n <= 100)) return res.status(400).json({ erro: 'score mínimo pro CRM: de 0 a 100' });
       vals.push(n); sets.push(`crm_score_minimo=$${vals.length}`);
     }
-    if (typeof b.crm_segurar_baixa === 'boolean') { vals.push(b.crm_segurar_baixa); sets.push(`crm_segurar_baixa=$${vals.length}`); }
+    for (const k of ['crm_segurar_baixa', 'crm_so_whatsapp', 'crm_receita_celular']) {
+      if (typeof b[k] === 'boolean') { vals.push(b[k]); sets.push(`${k}=$${vals.length}`); }
+    }
     for (const k of ['crm_fila_minimo', 'crm_total_maximo']) {
       if (b[k] == null) continue;
       const n = parseInt(b[k], 10);
@@ -2352,7 +2360,8 @@ app.get('/api/leads/decisao-pendente', requireAuth, async (req, res) => {
       `SELECT id, fantasia, razao, cnpj, cidade, uf, score,
               contato_validado->>'telefone' AS telefone,
               contato_validado->>'website'  AS website
-       FROM leads WHERE contato_status='decisao'
+       FROM leads WHERE contato_status='decisao' AND contato_pendente AND enviado_crm_em IS NULL
+         AND COALESCE(status, '') NOT IN ('Enviado', 'Descartado')
        ORDER BY score DESC, id LIMIT 100`
     );
     res.json({ leads: rows, total: rows.length });
