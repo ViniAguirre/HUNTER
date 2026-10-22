@@ -461,6 +461,9 @@ async function init() {
   await pool.query(`
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS empresa_cnpj    TEXT REFERENCES empresas(cnpj) ON DELETE SET NULL;
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS motivo_descarte TEXT;
+    -- Raio-X do radar: por que as empresas encontradas não viraram lead, por
+    -- motivo ({"atividade_rara": 120, "ja_vista": 300, …}).
+    ALTER TABLE buscas ADD COLUMN IF NOT EXISTS descartes JSONB NOT NULL DEFAULT '{}';
     -- Por que o lead NÃO foi ao CRM sozinho (abaixo do score mínimo, aderência
     -- baixa): fica pra triagem, e a tela diz o motivo.
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS crm_retido      TEXT;
@@ -938,6 +941,15 @@ async function init() {
   // Notas falsas do Score 1 (semelhantes sem perfil davam 100 a qualquer
   // empresa ativa): recalcula os leads em aberto com o perfil atual do radar.
   // Em segundo plano — não segura a subida da API.
+  // Radares de semelhantes ativos com perfil anterior às palavras do ramo:
+  // re-perfilam na próxima varredura (busca alinhada com o filtro + palavras).
+  await pool.query(`
+    UPDATE buscas SET criterios = criterios || '{"reperfilar": true}'::jsonb
+     WHERE tipo='lookalike' AND status='Ativa' AND criterios->'params'->'perfil' IS NOT NULL
+       AND criterios->'params'->'perfil'->'palavras' IS NULL AND NOT (criterios ? 'reperfilar')
+  `).then(r => { if (r.rowCount) console.log(`[migração] ${r.rowCount} radar(es) de semelhantes vão refazer o perfil com as palavras do ramo`); })
+    .catch(e => console.error('[migração] reperfilar palavras:', e.message));
+
   // Depois, os portões de perfil (ramo dos clientes, entidade não empresarial)
   // sobre os leads que nasceram antes deles.
   const score1Job = require('./jobs/score1');
@@ -1869,6 +1881,44 @@ app.get('/api/buscas/:id/qualidade', requireAuth, async (req, res) => {
       leads,
     });
   } catch (e) { console.error('[qualidade]', e.message); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// Palavras do ramo do radar de semelhantes: remover (ou devolver) uma palavra.
+// Ela sai da busca por nome e do filtro na hora; a escolha fica gravada no
+// radar (e na pauta, quando o radar é da Estratégia) e vale nos próximos perfis.
+app.post('/api/buscas/:id/palavras', requireAuth, requireEditor, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const f = String(req.body?.familia || '').trim();
+  if (isNaN(id) || !f) return res.status(400).json({ erro: 'radar ou palavra inválidos' });
+  const remover = req.body?.remover !== false;
+  try {
+    const { rows: [b] } = await pool.query(`SELECT criterios, estrategia_pauta_id FROM buscas WHERE id=$1`, [id]);
+    if (!b) return res.status(404).json({ erro: 'radar não encontrado' });
+    const palavras = require('./providers/palavras');
+    const crit = b.criterios || {};
+    const marcar = lista => {
+      const set = new Set(Array.isArray(lista) ? lista : []);
+      if (remover) set.add(f); else set.delete(f);
+      return [...set];
+    };
+    crit.palavras_excluidas = marcar(crit.palavras_excluidas);
+    const pal = crit.params?.perfil?.palavras;
+    if (Array.isArray(pal)) {
+      for (const p of pal) if (p.f === f) { if (remover) p.removida = true; else delete p.removida; }
+      crit.params.keywords = palavras.termosDeBusca(pal);
+    }
+    await pool.query(`UPDATE buscas SET criterios=$2::jsonb WHERE id=$1`, [id, JSON.stringify(crit)]);
+    if (b.estrategia_pauta_id) {
+      const { rows: [p] } = await pool.query(`SELECT criterios FROM estrategia_pautas WHERE id=$1`, [b.estrategia_pauta_id]);
+      if (p) {
+        const pc = p.criterios || {};
+        pc.palavras_excluidas = marcar(pc.palavras_excluidas);
+        await pool.query(`UPDATE estrategia_pautas SET criterios=$2::jsonb, atualizado_em=now() WHERE id=$1`,
+          [b.estrategia_pauta_id, JSON.stringify(pc)]);
+      }
+    }
+    res.json({ ok: true, palavras: pal || [], termos: crit.params?.keywords || [] });
+  } catch (e) { console.error('[palavras]', e.message); res.status(500).json({ erro: 'erro interno' }); }
 });
 
 app.patch('/api/buscas/:id', requireAuth, requireEditor, async (req, res) => {

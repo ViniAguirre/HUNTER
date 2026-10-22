@@ -17,6 +17,9 @@ const tracking = require('../providers/tracking');
 const { registrar } = require('./tracking');
 const typesafe = require('../providers/typesafe');
 
+// Raio-X do radar (buscas.descartes): por que a empresa não virou lead.
+const contarDescarte = (pool, busca_id, motivo) => require('./descoberta').contarDescartes(pool, busca_id, { [motivo]: 1 });
+
 // Pesos vivem em providers/perfil.js — fonte única, usada tanto pelo ICP
 // (direto) quanto pelo lookalike (como prior dos pesos dinâmicos).
 const W = perfilamento.W;
@@ -141,6 +144,7 @@ module.exports = async function score1(job, pool, queues) {
   if (busca.tipo === 'lookalike' && !params?.perfil) {
     console.warn(`[score1] ${cnpj} (radar ${busca_id}): radar de semelhantes sem perfil — empresa não aprovada.`);
     await pool.query(`UPDATE buscas SET fora_perfil = fora_perfil + 1 WHERE id=$1`, [busca_id]);
+    await contarDescarte(pool, busca_id, 'radar_sem_perfil');
     return { cnpj, passou: false, motivo: 'radar_sem_perfil' };
   }
   let { score, breakdown } = computeScore1(empresa, params);
@@ -173,6 +177,7 @@ module.exports = async function score1(job, pool, queues) {
   if (!passou) {
     // Verificada mas fora do perfil: NÃO vira lead — só conta na busca.
     await pool.query(`UPDATE buscas SET fora_perfil = fora_perfil + 1 WHERE id=$1`, [busca_id]);
+    await contarDescarte(pool, busca_id, barrada ? barrada.motivo : 'abaixo_do_corte');
     return { cnpj, score, corte, passou: false, ...(barrada ? { motivo: barrada.motivo } : {}) };
   }
 
@@ -193,6 +198,7 @@ module.exports = async function score1(job, pool, queues) {
       `SELECT lista FROM sementes WHERE cnpj=$1 LIMIT 1`, [cnpj]);
     if (sem) {
       await pool.query(`UPDATE buscas SET fora_perfil = fora_perfil + 1 WHERE id=$1`, [busca_id]);
+      await contarDescarte(pool, busca_id, 'cliente_da_lista');
       return { cnpj, score, corte, passou: false, motivo: 'na_lista_de_semelhantes', lista: sem.lista };
     }
   }
@@ -246,8 +252,11 @@ module.exports = async function score1(job, pool, queues) {
       // custou crédito. O log diz qual, de qual radar, e há quanto tempo.
       console.warn(`[score1] ${cnpj} (radar ${busca_id}) desistiu após ${Math.round(esperando / 3600_000)}h `
         + `esperando vaga (${motivo}) — revise o teto diário ou a janela de funcionamento.`);
+      await contarDescarte(pool, busca_id, 'desistiu_de_esperar');
       return { cnpj, score, corte, passou: true, desistiu: true, motivo, horas_esperando: Math.round(esperando / 3600_000) };
     }
+    // Conta só a primeira espera (a mesma empresa volta aqui a cada adiamento).
+    if (!job.data.aguardando_desde) await contarDescarte(pool, busca_id, 'esperou_vaga');
     if (queues?.score1) {
       const delay = Math.max(60_000, vagas.esperarMs) + Math.floor(Math.random() * ESPALHAR_MS);
       await queues.score1.add('score1', { cnpj, busca_id, aguardando_desde: desde },

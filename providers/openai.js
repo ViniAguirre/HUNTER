@@ -402,6 +402,61 @@ async function sugerirCnae(texto, catalogo, { apiKey, modelo, max = 8, provedor 
   }
 }
 
+// Palavras do ramo (providers/palavras.js): das palavras que se repetem nos
+// nomes dos clientes, quais são do RAMO (empresa com ela no nome quase certamente
+// faz o mesmo que os clientes) e quais são genéricas (aparecem em muitos negócios
+// de outros ramos); e outras palavras do mesmo ramo que costumam aparecer em nome
+// de empresa. Só julga e sugere — a medida no cadastro decide junto.
+const SYS_PALAVRAS = `Você ajuda a prospectar empresas parecidas com os clientes de um vendedor B2B brasileiro,
+procurando PALAVRAS NO NOME (razão social / nome fantasia). Uma palavra do RAMO é aquela que, aparecendo no
+nome de uma empresa, quase garante que ela atua no mesmo ramo dos clientes (ex.: "purificadores", "filtros"
+para quem vende purificadores de água). Uma palavra GENÉRICA aparece em muitos negócios de outros ramos e traz
+quem não é cliente (ex.: "água" — água mineral, poço artesiano, distribuidora de galão; "casa", "center",
+"lar"). Responda SOMENTE com JSON válido.`;
+
+async function avaliarPalavras(candidatas, nomes, { apiKey, modelo, provedor, contexto } = {}) {
+  const prov = provedorDe(provedor);
+  if (!apiKey) throw new Error(`${prov.rotulo}: chave obrigatória (Integrações → Inteligência).`);
+  const body = {
+    model: modelo || prov.modelo,
+    messages: [
+      { role: 'system', content: SYS_PALAVRAS },
+      { role: 'user', content:
+        (String(contexto || '').trim() ? `O que o vendedor vende:\n"${String(contexto).trim().slice(0, 1500)}"\n\n` : '') +
+        `Nomes de clientes atuais (amostra):\n${(nomes || []).slice(0, 60).map(n => `- ${n}`).join('\n')}\n\n` +
+        `Palavras que se repetem nesses nomes (com a % de clientes que as têm):\n` +
+        candidatas.map(c => `- ${c.palavra} (${Math.round(c.freq * 100)}%)`).join('\n') + '\n\n' +
+        `Responda no formato JSON:
+{
+  "genericas": ["palavras da lista acima que são GENÉRICAS (trazem empresas de outros ramos)"],
+  "sugeridas": [{ "palavra": "outra palavra do MESMO RAMO, que costuma aparecer em nome de empresa desse ramo e NÃO está na lista", "formas": ["singular", "plural"] }]
+}
+Até ${MAX_SUGERIDAS_PALAVRAS} sugeridas, só palavras específicas do ramo (nunca genéricas), sem acento, em minúsculas.` },
+    ],
+    temperature: 0.1,
+    max_tokens: 1500,
+    response_format: { type: 'json_object' },
+  };
+  try {
+    const { data } = await postChat(prov.url, body, apiKey);
+    const parsed = extrairJson(data?.choices?.[0]?.message?.content || '{}');
+    const lista = v => (Array.isArray(v) ? v.filter(Boolean) : []);
+    return {
+      genericas: lista(parsed.genericas).map(String),
+      sugeridas: lista(parsed.sugeridas).filter(x => typeof x === 'string' || x.palavra)
+        .map(x => typeof x === 'string' ? { palavra: x, formas: [] } : { palavra: String(x.palavra), formas: lista(x.formas).map(String) }),
+    };
+  } catch (err) {
+    if (err.response) {
+      const e = new Error(`${prov.rotulo} HTTP ${err.response.status}`);
+      e.status = err.response.status;
+      throw e;
+    }
+    throw new Error(`${prov.rotulo}: ${err.message}`);
+  }
+}
+const MAX_SUGERIDAS_PALAVRAS = 8;
+
 // Teste de conexão da tela de Integrações: uma chamada mínima com a chave e o
 // modelo SALVOS, pra mostrar qual modelo de fato respondeu. O rótulo do card não
 // prova nada — modelo com nome errado só aparecia quando o briefing falhava.
@@ -447,4 +502,4 @@ async function integracoesIA(pool) {
   return rows;
 }
 
-module.exports = { gerarSwot, sugerirCnae, integracoesIA, testarChave, PROVEDORES, MODELO_PADRAO };
+module.exports = { gerarSwot, sugerirCnae, avaliarPalavras, integracoesIA, testarChave, PROVEDORES, MODELO_PADRAO };
