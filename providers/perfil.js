@@ -438,14 +438,35 @@ function construirPerfil(empresas, base, W, opts = {}) {
     .filter(x => !x.so_negativo && x.freq >= 0.15 && (x.ev == null || x.ev > 0.5))
     .slice(0, 6).map(x => x.t);
 
+  // Palavras do ramo (providers/palavras.js): família da palavra, sem as
+  // genéricas, mais as sugeridas — calculadas antes (precisam do cadastro e da
+  // IA) e passadas em opts.palavras. Sem elas, ficam as palavras fortes antigas.
+  const pal = opts.palavras && Array.isArray(opts.palavras.palavras) ? opts.palavras : null;
+  if (pal) perfil.palavras = pal.palavras;
+  const keywords = pal ? pal.termos : nomesFortes;
+
+  // Busca alinhada com o filtro (portaoPerfil): empresa de atividade rara entre
+  // os clientes (<5%) só passa com palavra do ramo no nome. Então a varredura
+  // só procura essas atividades JUNTO com as palavras (fase 1); a fase 2, sem
+  // palavra, fica com as atividades principais. Antes a fase 2 varria as raras
+  // sozinhas — o universo delas é muito maior, e quase tudo era recusado.
+  const ok = x => !x.so_negativo && (x.freq || 0) > 0;
+  const cnaesNucleo = (perfil.cnaes || []).filter(x => ok(x) && x.freq >= CNAE_FREQ_MIN).slice(0, 10).map(x => x.c);
+  const cnaesComPalavra = [...new Set([...cnaesBusca,
+    ...(perfil.cnaes || []).filter(x => ok(x) && (x.n >= 2 || x.freq >= CNAE_FREQ_MIN)).map(x => x.c)])].slice(0, 15);
+
   const params = {
     origem: 'lookalike',
     perfil,
-    keywords: nomesFortes,
+    keywords,
     geo_manual: !!opts.geoManual,
     // parâmetros de descoberta (mesma forma que o ICP usa)
     ufs: ufsBusca,
-    cnaes: cnaesBusca,
+    // Com palavras do ramo: fase 1 (com palavra) em todas as atividades dos
+    // clientes; fase 2 (sem palavra) só nas principais. Sem palavras: as
+    // principais (ou, numa lista dispersa sem nenhuma, as de antes).
+    cnaes: keywords.length ? cnaesComPalavra : (cnaesNucleo.length ? cnaesNucleo : cnaesBusca),
+    cnaes_nucleo: cnaesNucleo,
     portes: [],           // porte fica pro Score 1 (a CNPJá não filtra bem por porte)
     municipios_cod: [],
     founded_gte: null, founded_lte: null,
@@ -531,10 +552,16 @@ function pontuarProximidade(emp, perfil, W) {
   // um nome comprido não deve valer mais que um nome certeiro).
   if (perfil.nomes?.length) {
     const meus = tokensNome(emp.fantasia, emp.razao);
+    // Com as palavras do ramo: casa pela família ("purificadores" = "purificador")
+    // e palavra genérica, recusada ou removida não vale ponto ("água").
+    const pal = Array.isArray(perfil.palavras) && perfil.palavras.length ? perfil.palavras : null;
+    const { familia, valida } = pal ? require('./palavras') : {};
+    const invalidas = pal ? new Set(pal.filter(p => !valida(p)).map(p => p.f)) : null;
+    const meusF = pal ? new Set(meus.map(familia)) : null;
     let melhor = null;
-    for (const t of meus) {
-      const hit = perfil.nomes.find(x => x.t === t);
-      if (hit && (!melhor || (hit.freq || 0) > (melhor.freq || 0))) melhor = hit;
+    for (const x of perfil.nomes) {
+      const hit = pal ? (meusF.has(familia(x.t)) && !invalidas.has(familia(x.t))) : meus.includes(x.t);
+      if (hit && (!melhor || (x.freq || 0) > (melhor.freq || 0))) melhor = x;
     }
     if (melhor && melhor.so_negativo) {
       avisa(`Nome contém "${melhor.t}" — palavra dos que você recusou (${melhor.nneg})`);
@@ -600,6 +627,9 @@ function entidadeDe(emp, { porNome = true } = {}) {
 // Palavra do ramo no nome da empresa: uma que 10%+ dos clientes têm no nome e
 // que não é típica dos recusados.
 function palavraDoRamo(emp, perfil) {
+  if (Array.isArray(perfil?.palavras) && perfil.palavras.length) {
+    return require('./palavras').palavraDoRamoNoNome(emp, perfil.palavras);
+  }
   const meus = new Set(tokensNome(emp.fantasia, emp.razao));
   return (perfil?.nomes || []).find(x => meus.has(x.t) && !x.so_negativo
     && (x.freq || 0) >= NOME_FREQ_MIN && !(x.ev != null && x.ev <= 0.35)) || null;

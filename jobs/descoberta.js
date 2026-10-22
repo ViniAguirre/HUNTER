@@ -16,6 +16,46 @@ const fontes = require('./fontes');
 const orcamento = require('./orcamento');
 const tracking = require('../providers/tracking');
 const { registrar } = require('./tracking');
+const palavras = require('../providers/palavras');
+const openai = require('../providers/openai');
+
+// Raio-X do radar: por que as empresas encontradas não viraram lead, contado
+// por motivo em buscas.descartes (a tela do radar mostra). Soma atômica.
+async function contarDescartes(pool, busca_id, motivos) {
+  const itens = Object.entries(motivos || {}).filter(([, n]) => n > 0);
+  for (const [motivo, n] of itens) {
+    await pool.query(
+      `UPDATE buscas SET descartes = jsonb_set(COALESCE(descartes, '{}'::jsonb), ARRAY[$2::text],
+              to_jsonb(COALESCE((descartes->>$2)::int, 0) + $3)) WHERE id=$1`, [busca_id, motivo, n]).catch(() => {});
+  }
+}
+
+// A IA julga as palavras dos nomes da lista (do ramo × genéricas) e sugere
+// outras (providers/palavras.js). Em cache por 24 h: cada radar de cidade
+// re-perfila a MESMA lista e a resposta seria a mesma.
+const _iaPalavrasCache = new Map();
+async function iaPalavras(pool, contexto) {
+  const igs = await openai.integracoesIA(pool).catch(() => []);
+  if (!igs.length) return null;
+  return {
+    async avaliar(cands, empresas) {
+      const chave = JSON.stringify([contexto || '', cands.map(c => c.palavra).sort()]);
+      const c = _iaPalavrasCache.get(chave);
+      if (c && Date.now() - c.em < 24 * 3600_000) return c.v;
+      const nomes = (empresas || []).map(e => e.fantasia || e.razao).filter(Boolean);
+      let ultimo = null;
+      for (const ig of igs) {
+        try {
+          const v = await openai.avaliarPalavras(cands, nomes, {
+            apiKey: ig.key_cifrada, modelo: ig.config?.modelo, provedor: ig.provedor, contexto });
+          _iaPalavrasCache.set(chave, { em: Date.now(), v });
+          return v;
+        } catch (e) { ultimo = e; }
+      }
+      throw ultimo;
+    },
+  };
+}
 
 // Nome do radar pro evento do Tracking Hub. Em cache porque a descoberta passa
 // por aqui uma vez POR EMPRESA — seria um SELECT idêntico a cada CNPJ da lista.
@@ -149,7 +189,7 @@ module.exports = async function descoberta(job, pool, queues) {
   // O cadastro `empresas` é global: o que qualquer cliente já descobriu serve
   // pra todos. Só vamos à CNPJá (paga) pelo que faltar. `orcamentoDaHora` limita
   // quantas cabem agora, então não adianta puxar mais do que isso.
-  const counters = { novos: 0, pulados: 0, enfileirados: 0, total: 0, locais: 0 };
+  const counters = { novos: 0, pulados: 0, enfileirados: 0, total: 0, locais: 0, motivos: {} };
   const tetoLocal = Math.min(orcamentoDaHora, TETO_PAGINAS * 100);
   const locais = await buscarLocal(pool, params, tetoLocal);
   for (const emp of locais) {
@@ -168,6 +208,7 @@ module.exports = async function descoberta(job, pool, queues) {
   }
   // Encheu a cota da hora só com o banco local → nem toca na CNPJá nesta rodada.
   if (counters.enfileirados >= orcamentoDaHora) {
+    await contarDescartes(pool, busca_id, counters.motivos);
     await pool.query(`UPDATE buscas SET ultimo_heartbeat=now() WHERE id=$1`, [busca_id]);
     return { modo: tipo, ...counters, fonte: 'local', paginas: 0, esgotou: false };
   }
@@ -189,7 +230,8 @@ module.exports = async function descoberta(job, pool, queues) {
   do {
     // A fase 2 varre o CNAE inteiro; a palavra-chave sai do filtro e continua
     // valendo no score, onde ela é sinal e não porteira.
-    const filtros = { ...params, names: fase === 1 ? params.names : [] };
+    const filtros = { ...params, names: fase === 1 ? params.names : [],
+      activities: fase === 2 && params.duasFases && params.activitiesFase2 ? params.activitiesFase2 : params.activities };
     const { offices, next } = await cnpja.search({ ...filtros, token }, ig.key_cifrada);
     counters.total += offices.length;
     for (const office of offices) {
@@ -210,7 +252,13 @@ module.exports = async function descoberta(job, pool, queues) {
     if (!next) {
       // Acabou a fase 1: a busca NÃO está esgotada, só terminou a parte
       // precisa. Zera o cursor e segue na fase 2, atrás de volume.
-      if (fase === 1) { fase = 2; token = null; continue; }
+      if (fase === 1) {
+        fase = 2; token = null;
+        // Sem atividade principal (lista dispersa): a fase sem palavra não teria
+        // o que buscar que passasse no filtro.
+        if (params.activitiesFase2 && !params.activitiesFase2.length) { esgotou = true; break; }
+        continue;
+      }
       esgotou = true; break;
     }
   } while (pagina < TETO_PAGINAS);
@@ -221,6 +269,7 @@ module.exports = async function descoberta(job, pool, queues) {
   // Esgotou de verdade → zera cursor E fase, pra uma reativação recomeçar pela
   // fase precisa. Parou no teto de páginas → guarda os dois, pra retomar de
   // onde estava sem repagar nem pular a fase.
+  await contarDescartes(pool, busca_id, counters.motivos);
   await pool.query(
     `UPDATE buscas SET status='Esgotada', descoberta_token=$1, descoberta_fase=$2,
                        ultimo_heartbeat=now() WHERE id=$3`,
@@ -434,8 +483,14 @@ async function perfilarComLista(pool, criterios, busca_id, cnpjs, negativos = []
   }
 
   const base = await baseRates.baseRates(pool);   // taxas do universo p/ peso de raridade
+  // Palavras do ramo: famílias que se repetem nos nomes dos clientes, sem as
+  // genéricas, mais as sugeridas pela IA. Falhou? Fica o perfil sem elas.
+  const proposta = criterios.proposta_valor || criterios.params?.proposta_valor || '';
+  const pal = await palavras.palavrasDoRamo(pool, amostra, {
+    negativas: amostraNeg, ia: await iaPalavras(pool, proposta), excluidas: criterios.palavras_excluidas || [],
+  }).catch(e => { console.warn(`[descoberta] busca ${busca_id}: palavras do ramo falharam (${e.message})`); return null; });
   const { params } = perfilamento.construirPerfil(amostra, base, perfilamento.W,
-    { geoManual, negativas: amostraNeg });
+    { geoManual, negativas: amostraNeg, palavras: pal });
   if (ufsManuais.length) params.ufs = ufsManuais;
   if (municipiosManuais.length) {
     params.municipios_cod = municipiosManuais;
@@ -488,7 +543,8 @@ async function upsertEmpresa(pool, o) {
 // O lead só é CRIADO se/quando qualificar no Score 1 (não aqui na descoberta).
 async function processarOffice(pool, queues, busca_id, office, counters) {
   if (!office.cnpj || office.cnpj.length !== 14) return;
-  if (office.situacao && !/ativa/i.test(office.situacao)) { counters.pulados++; return; }
+  const motivo = m => { counters.pulados++; if (counters.motivos) counters.motivos[m] = (counters.motivos[m] || 0) + 1; };
+  if (office.situacao && !/ativa/i.test(office.situacao)) { motivo('inativa'); return; }
 
   // Trava é POR TENANT (empresa_tenant_estado); o cadastro em si (empresas) é
   // global e compartilhado — por isso são duas checagens separadas.
@@ -499,8 +555,8 @@ async function processarOffice(pool, queues, busca_id, office, counters) {
     `SELECT (SELECT estado_global FROM empresa_tenant_estado WHERE cnpj=$1) AS estado,
             EXISTS (SELECT 1 FROM sementes WHERE cnpj=$1) AS semente`, [office.cnpj]
   );
-  if (trava?.semente) { counters.pulados++; return; }
-  if (trava?.estado && TRAVADOS.includes(trava.estado)) { counters.pulados++; return; }
+  if (trava?.semente) { motivo('cliente_da_lista'); return; }
+  if (trava?.estado && TRAVADOS.includes(trava.estado)) { motivo('ja_vista'); return; }
 
   const { rows: [existente] } = await pool.query(
     `SELECT 1 FROM empresas WHERE cnpj=$1`, [office.cnpj]
@@ -554,15 +610,25 @@ async function buscarLocal(pool, params, limite) {
   const vals = [];
   const add = (sql, val) => { vals.push(val); conds.push(sql.replace('$?', `$${vals.length}`)); };
 
+  // Semelhantes com palavras do ramo: atividade principal OU (qualquer atividade
+  // dos clientes COM palavra no nome) — o mesmo que as duas fases da CNPJá.
+  const limpaCnae = l => l.map(c => String(c).replace(/\D/g, ''));
+  const combinar = Array.isArray(params.activitiesFase2) && params.activities?.length > 0 && params.names?.length > 0;
   if (params.states?.length)         add(`uf = ANY($?)`, params.states.map(s => String(s).toUpperCase()));
-  if (params.activities?.length)     add(`cnae = ANY($?)`, params.activities.map(c => String(c).replace(/\D/g, '')));
+  if (params.activities?.length && !combinar) add(`cnae = ANY($?)`, limpaCnae(params.activities));
   if (params.municipiosNomes?.length) add(`cidade ILIKE ANY($?)`, params.municipiosNomes);
   if (params.portes?.length)          add(`porte = ANY($?)`, params.portes);
   // Palavra-chave: casa em razão social OU nome fantasia (mesma semântica do
   // filtro `names.in` da CNPJá, que é OU entre os termos).
-  if (params.names?.length) {
+  if (params.names?.length && !combinar) {
     vals.push(params.names.map(t => `%${String(t).trim()}%`));
     conds.push(`(razao ILIKE ANY($${vals.length}) OR fantasia ILIKE ANY($${vals.length}))`);
+  }
+  if (combinar) {
+    vals.push(limpaCnae(params.activitiesFase2)); const iN = vals.length;
+    vals.push(limpaCnae(params.activities)); const iA = vals.length;
+    vals.push(params.names.map(t => `%${String(t).trim()}%`)); const iP = vals.length;
+    conds.push(`(cnae = ANY($${iN}) OR (cnae = ANY($${iA}) AND (razao ILIKE ANY($${iP}) OR fantasia ILIKE ANY($${iP}))))`);
   }
 
   // Já processadas POR ESTE cliente ficam de fora (a RLS de empresa_tenant_estado
@@ -616,6 +682,10 @@ function buildSearchParams(criterios) {
     // explícito e continua sendo exigência, numa fase só.
     out.duasFases = p.origem === 'lookalike'
       && out.activities.length > 0 && out.names.length > 0;
+    // Fase 2 (sem palavra) só nas atividades principais dos clientes: as raras
+    // só passam no filtro com palavra do ramo no nome, então varrê-las sem
+    // palavra só gastaria crédito. Perfil antigo (sem a lista) → como antes.
+    out.activitiesFase2 = p.origem === 'lookalike' && Array.isArray(p.cnaes_nucleo) ? p.cnaes_nucleo : null;
     // Só pra busca LOCAL: a tabela `empresas` guarda cidade por NOME e o porte
     // como texto — a CNPJá filtra por código de município e não usa porte aqui.
     out.municipiosNomes = (p.municipios_rotulos || []).map(m => m?.n).filter(Boolean);
@@ -643,3 +713,6 @@ function buildSearchParams(criterios) {
 module.exports.enrichComRetry = enrichComRetry;
 module.exports.upsertEmpresa = upsertEmpresa;
 module.exports.TETO_AMOSTRA = TETO_AMOSTRA;
+module.exports.contarDescartes = contarDescartes;
+module.exports.buscarLocal = buscarLocal;
+module.exports.buildSearchParams = buildSearchParams;

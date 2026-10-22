@@ -2032,11 +2032,13 @@ function Buscas({ onOpen, onEstrategia }) {
       <div className="h-tabela" style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden' }}>
         <div className="h-scroll">
         <div className="h-tw" style={{ '--tw':'1000px' }}>
-        <div className="h-thead" style={{ display:'grid', gridTemplateColumns:'24px 2fr 1fr 1fr 1.1fr .8fr .8fr .8fr 1fr 40px',
+        <div className="h-thead" style={{ display:'grid', gridTemplateColumns:'24px 2fr 1fr 1fr 1.1fr .8fr .7fr .7fr .7fr 1fr 40px',
           alignItems:'center', gap:10, padding:'12px 18px', borderBottom:'1px solid var(--border)',
           fontSize:11, fontWeight:600, letterSpacing:'.04em', color:'var(--faint)', textTransform:'uppercase' }}>
           <div/><div>Nome</div><div>Status</div><div>Criada por</div><div>Criada em</div>
-          <div>Encontr.</div><div>Qualif.</div><div>CRM</div><div>Atividade</div><div/>
+          <div>Encontr.</div>
+          <div title="Empresas que viraram lead (passaram no perfil), com ou sem contato completo">Leads</div>
+          <div title="Leads com telefone e e-mail">Qualif.</div><div>CRM</div><div>Atividade</div><div/>
         </div>
         {buscas === null && (
           <div style={{ padding:'22px 18px', fontSize:13, color:'var(--faint)' }}>Carregando…</div>
@@ -2046,7 +2048,7 @@ function Buscas({ onOpen, onEstrategia }) {
         )}
         {buscas && buscas.map(b => (
           <div key={b.id} onClick={() => onOpen(b.id)} className="row-hover h-linha"
-            style={{ display:'grid', gridTemplateColumns:'24px 2fr 1fr 1fr 1.1fr .8fr .8fr .8fr 1fr 40px',
+            style={{ display:'grid', gridTemplateColumns:'24px 2fr 1fr 1fr 1.1fr .8fr .7fr .7fr .7fr 1fr 40px',
               alignItems:'center', gap:10, padding:'14px 18px', borderBottom:'1px solid var(--border)', cursor:'pointer' }}>
             <div className="h-sel"><StatusDot color={healthColors[b.health]||C.gray} pulse={b.health==='green'}/></div>
             <div className="h-titulo" style={{ fontSize:13.5, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{b.nome}</div>
@@ -2069,6 +2071,10 @@ function Buscas({ onOpen, onEstrategia }) {
             </div>
             <div data-rot="Criada em" style={{ fontSize:12, color:'var(--dim)', lineHeight:1.35 }}>{dataHora(b.criado_em)}</div>
             <div data-rot="Encontr." style={{ fontSize:13, fontWeight:600 }}>{fmtNum(b.encontrados ?? b.enc)}</div>
+            <div data-rot="Leads" style={{ fontSize:13 }}
+              title={`${fmtNum(b.qualificados ?? 0)} com telefone e e-mail · ${fmtNum(b.so_telefone ?? 0)} só com telefone · ${fmtNum(b.sem_contato ?? 0)} sem contato`}>
+              {fmtNum(b.segmentadas ?? b.seg)}
+            </div>
             <div data-rot="Qualif." style={{ fontSize:13, color:'var(--dim)' }}>{fmtNum(b.qualificados ?? b.qual)}</div>
             <div data-rot="CRM" style={{ fontSize:13, color:C.cyan }}>{fmtNum(b.enviados ?? b.crm)}</div>
             <div data-rot="Atividade" style={{ fontSize:12, color:'var(--faint)' }}>{timeAgo(b.ultima_ativ)}</div>
@@ -2089,6 +2095,118 @@ function Buscas({ onOpen, onEstrategia }) {
 }
 
 // ── PerfilMedio: mostra o perfil destilado da lista (lookalike) ────────────────
+// Raio-X do radar: das empresas encontradas, quantas viraram lead e por que as
+// outras não viraram (buscas.descartes, contado pela descoberta e pelo Score 1).
+const MOTIVOS_DESCARTE = [
+  ['ja_vista', 'Já vistas por outro radar (lead ou descarte anterior)'],
+  ['cliente_da_lista', 'Já são clientes (estão na lista)'],
+  ['inativa', 'Inativas na Receita'],
+  ['atividade_fora_do_perfil', 'Atividade que nenhum cliente tem'],
+  ['atividade_rara', 'Atividade rara entre os clientes, sem palavra do ramo no nome'],
+  ['atividade_recusada', 'Atividade dos leads que você recusou'],
+  ['atividade_desconhecida', 'Atividade desconhecida, sem palavra do ramo no nome'],
+  ['entidade_nao_empresarial', 'Igreja, órgão público, condomínio, sindicato…'],
+  ['abaixo_do_corte', 'Nota abaixo do corte'],
+  ['radar_sem_perfil', 'Radar ainda sem perfil'],
+  ['desistiu_de_esperar', 'Aprovadas que desistiram de esperar vaga (7 dias)'],
+];
+function RaioXRadar({ b }) {
+  const d = b.descartes || {};
+  const enc = b.encontrados ?? b.enc ?? 0;
+  const leads = b.seg ?? b.segmentadas ?? 0;
+  if (!enc) return null;
+  const linhas = MOTIVOS_DESCARTE.map(([k, rot]) => [k, rot, d[k] || 0]).filter(x => x[2] > 0).sort((a, c) => c[2] - a[2]);
+  const contados = leads + linhas.reduce((t, x) => t + x[2], 0);
+  const resto = Math.max(0, enc - contados);
+  const pct = n => enc ? Math.max(0.5, n / enc * 100) : 0;
+  const barra = (n, cor) => (
+    <div style={{ height:6, borderRadius:3, background:'var(--panel2)', overflow:'hidden', marginTop:4 }}>
+      <div style={{ width:`${Math.min(100, pct(n))}%`, height:'100%', background:cor }}/>
+    </div>
+  );
+  const linha = (rot, n, cor, sub) => (
+    <div key={rot} style={{ padding:'8px 0', borderTop:'1px solid var(--border)' }}>
+      <div style={{ display:'flex', justifyContent:'space-between', gap:12, fontSize:12.5 }}>
+        <span style={{ color:'var(--text)' }}>{rot}</span>
+        <span style={{ fontWeight:600, whiteSpace:'nowrap' }}>{fmtNum(n)} <span style={{ color:'var(--faint)', fontWeight:400 }}>({Math.round(n / enc * 100)}%)</span></span>
+      </div>
+      {sub && <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:2 }}>{sub}</div>}
+      {barra(n, cor)}
+    </div>
+  );
+  return (
+    <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:'16px 18px', marginBottom:18 }}>
+      <h3 style={{ fontSize:14, fontWeight:600, margin:0 }}>Raio-X do radar</h3>
+      <div style={{ fontSize:12, color:'var(--faint)', margin:'4px 0 10px', lineHeight:1.45 }}>
+        Das <b style={{ color:'var(--text)' }}>{fmtNum(enc)}</b> empresas encontradas, quantas viraram lead e por que as outras não viraram.
+      </div>
+      {linha('Viraram lead', leads, C.green,
+        `${fmtNum(b.qual ?? b.qualificados ?? 0)} com telefone e e-mail · ${fmtNum(b.so_telefone ?? 0)} só com telefone · ${fmtNum(b.sem_contato ?? 0)} sem contato`)}
+      {linhas.map(([k, rot, n]) => linha(rot, n, k === 'ja_vista' || k === 'cliente_da_lista' ? C.gray : C.amber))}
+      {(d.esperou_vaga || 0) > 0 && (
+        <div style={{ fontSize:11.5, color:'var(--faint)', paddingTop:8, borderTop:'1px solid var(--border)' }}>
+          {fmtNum(d.esperou_vaga)} aprovada(s) esperaram vaga no limite diário antes de virar lead.
+        </div>
+      )}
+      {resto > 0 && linha('Em análise, ou encontradas antes de o raio-X existir', resto, 'var(--border)')}
+    </div>
+  );
+}
+
+// Palavras do ramo do radar de semelhantes (providers/palavras.js): as que vêm
+// dos nomes dos clientes, as sugeridas, e as genéricas que ficaram de fora. A
+// que não servir sai com um clique (vale pros próximos radares da pauta).
+function PalavrasDoRamo({ buscaId, palavras, onMudou }) {
+  const [busy, setBusy] = useState(null);
+  const mudar = async (f, remover) => {
+    setBusy(f);
+    const r = await fetch(`/api/buscas/${buscaId}/palavras`, { method:'POST', credentials:'same-origin',
+      headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ familia: f, remover }) }).catch(() => null);
+    setBusy(null);
+    if (!r || !r.ok) { alert('Não consegui salvar.'); return; }
+    onMudou && onMudou();
+  };
+  const valida = p => !p.generica && !p.recusada && !p.removida;
+  const grupos = [
+    ['Dos nomes dos seus clientes', palavras.filter(p => valida(p) && p.origem === 'clientes'), C.green, true],
+    ['Sugeridas (mesmo ramo)', palavras.filter(p => valida(p) && p.origem === 'sugerida'), C.cyan, true],
+    ['Genéricas — não usadas', palavras.filter(p => !p.removida && (p.generica || p.recusada)), C.gray, false],
+    ['Removidas por você', palavras.filter(p => p.removida), C.gray, false],
+  ].filter(g => g[1].length);
+  return (
+    <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:'16px 18px', marginBottom:18 }}>
+      <h3 style={{ fontSize:14, fontWeight:600, margin:0 }}>Palavras do ramo</h3>
+      <div style={{ fontSize:12, color:'var(--faint)', margin:'4px 0 10px', lineHeight:1.45 }}>
+        O radar procura empresas com estas palavras no nome — e, nas atividades menos comuns entre os seus clientes, só aceita
+        quem tem uma delas. Singular, plural e variações contam como a mesma palavra. Tire a que não servir.
+      </div>
+      {grupos.map(([titulo, itens, cor, removivel]) => (
+        <div key={titulo} style={{ marginTop:10 }}>
+          <div style={{ fontSize:11.5, color:'var(--dim)', marginBottom:6 }}>{titulo}</div>
+          <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
+            {itens.map(p => (
+              <span key={p.f} title={`Formas: ${p.formas.join(', ')}${p.n ? ` · em ${Math.round(p.freq * 100)}% dos clientes` : ''}`}
+                style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'4px 9px', borderRadius:8, fontSize:12,
+                  border:`1px solid ${cor}`, color: removivel ? 'var(--text)' : 'var(--faint)',
+                  textDecoration: p.removida ? 'line-through' : 'none' }}>
+                {p.formas[0]}{p.n ? <span style={{ color:'var(--faint)' }}>{Math.round(p.freq * 100)}%</span> : null}
+                {removivel && (
+                  <button type="button" disabled={busy === p.f} onClick={() => mudar(p.f, true)} title="Tirar esta palavra"
+                    style={{ background:'none', border:'none', padding:0, color:'var(--faint)', cursor:'pointer', fontSize:13, lineHeight:1 }}>×</button>
+                )}
+                {p.removida && (
+                  <button type="button" disabled={busy === p.f} onClick={() => mudar(p.f, false)} title="Devolver esta palavra"
+                    style={{ background:'none', border:'none', padding:0, color:'var(--accent)', cursor:'pointer', fontSize:11.5 }}>devolver</button>
+                )}
+              </span>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function PerfilMedio({ perfil }) {
   const confCor = perfil.confianca === 'alta' ? C.green : perfil.confianca === 'média' ? C.gold : '#F59E0B';
   const cnaeNome = c => (_cnaeCache || []).find(x => x.c === c)?.d || c;
@@ -2595,6 +2713,10 @@ function BuscaDetail({ buscaId, onBack, onOpenLead, onDuplicar, onVerLeads }) {
         </div>
       </div>
 
+      <RaioXRadar b={b}/>
+      {Array.isArray(criterios.params?.perfil?.palavras) && criterios.params.perfil.palavras.length > 0 && (
+        <PalavrasDoRamo buscaId={buscaId} palavras={criterios.params.perfil.palavras} onMudou={carregar}/>
+      )}
       {criterios.params?.perfil && <PerfilMedio perfil={criterios.params.perfil}/>}
 
       <QualidadeEnvios buscaId={buscaId} onOpenLead={onOpenLead}/>
