@@ -312,6 +312,13 @@ const verificacaoAderencia = a => !a?.segunda?.nivel ? ''
   : a.concordam ? 'confirmada por 2 verificações'
   : a.analise ? `verificações divergem (análise: ${ADERENCIA[a.analise]?.[0] || a.analise}; segunda verificação: ${ADERENCIA[a.segunda.nivel]?.[0] || a.segunda.nivel}) — confira`
   : 'pela segunda verificação';
+// Orientação de abordagem (lead sem site/perfil) em texto, pro "Copiar briefing".
+const textoAbordagem = a => !a ? '' : [
+  'Como abordar (sem informações da internet — confirme no primeiro contato):',
+  a.canal ? `Canal: ${a.canal}` : '', a.gancho ? `Abertura: ${a.gancho}` : '',
+  Array.isArray(a.perguntas) && a.perguntas.length ? 'Perguntas para qualificar:\n- ' + a.perguntas.join('\n- ') : '',
+  Array.isArray(a.cuidados) && a.cuidados.length ? 'Cuidados:\n- ' + a.cuidados.join('\n- ') : '',
+].filter(Boolean).join('\n');
 const textoAderencia = a => {
   if (!a || !ADERENCIA[a.nivel]) return '';
   const v = verificacaoAderencia(a);
@@ -322,7 +329,9 @@ function briefingVazio(sw) {
   if (!sw || typeof sw !== 'object') return true;
   const n = v => Array.isArray(v) ? v.length : 0;
   const s = sw.swot || {};
+  const a = sw.abordagem || {};
   return !String(sw.resumo || '').trim() && !String(sw.sinal_comercial || sw.gancho || '').trim()
+    && !String(a.gancho || '').trim() && !n(a.perguntas)
     && !n(sw.fatos_uteis) && !n(sw.dores_provaveis)
     && !n(s.forcas) && !n(s.fraquezas) && !n(s.oportunidades) && !n(s.ameacas);
 }
@@ -1144,6 +1153,7 @@ function secaoLeadHtml(l) {
       ${quad('Forças', sw.swot?.forcas)}${quad('Fraquezas', sw.swot?.fraquezas)}
       ${quad('Oportunidades', sw.swot?.oportunidades)}${quad('Ameaças', sw.swot?.ameacas)}
     </div>
+    ${sw.modo === 'abordagem' && sw.abordagem ? `<div class="callout" style="margin-top:12px; white-space:pre-line">${esc(textoAbordagem(sw.abordagem))}</div>` : ''}
     ${sw.aderencia ? `<div class="callout" style="margin-top:12px"><b>Aderência ao que vendemos:</b> ${esc(textoAderencia(sw.aderencia))}</div>` : ''}
     ${(sw.sinal_comercial || sw.gancho) ? `<div class="callout" style="margin-top:12px"><b>Sinal comercial:</b> ${esc(sw.sinal_comercial || sw.gancho)}</div>` : ''}
   ` : ''}
@@ -8167,7 +8177,7 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                   <circle cx={12} cy={12} r={4}/>
                 </SvgMulti>
                 <span style={{ fontSize:11, fontWeight:600, letterSpacing:'.08em', color:C.blue, textTransform:'uppercase', flex:1 }}>
-                  Briefing SWOT · IA
+                  {l.swot?.modo === 'abordagem' ? 'Como abordar · IA' : 'Briefing SWOT · IA'}
                 </span>
               </div>
               {/* Sem briefing: diz POR QUÊ. Lead sem contato não ganha análise
@@ -8180,15 +8190,49 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                     : l.swot_erro
                     ? <>A última tentativa de análise falhou{l.swot_erro_em ? ` (${timeAgo(l.swot_erro_em)})` : ''}: {MOTIVO_SWOT[l.swot_erro] || MOTIVO_SWOT.ia_falhou}</>
                     : l.contato_status === 'sem_contato'
-                    ? <>A análise é feita com o material encontrado sobre a empresa (site ou perfil), e ainda não encontramos contato nem site
-                        deste lead. Ela sai sozinha quando o contato e o material forem encontrados — use “Re-enriquecer”, ou cadastre o site
-                        em “Editar” e clique em “Refazer análise”.</>
+                    ? <>Ainda não encontramos contato deste lead. Quando o contato for encontrado, a análise sai sozinha — completa se houver
+                        site ou perfil da empresa, ou como orientação de abordagem se não houver. Use “Buscar contato de novo” na seção Contato,
+                        ou clique em “Refazer análise” para gerar já a orientação de abordagem.</>
                     : <>A análise ainda não foi gerada para este lead. Clique em “Refazer análise” abaixo. Os contatos não são alterados.</>}
                 </p>
+              )}
+              {l.swot.modo === 'abordagem' && (
+                <div style={{ fontSize:12, lineHeight:1.5, color:'var(--dim)', padding:'9px 12px', borderRadius:9, marginBottom:12,
+                  border:'1px dashed var(--border)' }}>
+                  Não encontramos site nem perfil desta empresa na internet. Esta orientação usa só o <b>cadastro oficial</b> e a
+                  <b> nossa proposta</b> — o que for do ramo é hipótese: confirme o que a empresa faz logo no primeiro contato.
+                </div>
               )}
               {l.swot.resumo && (
                 <p style={{ fontSize:13, lineHeight:1.6, margin:'0 0 14px', color:'var(--text)' }}>{l.swot.resumo}</p>
               )}
+              {l.swot.modo === 'abordagem' && l.swot.abordagem && (() => {
+                const a = l.swot.abordagem;
+                const caixa = (titulo, cor, conteudo) => (
+                  <div style={{ background:`color-mix(in srgb, ${cor} 8%, transparent)`, border:`1px solid color-mix(in srgb, ${cor} 26%, transparent)`,
+                    borderRadius:11, padding:'12px 14px', marginBottom:12 }}>
+                    <div style={{ fontSize:10.5, fontWeight:600, color:cor, marginBottom:6, textTransform:'uppercase', letterSpacing:'.06em' }}>{titulo}</div>
+                    {conteudo}
+                  </div>
+                );
+                const lista = itens => (
+                  <ul style={{ margin:0, padding:'0 0 0 16px', fontSize:12.5, lineHeight:1.6, color:'var(--text)' }}>
+                    {itens.map((x, i) => <li key={i}>{x}</li>)}
+                  </ul>
+                );
+                return (
+                  <>
+                    {(a.canal || a.gancho) && caixa('Como abordar', C.blue, (
+                      <div style={{ fontSize:12.5, lineHeight:1.6, color:'var(--text)' }}>
+                        {a.canal && <div><b>Canal:</b> {a.canal}</div>}
+                        {a.gancho && <div style={{ marginTop: a.canal ? 4 : 0 }}><b>Abertura:</b> {a.gancho}</div>}
+                      </div>
+                    ))}
+                    {Array.isArray(a.perguntas) && a.perguntas.length > 0 && caixa('Perguntas para qualificar', C.green, lista(a.perguntas))}
+                    {Array.isArray(a.cuidados) && a.cuidados.length > 0 && caixa('Cuidados', C.gray, lista(a.cuidados))}
+                  </>
+                );
+              })()}
               {Array.isArray(l.swot.fatos_uteis) && l.swot.fatos_uteis.length > 0 && (
                 <div style={{ background:'color-mix(in srgb, '+C.green+' 9%, transparent)', border:'1px solid color-mix(in srgb, '+C.green+' 28%, transparent)',
                   borderRadius:11, padding:'12px 14px', marginBottom:14 }}>
@@ -8201,13 +8245,15 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
               {Array.isArray(l.swot.dores_provaveis) && l.swot.dores_provaveis.length > 0 && (
                 <div style={{ background:'color-mix(in srgb, '+C.amber+' 9%, transparent)', border:'1px solid color-mix(in srgb, '+C.amber+' 28%, transparent)',
                   borderRadius:11, padding:'12px 14px', marginBottom:14 }}>
-                  <div style={{ fontSize:10.5, fontWeight:600, color:C.amber, marginBottom:6, textTransform:'uppercase', letterSpacing:'.06em' }}>Dores prováveis</div>
+                  <div style={{ fontSize:10.5, fontWeight:600, color:C.amber, marginBottom:6, textTransform:'uppercase', letterSpacing:'.06em' }}>
+                    {l.swot.modo === 'abordagem' ? 'Dores prováveis do ramo (hipótese)' : 'Dores prováveis'}
+                  </div>
                   <ul style={{ margin:0, padding:'0 0 0 16px', fontSize:12.5, lineHeight:1.6, color:'var(--text)' }}>
                     {l.swot.dores_provaveis.map((d,i) => <li key={i}>{d}</li>)}
                   </ul>
                 </div>
               )}
-              {!briefingVazio(l.swot) && (
+              {!briefingVazio(l.swot) && l.swot.modo !== 'abordagem' && (
               <div className="h-split" style={{ gap:10, marginBottom:14 }}>
                 {[
                   ['Forças', l.swot.swot?.forcas, C.green],
@@ -8265,6 +8311,7 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                     [l.swot.resumo,
                      l.swot.fatos_uteis?.length ? 'Fatos úteis:\n- ' + l.swot.fatos_uteis.join('\n- ') : '',
                      l.swot.dores_provaveis?.length ? 'Dores prováveis:\n- ' + l.swot.dores_provaveis.join('\n- ') : '',
+                     l.swot.modo === 'abordagem' ? textoAbordagem(l.swot.abordagem) : '',
                      l.swot.aderencia ? 'Aderência ao que vendemos: ' + textoAderencia(l.swot.aderencia) : '',
                      (l.swot.sinal_comercial || l.swot.gancho) ? 'Sinal comercial: ' + (l.swot.sinal_comercial || l.swot.gancho) : ''].filter(Boolean).join('\n\n')).catch(()=>{})}
                   style={{ display:'flex', alignItems:'center', gap:6, height:31, padding:'0 12px',

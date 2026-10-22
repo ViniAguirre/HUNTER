@@ -438,6 +438,13 @@ function montarBriefing(empresa, lead, extras = {}) {
     lista('Fraquezas', s.fraquezas),
     lista('Oportunidades', s.oportunidades),
     lista('Ameaças', s.ameacas),
+    sw.modo === 'abordagem' && sw.abordagem ? [
+      '*Como abordar* (sem informações da internet — confirme no primeiro contato)',
+      sw.abordagem.canal ? `Canal: ${sw.abordagem.canal}` : '',
+      sw.abordagem.gancho ? `Abertura: ${sw.abordagem.gancho}` : '',
+    ].filter(Boolean).join('\n') : '',
+    sw.modo === 'abordagem' ? lista('Perguntas para qualificar', sw.abordagem?.perguntas) : '',
+    sw.modo === 'abordagem' ? lista('Cuidados', sw.abordagem?.cuidados) : '',
     sw.aderencia?.nivel ? `*Aderência ao que vendemos*\n${{ alta: 'Alta', media: 'Média', baixa: 'Baixa' }[sw.aderencia.nivel] || sw.aderencia.nivel}`
       + (sw.aderencia.motivo ? ` — ${sw.aderencia.motivo}` : '') : '',
     sw.sinal_comercial ? `*Sinal comercial*\n${sw.sinal_comercial}` : '',
