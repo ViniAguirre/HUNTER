@@ -7768,23 +7768,26 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
           .then(x => x.ok ? x.json() : null).catch(() => null);
         if (!novo) continue;
         const cv = novo.contato_validado || {};
-        const temContato = cv.telefone || cv.whatsapp || cv.email;
+        const temTelefone = cv.telefone || cv.whatsapp;
         const temMaterial = cv.website || cv.perfil_social;
-        if (temContato || temMaterial) {
+        // Só e-mail ainda não encerra: sem telefone, a busca tenta de novo ~2 min
+        // depois (agora também nos mapas) e pode achar o número.
+        if (temTelefone || temMaterial) {
           setLead(novo);
-          const inicio = temContato ? 'Contato encontrado. ' : 'Site/perfil encontrado. ';
+          const inicio = temTelefone ? 'Contato encontrado. ' : 'Site/perfil encontrado. ';
           const detalhe = temMaterial
             ? 'A análise começa sozinha com o material do site/perfil — aparece aqui em instantes.'
-            : cv.telefone || cv.whatsapp
-              ? 'Sem site nem perfil, a análise continua sem material, mas o lead já pode ir para o CRM.'
-              : 'Encontramos um e-mail, mas ainda não telefone/WhatsApp. O lead pode ser abordado por e-mail; cadastre um site em “Editar” para análise completa.';
+            : 'Sem site nem perfil, a análise sai como orientação de abordagem, e o lead já pode ir para o CRM.';
           window.alert(inicio + detalhe);
           return;
         }
         if (i > 3 && novo.contato_pendente) {
           setLead(novo);
-          window.alert('A busca terminou sem achar telefone, e-mail, site nem perfil desta empresa (internet e mapas, dentro do limite do dia). '
-            + 'Se você souber o site, cadastre em "Editar" e clique em "Refazer análise".');
+          window.alert(cv.email
+            ? 'A busca terminou: achou só o e-mail desta empresa, sem telefone, site nem perfil (internet e mapas, dentro do limite do dia). '
+              + 'O lead pode ser abordado por e-mail; se você souber o site, cadastre em "Editar" e clique em "Refazer análise".'
+            : 'A busca terminou sem achar telefone, e-mail, site nem perfil desta empresa (internet e mapas, dentro do limite do dia). '
+              + 'Se você souber o site, cadastre em "Editar" e clique em "Refazer análise".');
           return;
         }
       }
