@@ -291,7 +291,12 @@ module.exports = async function validacao(job, pool, queues) {
     //    achou telefone, é a última tentativa e há cota no dia.
     let pagoFonte = null, custoUsd = null, pagoResultado = null, pagoErro = null, pagoConsultas = null;
     if (!(c && (c.telefone || c.whatsapp)) && tentativa >= MAX_TENT_CONTATO) {
-      const ig = await glasserDisponivel(pool).catch(() => null);
+      // Pedido do usuário pra ESTE lead ("Buscar contato de novo"): não esbarra
+      // no limite do dia (a consulta conta nele do mesmo jeito). Sem os mapas,
+      // o motivo fica no log — a tela diz por que a busca terminou sem telefone.
+      const cota = await cotaGlasser(pool).catch(() => null);
+      const ig = cota && !cota.pausado && (job.data.manual || cota.usados < cota.limite) ? cota.ig : null;
+      if (!ig) pagoResultado = !cota ? 'mapas_desligado' : cota.pausado ? 'mapas_pausado' : 'mapas_sem_cota';
       if (ig) {
         pagoFonte = 'glasser';
         try {

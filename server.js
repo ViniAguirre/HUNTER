@@ -2582,6 +2582,12 @@ app.get('/api/leads/:id', requireAuth, async (req, res) => {
       `SELECT l.*, b.nome AS busca_nome FROM leads l
        LEFT JOIN buscas b ON b.id=l.busca_id WHERE l.id=$1`, [id]);
     if (!l) return res.status(404).json({ erro: 'não encontrado' });
+    // Como terminou a última busca nos mapas deste lead (achou, não conferiu,
+    // sem resultado, erro, limite do dia…): a tela explica o "não achou".
+    const { rows: [bm] } = await pool.query(
+      `SELECT pago_resultado AS resultado, criado_em AS em FROM busca_contato_log
+        WHERE lead_id=$1 ORDER BY id DESC LIMIT 1`, [id]).catch(() => ({ rows: [] }));
+    l.busca_mapas = bm?.resultado ? bm : null;
     // Qual IA/modelo gerou o briefing e de qual API veio o contato é sigiloso
     // pra TODOS, master inclusive (sigilo.js). A tela só precisa do conteúdo.
     l.swot = swotSemOrigem(l.swot);
@@ -2945,7 +2951,9 @@ app.post('/api/leads/acoes', requireAuth, requireEditor, async (req, res) => {
       // preservar: o usuário pediu pra ATUALIZAR estes leads — se a busca nova
       // não achar telefone, o lead fica pendente, mas NUNCA é apagado.
       await Promise.all(rows.map(r =>
-        monitorQueues.validacao.add('validacao', { cnpj: r.cnpj, busca_id: r.busca_id, lead_id: r.id, preservar: true },
+        monitorQueues.validacao.add('validacao', { cnpj: r.cnpj, busca_id: r.busca_id, lead_id: r.id, preservar: true,
+          // Um lead só, pelo botão do lead: os mapas não esbarram no limite do dia.
+          ...(req.body.manual === true && rows.length === 1 ? { manual: true } : {}) },
           { jobId: `reval-${r.id}-${Date.now()}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 2, backoff: { type: 'exponential', delay: 10000 } })
       ));
       return res.json({ ok: true, reenfileirados: rows.length });
@@ -3065,6 +3073,10 @@ app.get('/api/monitor/busca-contato', requireAuth, requireMaster, async (req, re
       `SELECT pago_erro, criado_em FROM busca_contato_log WHERE pago_fonte = 'glasser' AND pago_erro IS NOT NULL
         ORDER BY id DESC LIMIT 1`).catch(() => ({ rows: [] }));
     const cotaG = await require('./jobs/validacao').cotaGlasser(pool).catch(() => null);
+    const { rows: [semCota] } = await pool.query(
+      `SELECT COUNT(DISTINCT lead_id)::int AS n FROM busca_contato_log WHERE pago_resultado = 'mapas_sem_cota'
+          AND (criado_em AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date`)
+      .catch(() => ({ rows: [null] }));
     const { rows: [igG] } = await pool.query(
       `SELECT ativo, config FROM integracoes WHERE categoria='contato' AND provedor='glasser' LIMIT 1`).catch(() => ({ rows: [] }));
     // Leads sem telefone que ainda não passaram pelos mapas: a repescagem
@@ -3076,7 +3088,7 @@ app.get('/api/monitor/busca-contato', requireAuth, requireMaster, async (req, re
       limite_dia: Number.isInteger(igG.config?.limite_dia) ? igG.config.limite_dia : require('./providers/glasser').LIMITE_DIA_PADRAO,
       a_repescar: rep?.n ?? null,
       ...(pago || {}),
-      desfechos, ultimo_erro: ultErro || null,
+      desfechos, ultimo_erro: ultErro || null, sem_cota_hoje: semCota?.n || 0,
       ...(cotaG ? { hoje: cotaG.usados, pausado: !!cotaG.pausado } : {}) } : null;
     const busca = await fontes.fontesBuscaWeb(pool);
     let teste = null;

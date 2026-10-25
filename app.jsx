@@ -7754,6 +7754,7 @@ function BuscaContatoSaude() {
                 {(d.glasser.desfechos || []).length ? <> Resultado das consultas: {d.glasser.desfechos.map(x =>
                   `${{ achou:'achou', achou_ia:'achou com o Jev confirmando', lugar_nao_confere:'achou lugares, mas nenhum era a empresa', sem_resultado:'o Maps não trouxe nada',
                        erro:'erro', sem_registro:'sem registro (antes desta versão)' }[x.r] || x.r} ${x.n}`).join(' · ')}.</> : null}
+                {d.glasser.sem_cota_hoje ? <> <b style={{ color:C.amber }}>Hoje {d.glasser.sem_cota_hoje} lead(s) novo(s) ficaram sem os mapas porque o limite do dia acabou</b> — se for frequente, aumente o limite em Integrações.</> : null}
                 {d.glasser.ultimo_erro ? <> Último erro ({timeAgo(d.glasser.ultimo_erro.criado_em)}): <b style={{ color:C.red }}>{d.glasser.ultimo_erro.pago_erro}</b>.</> : null}
                 {d.glasser.a_repescar ? <> Leads antigos sem telefone esperando os mapas: <b style={{ color:'var(--text)' }}>{d.glasser.a_repescar}</b> —
                   vão sozinhos, com a sobra do limite do dia (1/4 dele fica para os leads novos dos radares). Quem não foi achado
@@ -7889,7 +7890,7 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
     try {
       const r = await fetch('/api/leads/acoes', {
         method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
-        body: JSON.stringify({ ids: [leadId], acao: 'reenriquecer' })
+        body: JSON.stringify({ ids: [leadId], acao: 'reenriquecer', manual: true })
       });
       if (!r.ok) { const d = await r.json().catch(() => ({})); window.alert(d.erro || 'Não foi possível buscar agora.'); return; }
       for (let i = 0; i < 75; i++) {   // ~5 min
@@ -7913,11 +7914,21 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
         }
         if (i > 3 && novo.contato_pendente) {
           setLead(novo);
-          window.alert(cv.email
-            ? 'A busca terminou: achou só o e-mail desta empresa, sem telefone, site nem perfil (internet e mapas, dentro do limite do dia). '
-              + 'O lead pode ser abordado por e-mail; se você souber o site, cadastre em "Editar" e clique em "Refazer análise".'
-            : 'A busca terminou sem achar telefone, e-mail, site nem perfil desta empresa (internet e mapas, dentro do limite do dia). '
-              + 'Se você souber o site, cadastre em "Editar" e clique em "Refazer análise".');
+          // O que aconteceu nos mapas (a última etapa da busca).
+          const mapas = {
+            lugar_nao_confere: 'Nos mapas apareceram lugares parecidos, mas nenhum conferiu com o cadastro desta empresa (nome e endereço).',
+            sem_resultado: 'Os mapas não têm esta empresa.',
+            erro: 'A consulta aos mapas falhou — tente de novo mais tarde.',
+            mapas_pausado: 'A busca nos mapas está pausada por erros seguidos (o administrador vê o motivo no Monitoramento).',
+            mapas_desligado: 'A busca nos mapas não está ativa (o administrador ativa em Integrações).',
+            mapas_sem_cota: 'O limite de consultas aos mapas de hoje acabou.',
+          }[novo.busca_mapas?.resultado] || '';
+          window.alert((cv.email
+            ? 'A busca terminou: achou só o e-mail desta empresa, sem telefone, site nem perfil. '
+            : 'A busca terminou sem achar telefone, e-mail, site nem perfil desta empresa. ')
+            + (mapas ? mapas + ' ' : '')
+            + (cv.email ? 'O lead pode ser abordado por e-mail; se' : 'Se')
+            + ' você souber o site ou o telefone, cadastre em "Editar"' + (cv.email ? '' : ' e clique em "Refazer análise"') + '.');
           return;
         }
       }
