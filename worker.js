@@ -153,6 +153,11 @@ async function runScheduler() {
     .catch(() => {});
   // Leads sem telefone de antes (radar antigo, Glasser ainda desligado, limite
   // do dia acabado) vão aos mapas sozinhos, com a sobra do limite do dia.
+  // Com "WhatsApp basta" ligado: quem esperava decisão (telefone sem e-mail)
+  // segue pro CRM pelo portão de sempre (modo do radar e qualidade mínima).
+  swotFn.liberarDecisoesWhatsapp(pool, queues)
+    .then(n => { if (n) console.log(`[swot] ${n} lead(s) com WhatsApp saíram da fila de decisão`); })
+    .catch(err => console.error('[swot] liberar decisões:', err.message));
   validacaoFn.repescarSemTelefone(pool, queues)
     .then(n => { if (n) console.log(`[validacao] repescagem: ${n} lead(s) sem telefone mandados aos mapas`); })
     .catch(err => console.error('[validacao] repescagem:', err.message));

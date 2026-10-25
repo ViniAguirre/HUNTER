@@ -1145,7 +1145,7 @@ function secaoLeadHtml(l) {
   </table>
   ${cv.resumo_site ? `<div class="callout"><b>Sobre a empresa (site):</b><br>${esc(cv.resumo_site)}</div>` : ''}
 
-  ${sw.resumo || sw.swot ? `<h3>${sw.modo === 'abordagem' ? 'Como abordar · IA' : 'Análise SWOT · briefing'}</h3>
+  ${sw.resumo || sw.swot ? `<h3>${sw.generico ? 'Como abordar · roteiro padrão' : sw.modo === 'abordagem' ? 'Como abordar · IA' : 'Análise SWOT · briefing'}</h3>
     ${sw.resumo ? `<p>${esc(sw.resumo)}</p>` : ''}
     ${(Array.isArray(sw.fatos_uteis) && sw.fatos_uteis.length) ? `<div class="q"><h4>Fatos úteis pro contato</h4>${listaHtml(sw.fatos_uteis)}</div>` : ''}
     ${(Array.isArray(sw.dores_provaveis) && sw.dores_provaveis.length) ? `<div class="q"><h4>${sw.modo === 'abordagem' ? 'Dores prováveis do ramo (hipótese)' : 'Dores prováveis'}</h4>${listaHtml(sw.dores_provaveis)}</div>` : ''}
@@ -7756,7 +7756,8 @@ function BuscaContatoSaude() {
                        erro:'erro', sem_registro:'sem registro (antes desta versão)' }[x.r] || x.r} ${x.n}`).join(' · ')}.</> : null}
                 {d.glasser.ultimo_erro ? <> Último erro ({timeAgo(d.glasser.ultimo_erro.criado_em)}): <b style={{ color:C.red }}>{d.glasser.ultimo_erro.pago_erro}</b>.</> : null}
                 {d.glasser.a_repescar ? <> Leads antigos sem telefone esperando os mapas: <b style={{ color:'var(--text)' }}>{d.glasser.a_repescar}</b> —
-                  vão sozinhos, com a sobra do limite do dia (1/4 dele fica para os leads novos dos radares).</> : null}
+                  vão sozinhos, com a sobra do limite do dia (1/4 dele fica para os leads novos dos radares). Quem não foi achado
+                  volta aos mapas depois de 15 dias, até 3 vezes.</> : null}
               </>}
             </div>
           </>
@@ -8315,9 +8316,17 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
                   <circle cx={12} cy={12} r={4}/>
                 </SvgMulti>
                 <span style={{ fontSize:11, fontWeight:600, letterSpacing:'.08em', color:C.blue, textTransform:'uppercase', flex:1 }}>
-                  {l.swot?.modo === 'abordagem' ? 'Como abordar · IA' : 'Briefing SWOT · IA'}
+                  {l.swot?.generico ? 'Como abordar · roteiro padrão' : l.swot?.modo === 'abordagem' ? 'Como abordar · IA' : 'Briefing SWOT · IA'}
                 </span>
               </div>
+              {/* Roteiro padrão: a IA não respondeu (ou não está ativa) e o lead
+                  seguiu assim mesmo — dá pra pedir a análise de novo. */}
+              {l.swot?.generico && (
+                <p style={{ fontSize:12, lineHeight:1.5, margin:'0 0 10px', color:'var(--dim)' }}>
+                  Roteiro padrão de primeiro contato: a análise automática não pôde ser gerada{l.swot_erro ? ` (${(MOTIVO_SWOT[l.swot_erro] || MOTIVO_SWOT.ia_falhou).split('. ')[0].replace(/\.$/, '')})` : ''}.
+                  Use "Refazer análise" para gerar a orientação personalizada.
+                </p>
+              )}
               {/* Sem briefing: diz POR QUÊ. Lead sem contato não ganha análise
                   automática (economia de IA) — isso não é falha. Falha de verdade
                   vem gravada pelo job, em categoria (sem nome de provedor). */}

@@ -58,10 +58,21 @@ const CONSULTA_RODOU = `(pago_resultado <> 'erro' OR custo_usd > 0 OR (pago_resu
 // contato de novo". A cada minuto o motor manda alguns deles direto aos mapas
 // (sem refazer a busca na internet, que já não achou), usando só a SOBRA do
 // limite do dia: REPESCA_RESERVA dele fica para os leads novos dos radares.
-// Cada lead entra uma vez: quem já passou pelos mapas não volta (a consulta
-// que deu erro não conta — o lead volta quando a integração responder).
+// Primeiro os que nunca passaram pelos mapas; quem passou e não foi achado volta
+// depois de REPESCA_DIAS (empresa pequena entra no Maps depois), até
+// REPESCA_MAX_VEZES ao todo. Consulta que deu erro não conta.
 const REPESCA_POR_CICLO = 2;
 const REPESCA_RESERVA = 0.25;
+const REPESCA_DIAS = 15;
+const REPESCA_MAX_VEZES = 3;
+// Leads elegíveis à repescagem (usado aqui e no Monitoramento).
+function sqlRepescaveis(alias = 'l') {
+  const rodou = CONSULTA_RODOU.replace(/(pago_resultado|custo_usd)/g, 'g.$1');
+  return `${alias}.contato_status = 'sem_contato' AND ${alias}.status NOT IN ('Descartado', 'Enviado')
+    AND (SELECT COUNT(*) FROM busca_contato_log g WHERE g.lead_id = ${alias}.id AND g.pago_fonte = 'glasser' AND ${rodou}) < ${REPESCA_MAX_VEZES}
+    AND NOT EXISTS (SELECT 1 FROM busca_contato_log g WHERE g.lead_id = ${alias}.id AND g.pago_fonte = 'glasser' AND ${rodou}
+                      AND g.criado_em > now() - interval '${REPESCA_DIAS} days')`;
+}
 async function repescarSemTelefone(pool, queues) {
   if (!queues?.validacao) return 0;
   const cota = await cotaGlasser(pool);
@@ -72,12 +83,12 @@ async function repescarSemTelefone(pool, queues) {
   // Fila da validação com trabalho na frente → espera: o lead novo tem prioridade.
   const fila = await queues.validacao.getJobCounts('waiting', 'active').catch(() => null);
   if (!fila || fila.waiting + fila.active > 0) return 0;
+  const rodou = CONSULTA_RODOU.replace(/(pago_resultado|custo_usd)/g, 'g.$1');
   const { rows } = await pool.query(
     `SELECT l.id, l.cnpj, l.busca_id FROM leads l
-      WHERE l.contato_status = 'sem_contato' AND l.status NOT IN ('Descartado', 'Enviado')
-        AND NOT EXISTS (SELECT 1 FROM busca_contato_log g WHERE g.lead_id = l.id AND g.pago_fonte = 'glasser'
-                          AND ${CONSULTA_RODOU.replace(/(pago_resultado|custo_usd)/g, 'g.$1')})
-      ORDER BY l.score DESC NULLS LAST, l.criado_em DESC
+      WHERE ${sqlRepescaveis('l')}
+      ORDER BY (SELECT COUNT(*) FROM busca_contato_log g WHERE g.lead_id = l.id AND g.pago_fonte = 'glasser' AND ${rodou}),
+               l.score DESC NULLS LAST, l.criado_em DESC
       LIMIT $1`, [Math.min(REPESCA_POR_CICLO, cota.limite - cota.usados)]);
   const dia = new Date().toISOString().slice(0, 10);
   for (const l of rows) {
@@ -447,3 +458,4 @@ module.exports.repescarSemTelefone = repescarSemTelefone;
 module.exports.cotaGlasser = cotaGlasser;
 module.exports.CONSULTA_RODOU = CONSULTA_RODOU;
 module.exports.juizDoJev = juizDoJev;
+module.exports.sqlRepescaveis = sqlRepescaveis;

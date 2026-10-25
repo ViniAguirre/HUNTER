@@ -3070,9 +3070,7 @@ app.get('/api/monitor/busca-contato', requireAuth, requireMaster, async (req, re
     // Leads sem telefone que ainda não passaram pelos mapas: a repescagem
     // (jobs/validacao.js) vai mandando, com a sobra do limite do dia.
     const { rows: [rep] } = igG ? await pool.query(
-      `SELECT COUNT(*)::int AS n FROM leads l
-        WHERE l.contato_status = 'sem_contato' AND l.status NOT IN ('Descartado', 'Enviado')
-          AND NOT EXISTS (SELECT 1 FROM busca_contato_log g WHERE g.lead_id = l.id AND g.pago_fonte = 'glasser')`)
+      `SELECT COUNT(*)::int AS n FROM leads l WHERE ${require('./jobs/validacao').sqlRepescaveis('l')}`)
       .catch(() => ({ rows: [null] })) : { rows: [null] };
     const glasserInfo = igG ? { ativo: !!igG.ativo && !!igG.config?.maps?.endpoint,
       limite_dia: Number.isInteger(igG.config?.limite_dia) ? igG.config.limite_dia : require('./providers/glasser').LIMITE_DIA_PADRAO,
