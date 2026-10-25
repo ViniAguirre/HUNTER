@@ -80,7 +80,7 @@ if (process.env.REDIS_HOST) {
 
 // Esperas normais da descoberta (jobs/descoberta.js → descoberta_estado): o
 // radar está bem, só aguardando orçamento ou horário.
-const ESPERAS_DESCOBERTA = ['cadencia_horaria', 'limite_diario', 'fora_da_janela'];
+const ESPERAS_DESCOBERTA = ['cadencia_horaria', 'limite_diario', 'fora_da_janela', 'analisando'];
 
 // O erro da descoberta nomeia o provedor (ex.: a fonte de empresas): só o
 // master vê; os outros veem só que a busca está falhando (descoberta_falhas).
@@ -912,6 +912,11 @@ async function init() {
     -- Consulta paga (Glasser/Google Maps) nesta tentativa e quanto custou (USD).
     ALTER TABLE busca_contato_log ADD COLUMN IF NOT EXISTS pago_fonte TEXT;
     ALTER TABLE busca_contato_log ADD COLUMN IF NOT EXISTS custo_usd  NUMERIC(12,6);
+    -- Desfecho da consulta paga: achou | lugar_nao_confere | sem_resultado | erro,
+    -- o erro (o Monitoramento mostra o último) e quantas consultas a busca fez.
+    ALTER TABLE busca_contato_log ADD COLUMN IF NOT EXISTS pago_resultado TEXT;
+    ALTER TABLE busca_contato_log ADD COLUMN IF NOT EXISTS pago_erro TEXT;
+    ALTER TABLE busca_contato_log ADD COLUMN IF NOT EXISTS pago_consultas SMALLINT;
     -- Repescagem nos mapas: "este lead já passou pelo Glasser?" por lead.
     CREATE INDEX IF NOT EXISTS idx_busca_contato_log_glasser ON busca_contato_log(lead_id) WHERE pago_fonte = 'glasser';
   `);
@@ -1048,6 +1053,11 @@ async function init() {
   );
   await pool.query(`CREATE TABLE IF NOT EXISTS motor_status (worker_boot timestamptz, worker_versao text)`);
   await migrarSingletonParaTenant(pool, 'motor_status');
+  // Reinícios do motor (últimos 30 boots) e memória a cada minuto: muito
+  // "job stalled" junto é o motor sendo derrubado (quase sempre memória).
+  await pool.query(`ALTER TABLE motor_status ADD COLUMN IF NOT EXISTS boots JSONB NOT NULL DEFAULT '[]'`);
+  await pool.query(`ALTER TABLE motor_status ADD COLUMN IF NOT EXISTS memoria_mb INTEGER`);
+  await pool.query(`ALTER TABLE motor_status ADD COLUMN IF NOT EXISTS memoria_em TIMESTAMPTZ`);
 
   // Garante a linha do provider de descoberta (CNPJá) pra tela de Integrações
   // ter o que mostrar mesmo antes da chave ser cadastrada.
@@ -3046,6 +3056,15 @@ app.get('/api/monitor/busca-contato', requireAuth, requireMaster, async (req, re
               COUNT(*) FILTER (WHERE (criado_em AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date)::int AS hoje,
               COALESCE(SUM(custo_usd) FILTER (WHERE (criado_em AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date), 0)::float AS custo_hoje_usd
          FROM busca_contato_log WHERE ${janela} AND pago_fonte = 'glasser'`, [dias]).catch(() => ({ rows: [null] }));
+    // Desfecho de cada consulta e o último erro: é o que diz se o problema é a
+    // integração (erro), a conferência (não conferiu) ou o Maps (sem resultado).
+    const { rows: desfechos } = await pool.query(
+      `SELECT COALESCE(pago_resultado, 'sem_registro') AS r, COUNT(*)::int AS n FROM busca_contato_log
+        WHERE ${janela} AND pago_fonte = 'glasser' GROUP BY 1 ORDER BY 2 DESC`, [dias]).catch(() => ({ rows: [] }));
+    const { rows: [ultErro] } = await pool.query(
+      `SELECT pago_erro, criado_em FROM busca_contato_log WHERE pago_fonte = 'glasser' AND pago_erro IS NOT NULL
+        ORDER BY id DESC LIMIT 1`).catch(() => ({ rows: [] }));
+    const cotaG = await require('./jobs/validacao').cotaGlasser(pool).catch(() => null);
     const { rows: [igG] } = await pool.query(
       `SELECT ativo, config FROM integracoes WHERE categoria='contato' AND provedor='glasser' LIMIT 1`).catch(() => ({ rows: [] }));
     // Leads sem telefone que ainda não passaram pelos mapas: a repescagem
@@ -3058,7 +3077,9 @@ app.get('/api/monitor/busca-contato', requireAuth, requireMaster, async (req, re
     const glasserInfo = igG ? { ativo: !!igG.ativo && !!igG.config?.maps?.endpoint,
       limite_dia: Number.isInteger(igG.config?.limite_dia) ? igG.config.limite_dia : require('./providers/glasser').LIMITE_DIA_PADRAO,
       a_repescar: rep?.n ?? null,
-      ...(pago || {}) } : null;
+      ...(pago || {}),
+      desfechos, ultimo_erro: ultErro || null,
+      ...(cotaG ? { hoje: cotaG.usados, pausado: !!cotaG.pausado } : {}) } : null;
     const busca = await fontes.fontesBuscaWeb(pool);
     let teste = null;
     if (req.query.testar === '1' && busca.searxngUrl) {
@@ -3126,6 +3147,10 @@ app.get('/api/monitor/queues', requireAuth, requireMaster, async (req, res) => {
     try {
       const { rows: [s] } = await pool.query(`SELECT worker_boot, worker_versao FROM motor_status`);
       if (s) motor = { versao: s.worker_versao, iniciado_em: s.worker_boot };
+      const { rows: [m] } = await pool.query(
+        `SELECT (SELECT COUNT(*)::int FROM jsonb_array_elements_text(boots) b WHERE b::timestamptz > now() - interval '24 hours') AS reinicios_24h,
+                memoria_mb, memoria_em FROM motor_status`).catch(() => ({ rows: [] }));
+      if (motor && m) Object.assign(motor, m);
     } catch (_) { /* tabela ainda não existe */ }
     res.json({
       queues,
@@ -3491,6 +3516,35 @@ app.post('/api/integracoes/glasser/testar', requireAuth, requireMaster, async (r
   } catch (e) {
     res.json({ ok: false, erro: String(e.message || e).slice(0, 300) });
   }
+});
+
+// Teste de verdade no Google Maps (UMA consulta paga, ~US$ 0,001): pelo CNPJ
+// de um lead que ficou sem telefone, mostra o que o Maps devolveu e por que
+// conferiu (ou não). É o que diz se o problema é a integração, o nome usado
+// na busca ou a conferência.
+app.post('/api/integracoes/glasser/testar-maps', requireAuth, requireMaster, async (req, res) => {
+  const cnpj = String(req.body.cnpj || '').replace(/\D/g, '');
+  if (cnpj.length !== 14) return res.status(400).json({ erro: 'Informe o CNPJ (14 dígitos) de uma empresa do cadastro.' });
+  try {
+    const { rows: [ig] } = await pool.query(
+      `SELECT key_cifrada, config FROM integracoes WHERE categoria='contato' AND provedor='glasser' LIMIT 1`);
+    if (!ig?.key_cifrada) return res.status(400).json({ erro: 'Salve a chave antes de testar.' });
+    if (!ig.config?.maps?.endpoint) return res.status(400).json({ erro: 'Clique em Testar primeiro (configura o Google Maps).' });
+    const { rows: [emp] } = await pool.query(
+      `SELECT razao, fantasia, cidade, uf, endereco FROM empresas WHERE cnpj=$1`, [cnpj]);
+    if (!emp) return res.status(404).json({ erro: 'CNPJ não está no cadastro do Hunter.' });
+    const glasser = require('./providers/glasser');
+    const nome = emp.fantasia || emp.razao;
+    try {
+      const m = await glasser.buscarNoMaps(nome, emp.cidade, emp.uf, ig.key_cifrada, ig.config,
+        { razao: emp.razao, endereco: emp.endereco, debug: true });
+      res.json({ ok: true, empresa: { nome, razao: emp.razao, cidade: emp.cidade, uf: emp.uf, endereco: emp.endereco },
+        achou: !!m.encontrado, resultado: m.resultado, telefone: m.telefone || null, nome_google: m.nome_google || null,
+        site: m.website || m.perfil_social || null, consultas: m.consultas, custo_usd: m.custo_usd, vistos: m.vistos || [] });
+    } catch (e) {
+      res.json({ ok: false, empresa: { nome, cidade: emp.cidade, uf: emp.uf }, erro: String(e.message || e).slice(0, 400) });
+    }
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
 app.post('/api/integracoes/ia/testar', requireAuth, requireMaster, async (req, res) => {
