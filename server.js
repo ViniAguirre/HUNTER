@@ -3531,8 +3531,12 @@ app.post('/api/integracoes/glasser/testar-maps', requireAuth, requireMaster, asy
     if (!ig?.key_cifrada) return res.status(400).json({ erro: 'Salve a chave antes de testar.' });
     if (!ig.config?.maps?.endpoint) return res.status(400).json({ erro: 'Clique em Testar primeiro (configura o Google Maps).' });
     const { rows: [emp] } = await pool.query(
-      `SELECT razao, fantasia, cidade, uf, endereco FROM empresas WHERE cnpj=$1`, [cnpj]);
+      `SELECT razao, fantasia, cidade, uf, endereco, setor FROM empresas WHERE cnpj=$1`, [cnpj]);
     if (!emp) return res.status(404).json({ erro: 'CNPJ não está no cadastro do Hunter.' });
+    // Mesmas palavras do ramo que o motor usa: as do radar do lead desta empresa.
+    const { rows: [bz] } = await pool.query(
+      `SELECT b.criterios FROM leads l JOIN buscas b ON b.id = l.busca_id WHERE l.cnpj=$1 ORDER BY l.id DESC LIMIT 1`, [cnpj])
+      .catch(() => ({ rows: [] }));
     const glasser = require('./providers/glasser');
     const nome = emp.fantasia || emp.razao;
     // Relê o schema do endpoint (Inspect, grátis) e guarda: é por ele que a
@@ -3549,7 +3553,8 @@ app.post('/api/integracoes/glasser/testar-maps', requireAuth, requireMaster, asy
     const tecnico = { endpoint: `${cfg.maps.provider} ${cfg.maps.endpoint}`, entrada, schema: cfg.maps.schema || null };
     try {
       const m = await glasser.buscarNoMaps(nome, emp.cidade, emp.uf, ig.key_cifrada, cfg,
-        { razao: emp.razao, endereco: emp.endereco, debug: true });
+        { razao: emp.razao, endereco: emp.endereco, debug: true,
+          genericas: glasser.genericasDe({ setor: emp.setor, criterios: bz?.criterios }) });
       res.json({ ok: true, ...tecnico, empresa: { nome, razao: emp.razao, cidade: emp.cidade, uf: emp.uf, endereco: emp.endereco },
         achou: !!m.encontrado, resultado: m.resultado, telefone: m.telefone || null, nome_google: m.nome_google || null,
         site: m.website || m.perfil_social || null, consultas: m.consultas, custo_usd: m.custo_usd, vistos: m.vistos || [] });
