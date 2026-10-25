@@ -5984,7 +5984,7 @@ const INTEGRACOES_META = {
     icon:'M12 3v2M12 19v2M5 12H3M21 12h-2M7 7L5.5 5.5M18.5 18.5L17 17M17 7l1.5-1.5M5.5 18.5L7 17', editavel:true,
     placeholder:'Colar chave da OpenRouter (sk-or-…)…', modeloPadrao:'openai/gpt-4o-mini',
     temModelo:true, modeloPlaceholder:'modelo (ex.: meta-llama/llama-3.3-70b-instruct:free)' },
-  'decisao|typesafe': { nome:'Decisões (Jev) — modo observação', provedor:'TypeSafe Jev — opina se o site achado é mesmo da empresa, ao lado das regras atuais, sem mudar o lead',
+  'decisao|typesafe': { nome:'Decisões (Jev)', provedor:'TypeSafe Jev — decide o caso duvidoso da busca nos mapas (o lugar é mesmo desta empresa? só aceita com 80%+) e opina, sem mudar o lead, se o site achado é da empresa',
     icon:'M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11', editavel:true,
     placeholder:'Colar chave da TypeSafe…', temModelo:true, modeloPlaceholder:'modelo (padrão jev-latest)' },
 };
@@ -6681,6 +6681,7 @@ function TesteMaps({ t }) {
     </div>
   );
   const motivo = { achou:'achou e conferiu', lugar_nao_confere:'o Maps trouxe lugares, mas nenhum conferiu com a empresa',
+    achou_ia: `achou — as regras ficaram em dúvida e o Jev confirmou (${Math.round((t.conferido_ia?.probabilidade || 0) * 100)}%)`,
     sem_resultado:'o Maps não trouxe nenhum lugar' }[t.resultado] || t.resultado;
   return (
     <div style={{ ...caixa, color:'var(--dim)', background:'var(--panel2)' }}>
@@ -6691,11 +6692,17 @@ function TesteMaps({ t }) {
         {' '}· {t.consultas} consulta(s){t.custo_usd != null ? ` · US$ ${t.custo_usd}` : ' · custo não informado'}
       </div>
       {tecnico}
+      {t.jev_ativo === false && t.resultado === 'lugar_nao_confere' ? (
+        <div style={{ color:'var(--faint)', marginTop:6 }}>O Jev está desligado: os casos duvidosos não são avaliados (Integrações → Decisões).</div>
+      ) : null}
       {(t.vistos || []).map((v, i) => (
         <div key={i} style={{ marginTop:6 }}>
           <div>Busca: <b>“{v.termo}”</b> — {v.lugares.length ? `${v.lugares.length} lugar(es):` : `nenhum lugar (resposta: ${Array.isArray(v.chaves) ? v.chaves.join(', ') || 'vazia' : v.chaves})`}</div>
           {v.lugares.map((l, j) => (
-            <div key={j} style={{ paddingLeft:10, color:'var(--faint)' }}>• {l.nome}{l.endereco ? ` — ${l.endereco}` : ''}{l.telefone ? ` · ${l.telefone}` : ' · sem telefone'}</div>
+            <div key={j} style={{ paddingLeft:10, color:'var(--faint)' }}>• {l.nome}{l.endereco ? ` — ${l.endereco}` : ''}{l.telefone ? ` · ${l.telefone}` : ' · sem telefone'}
+              {l.regras ? <b style={{ color:C.green }}> · conferiu pelas regras</b> : null}
+              {typeof l.ia === 'number' ? <b style={{ color: l.ia >= 0.8 ? C.green : 'var(--dim)' }}> · Jev: {Math.round(l.ia * 100)}%</b> : null}
+            </div>
           ))}
         </div>
       ))}
@@ -7745,7 +7752,7 @@ function BuscaContatoSaude() {
                 {d.glasser.com_telefone ? ` (US$ ${(d.glasser.custo_usd / d.glasser.com_telefone).toFixed(4)} por telefone achado)` : ''}.
                 {d.glasser.pausado ? <> <b style={{ color:C.red }}>Pausado por 30 min: as últimas 5 consultas deram erro.</b></> : null}
                 {(d.glasser.desfechos || []).length ? <> Resultado das consultas: {d.glasser.desfechos.map(x =>
-                  `${{ achou:'achou', lugar_nao_confere:'achou lugares, mas nenhum era a empresa', sem_resultado:'o Maps não trouxe nada',
+                  `${{ achou:'achou', achou_ia:'achou com o Jev confirmando', lugar_nao_confere:'achou lugares, mas nenhum era a empresa', sem_resultado:'o Maps não trouxe nada',
                        erro:'erro', sem_registro:'sem registro (antes desta versão)' }[x.r] || x.r} ${x.n}`).join(' · ')}.</> : null}
                 {d.glasser.ultimo_erro ? <> Último erro ({timeAgo(d.glasser.ultimo_erro.criado_em)}): <b style={{ color:C.red }}>{d.glasser.ultimo_erro.pago_erro}</b>.</> : null}
                 {d.glasser.a_repescar ? <> Leads antigos sem telefone esperando os mapas: <b style={{ color:'var(--text)' }}>{d.glasser.a_repescar}</b> —

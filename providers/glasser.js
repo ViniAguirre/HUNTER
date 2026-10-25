@@ -226,8 +226,11 @@ const TIPO_LOGRADOURO = /^(rua|r|avenida|av|rodovia|rod|estrada|est|travessa|tv|
 // Rua, número e CEP do endereço do cadastro ("Rua X, 123, Bairro, Cidade, UF, CEP").
 function ruaENumero(endereco) {
   const partes = String(endereco || '').split(',').map(x => x.trim());
-  const rua = semAc(partes[0] || '').split(/\s+/).filter(t => t.length >= 4 && !TIPO_LOGRADOURO.test(t));
-  const numero = (partes[1] || '').match(/^\d{1,6}/)?.[0] || null;
+  // Palavras da rua, e também números de 3+ dígitos ("Quadra 104 Sul", "SQN 308"):
+  // nas cidades planejadas é a quadra que identifica o endereço.
+  const rua = semAc(partes[0] || '').split(/\s+/).filter(t => (t.length >= 4 && !TIPO_LOGRADOURO.test(t)) || /^\d{3,}$/.test(t));
+  // Sem zero à esquerda: o cadastro escreve "03", o Maps "3".
+  const numero = (partes[1] || '').match(/^\d{1,6}/)?.[0]?.replace(/^0+(?=\d)/, '') || null;
   const cep = (partes[partes.length - 1] || '').replace(/\D/g, '');
   return { rua, numero, cep: cep.length === 8 ? cep : null };
 }
@@ -256,15 +259,23 @@ function genericasDe({ setor = null, criterios = null } = {}) {
 //  • nome nenhum, mas a mesma rua e número (muita empresa pequena está no
 //    Maps com um nome sem nada a ver com a razão social).
 // O Maps devolve o "mais parecido" mesmo quando não acha, por isso as provas.
-function confere(lugar, { nome, nomes, cidade, uf, endereco, genericas = [] }) {
+// Na cidade certa: a cidade no endereço (ou, sem endereço, o DDD do telefone
+// batendo com a UF) e sem telefone de outro estado.
+function noLugarCerto(lugar, { cidade, uf }) {
   const g = require('./google');
-  const disp = semAc(lugar.nome);
   const cid = semAc(cidade).trim();
   const tel = String(lugar.telefone || '').replace(/\D/g, '').replace(/^55(?=\d{10,11}$)/, '');
   if (tel && g.telefoneDesmenteUf(tel, uf)) return false;
   const end = semAc(lugar.endereco);
-  const lugarCerto = end ? (!!cid && end.includes(cid)) : (!!tel && !!uf);
-  if (!lugarCerto) return false;
+  return end ? (!!cid && end.includes(cid)) : (!!tel && !!uf);
+}
+
+function confere(lugar, { nome, nomes, cidade, uf, endereco, genericas = [] }) {
+  const g = require('./google');
+  if (!noLugarCerto(lugar, { cidade, uf })) return false;
+  const disp = semAc(lugar.nome);
+  const cid = semAc(cidade).trim();
+  const end = semAc(lugar.endereco);
   const fam = require('./palavras').familia;
   const gen = new Set([...GENERICAS_LOJA, ...genericas].map(fam));
   const toks = [...new Set((nomes || [nome]).flatMap(n => g.tokensNome(n)))].filter(t => !cid.split(/\s+/).includes(t));
@@ -275,8 +286,8 @@ function confere(lugar, { nome, nomes, cidade, uf, endereco, genericas = [] }) {
   const siglas = [...new Set((nomes || [nome]).flatMap(n => g.siglasDoNome(n)))];
   if (siglas.some(sg => new RegExp(`(^|[^a-z0-9])${sg}([^a-z0-9]|$)`).test(disp))) return true;
   const { rua, numero, cep } = ruaENumero(endereco);
-  const numeroOk = !!(end && numero && new RegExp(`\\b${numero}\\b`).test(end));
-  const ruaOk = !!(end && rua.length && rua.some(t => end.includes(t)));
+  const numeroOk = !!(end && numero && new RegExp(`(^|\\D)0*${numero}(\\D|$)`).test(end));
+  const ruaOk = !!(end && rua.length && rua.some(t => /^\d+$/.test(t) ? new RegExp(`(^|\\D)${t}(\\D|$)`).test(end) : end.includes(t)));
   const cepOk = !!(cep && cepsDe(lugar.endereco).includes(cep));
   if (bate.length) return numeroOk && (ruaOk || cepOk);
   return numeroOk && ruaOk;
@@ -310,7 +321,12 @@ const somaUsd = (a, b) => a == null ? (b ?? null) : b == null ? a
 // de providers/google.js, com custo, número de consultas e o resultado:
 //   achou | lugar_nao_confere | sem_resultado.
 // `debug`: devolve também os lugares vistos (tela de teste das Integrações).
-async function buscarNoMaps(nome, cidade, uf, apiKey, cfg = {}, { razao = null, endereco = null, genericas = [], debug = false } = {}) {
+// `juiz` (opcional): async (lugares) => [probabilidade de cada um ser a
+// empresa] — o Jev. Só é chamado no caso duvidoso: o Maps trouxe lugares na
+// cidade certa e as regras não aceitaram nenhum. Aceita o mais provável se
+// passar de JUIZ_MIN.
+const JUIZ_MIN = 0.8;
+async function buscarNoMaps(nome, cidade, uf, apiKey, cfg = {}, { razao = null, endereco = null, genericas = [], juiz = null, debug = false } = {}) {
   const ep = cfg.maps;
   if (!ep?.provider || !ep?.endpoint) throw new Error('Glasser: endpoint do Google Maps ainda não configurado (Integrações → Testar).');
   const nomes = [nome];
@@ -318,7 +334,7 @@ async function buscarNoMaps(nome, cidade, uf, apiKey, cfg = {}, { razao = null, 
   const tokNome = new Set(require('./google').tokensNome(nome));
   if (rz && require('./google').tokensNome(rz).some(t => !tokNome.has(t))) nomes.push(rz);
   const alvo = { nome, nomes, cidade, uf, endereco, genericas };
-  let custo = null, consultas = 0, lugar = null, vistos = [], semNada = true;
+  let custo = null, consultas = 0, lugar = null, vistos = [], semNada = true, pelaIa = null;
   for (const n of nomes) {
     let r;
     try {
@@ -329,13 +345,25 @@ async function buscarNoMaps(nome, cidade, uf, apiKey, cfg = {}, { razao = null, 
     }
     consultas++; custo = somaUsd(custo, r.custo_usd);
     if (r.lugares.length) semNada = false;
-    if (debug) vistos.push({ termo: [n, cidade, uf].filter(Boolean).join(' '), lugares: r.lugares.slice(0, 5),
-      chaves: r.output && typeof r.output === 'object' ? Object.keys(r.output).slice(0, 12) : typeof r.output });
-    lugar = r.lugares.slice(0, 5).find(l => confere(l, alvo));
-    if (lugar) break;
+    const top = r.lugares.slice(0, 5);
+    const visto = { termo: [n, cidade, uf].filter(Boolean).join(' '), lugares: top.map(l => ({ ...l })),
+      chaves: r.output && typeof r.output === 'object' ? Object.keys(r.output).slice(0, 12) : typeof r.output };
+    if (debug) vistos.push(visto);
+    lugar = top.find(l => confere(l, alvo));
+    if (lugar) { visto.lugares.forEach(l => { if (l.nome === lugar.nome && l.endereco === lugar.endereco) l.regras = true; }); break; }
+    // Caso duvidoso: lugares na cidade certa, nenhum aceito pelas regras → Jev.
+    const naCidade = top.filter(l => noLugarCerto(l, alvo));
+    if (juiz && naCidade.length) {
+      const j = await juiz(naCidade).catch(() => null);
+      const probs = j?.probabilidades || [];
+      naCidade.forEach((l, i) => { const v = visto.lugares.find(x => x.nome === l.nome && x.endereco === l.endereco); if (v) v.ia = probs[i] ?? null; });
+      let melhor = -1;
+      probs.forEach((p, i) => { if (typeof p === 'number' && p >= JUIZ_MIN && (melhor < 0 || p > probs[melhor])) melhor = i; });
+      if (melhor >= 0) { lugar = naCidade[melhor]; pelaIa = { probabilidade: probs[melhor], modelo: j.modelo || null }; break; }
+    }
   }
   const agora = new Date().toISOString();
-  const extra = { custo_usd: custo, consultas, ...(debug ? { vistos } : {}) };
+  const extra = { custo_usd: custo, consultas, ...(pelaIa ? { conferido_ia: pelaIa } : {}), ...(debug ? { vistos } : {}) };
   if (!lugar) {
     const motivo = semNada ? 'sem_resultado' : 'lugar_nao_confere';
     return { encontrado: false, fonte: 'glasser', validado: false, validado_em: agora, motivo, resultado: motivo, ...extra };
@@ -346,7 +374,7 @@ async function buscarNoMaps(nome, cidade, uf, apiKey, cfg = {}, { razao = null, 
   const social = website && /(^|\.)(instagram\.com|facebook\.com|linktr\.ee)$/i.test(host) ? website : null;
   if (social) website = null;
   return {
-    encontrado: true, resultado: 'achou', telefone, whatsapp: telefone, website, email: null,
+    encontrado: true, resultado: pelaIa ? 'achou_ia' : 'achou', telefone, whatsapp: telefone, website, email: null,
     ...(social ? { perfil_social: social } : {}),
     nome_google: lugar.nome, categoria_google: lugar.categoria || null,
     fonte: 'glasser', site_conferido: 'maps', validado: !!(telefone || website || social), validado_em: agora,
@@ -354,4 +382,4 @@ async function buscarNoMaps(nome, cidade, uf, apiKey, cfg = {}, { razao = null, 
   };
 }
 
-module.exports = { saldo, descobrirMaps, inspecionar, executar, buscarNoMaps, lugaresDe, confere, entradaMaps, resumoSchema, textoPreco, limparRazao, ruaENumero, genericasDe, LIMITE_DIA_PADRAO };
+module.exports = { saldo, descobrirMaps, inspecionar, executar, buscarNoMaps, lugaresDe, confere, entradaMaps, resumoSchema, textoPreco, limparRazao, ruaENumero, genericasDe, noLugarCerto, JUIZ_MIN, LIMITE_DIA_PADRAO };

@@ -91,6 +91,25 @@ async function repescarSemTelefone(pool, queues) {
   return rows.length;
 }
 
+// Jev como juiz do caso duvidoso da busca nos mapas (glasser.buscarNoMaps):
+// só existe com a integração decisao|typesafe ativa. Cada lugar avaliado fica
+// em decisoes_jev (tipo 'lugar'), pra auditar o que ele aceitou e recusou.
+async function juizDoJev(pool, emp, cnpj) {
+  const jev = await typesafe.integracao(pool).catch(() => null);
+  if (!jev) return null;
+  return async lugares => {
+    const r = await typesafe.avaliarLugares(jev.apiKey, emp, lugares, { modelo: jev.modelo });
+    for (const [i, l] of lugares.entries()) {
+      await pool.query(
+        `INSERT INTO decisoes_jev (tipo, cnpj, alvo, regra, jev_pertence, modelo, latencia_ms)
+         VALUES ('lugar', $1, $2, 'regras_recusaram', $3, $4, $5)`,
+        [cnpj, `${l.nome} — ${l.endereco || 'sem endereço'}`.slice(0, 400), r.probabilidades[i], r.modelo, r.latencia_ms]
+      ).catch(e => console.error('[jev] gravar lugar:', e.message));
+    }
+    return r;
+  };
+}
+
 // Modo observação do Jev (só para o tenant com a integração decisao|typesafe
 // ativa): opina sobre os mesmos candidatos a site que as regras do google.js
 // avaliaram e grava as duas respostas em `decisoes_jev`. Não altera o lead.
@@ -269,9 +288,10 @@ module.exports = async function validacao(job, pool, queues) {
           // não provam que é esta empresa (glasser.confere).
           const { rows: [bz] } = await pool.query(`SELECT criterios FROM buscas WHERE id=$1`, [busca_id]).catch(() => ({ rows: [] }));
           const m = await glasser.buscarNoMaps(nome, emp?.cidade, emp?.uf, ig.key_cifrada, ig.config,
-            { razao: emp?.razao, endereco: emp?.endereco, genericas: glasser.genericasDe({ setor: emp?.setor, criterios: bz?.criterios }) });
+            { razao: emp?.razao, endereco: emp?.endereco, genericas: glasser.genericasDe({ setor: emp?.setor, criterios: bz?.criterios }),
+              juiz: await juizDoJev(pool, emp, cnpj) });
           custoUsd = m.custo_usd ?? null;
-          pagoResultado = m.resultado || (m.encontrado ? 'achou' : 'lugar_nao_confere');
+          pagoResultado = m.resultado || (m.encontrado ? 'achou' : 'lugar_nao_confere');   // achou_ia = confirmado pelo Jev
           pagoConsultas = m.consultas ?? 1;
           if (m.encontrado && (m.telefone || m.website || m.perfil_social)) {
             if (m.website && !(c && c.resumo_site)) {
@@ -426,3 +446,4 @@ module.exports = async function validacao(job, pool, queues) {
 module.exports.repescarSemTelefone = repescarSemTelefone;
 module.exports.cotaGlasser = cotaGlasser;
 module.exports.CONSULTA_RODOU = CONSULTA_RODOU;
+module.exports.juizDoJev = juizDoJev;

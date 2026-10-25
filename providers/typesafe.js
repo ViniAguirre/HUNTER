@@ -126,6 +126,49 @@ async function avaliarSites(apiKey, empresa, candidatos, opts = {}) {
   };
 }
 
+// ── Lugar do Google Maps: é ESTA empresa? ───────────────────────────────────
+// Para o caso duvidoso da busca nos mapas (providers/glasser.js): o Maps trouxe
+// lugares na cidade, mas nenhum passou nas regras (só a palavra do ramo bate,
+// endereço parecido mas não igual). O Jev compara o cadastro com cada lugar e
+// devolve a probabilidade de ser a mesma empresa. Uma chamada por lugar, em
+// paralelo. O decisor (dado pessoal) não vai.
+function perguntaLugar() {
+  return {
+    mesma: {
+      type: 'noul',
+      instructions: 'Is `place` (a Google Maps listing) this exact business described in `company` (same business, same address or unit)?',
+      criteria: {
+        true: 'Same business: the name matches the trade or legal name (allowing abbreviations, typos, branch suffixes) AND the address is the same place or unit',
+        false: 'A different business: a competitor or another shop in the same industry or city, another branch at a different address, or not enough evidence that it is this company',
+      },
+    },
+  };
+}
+function empresaParaLugar(e) {
+  return {
+    legal_name: e.razao || null,
+    trade_name: e.fantasia || null,
+    activity: e.setor || null,
+    registered_address: corta(e.endereco, 300),
+    city: e.cidade || null,
+    state: e.uf || null,
+    note: 'Brazilian company registry data. Small shops are often listed on Google Maps under a trade name different from the legal name; the registry address may be written differently (abbreviations, leading zeros, block numbers).',
+  };
+}
+async function avaliarLugares(apiKey, empresa, lugares, opts = {}) {
+  const company = empresaParaLugar(empresa);
+  const t0 = Date.now();
+  let modelo = null;
+  const probs = await Promise.all(lugares.map(l =>
+    systemOne(apiKey, { company, place: {
+      title: corta(l.nome, 200), address: corta(l.endereco, 300), phone: l.telefone || null,
+      category: l.categoria || null, website: l.website || null,
+    } }, perguntaLugar(), opts)
+      .then(d => { modelo = d.model || modelo; const v = d.answers?.mesma?.noul; return typeof v === 'number' ? v : null; })
+      .catch(() => null)));
+  return { modelo, latencia_ms: Date.now() - t0, probabilidades: probs };
+}
+
 // ── Nota de segurança da lista de semelhantes ────────────────────────────────
 // Cada empresa da lista é julgada como COMPRADORA da oferta (texto da proposta
 // de valor) numa escala de 4 níveis. A nota da lista é calculada no CÓDIGO a partir
@@ -390,6 +433,6 @@ async function integracao(pool) {
   return ig ? { apiKey: ig.key_cifrada, modelo: ig.config?.modelo || null } : null;
 }
 
-module.exports = { systemOne, avaliarSites, perguntasSite, integracao, TIPOS_PAGINA, MODELO_PADRAO,
+module.exports = { systemOne, avaliarSites, perguntasSite, avaliarLugares, perguntaLugar, integracao, TIPOS_PAGINA, MODELO_PADRAO,
   avaliarAderencia, avaliarEmpresa, notaDaLista, resumoSite, perfilComprador, NIVEIS_ADERENCIA, NIVEIS_REPRESENTATIVO,
   SEGMENTOS, ROTULOS_SEGMENTO, raioX };

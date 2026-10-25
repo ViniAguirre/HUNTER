@@ -3554,10 +3554,12 @@ app.post('/api/integracoes/glasser/testar-maps', requireAuth, requireMaster, asy
     try {
       const m = await glasser.buscarNoMaps(nome, emp.cidade, emp.uf, ig.key_cifrada, cfg,
         { razao: emp.razao, endereco: emp.endereco, debug: true,
-          genericas: glasser.genericasDe({ setor: emp.setor, criterios: bz?.criterios }) });
+          genericas: glasser.genericasDe({ setor: emp.setor, criterios: bz?.criterios }),
+          juiz: await require('./jobs/validacao').juizDoJev(pool, emp, cnpj) });
       res.json({ ok: true, ...tecnico, empresa: { nome, razao: emp.razao, cidade: emp.cidade, uf: emp.uf, endereco: emp.endereco },
         achou: !!m.encontrado, resultado: m.resultado, telefone: m.telefone || null, nome_google: m.nome_google || null,
-        site: m.website || m.perfil_social || null, consultas: m.consultas, custo_usd: m.custo_usd, vistos: m.vistos || [] });
+        site: m.website || m.perfil_social || null, consultas: m.consultas, custo_usd: m.custo_usd, vistos: m.vistos || [],
+        conferido_ia: m.conferido_ia || null, jev_ativo: !!(await require('./providers/typesafe').integracao(pool).catch(() => null)) });
     } catch (e) {
       res.json({ ok: false, ...tecnico, empresa: { nome, cidade: emp.cidade, uf: emp.uf }, erro: String(e.message || e).slice(0, 600) });
     }
