@@ -226,8 +226,11 @@ const TIPO_LOGRADOURO = /^(rua|r|avenida|av|rodovia|rod|estrada|est|travessa|tv|
 // Rua, número e CEP do endereço do cadastro ("Rua X, 123, Bairro, Cidade, UF, CEP").
 function ruaENumero(endereco) {
   const partes = String(endereco || '').split(',').map(x => x.trim());
-  const rua = semAc(partes[0] || '').split(/\s+/).filter(t => t.length >= 4 && !TIPO_LOGRADOURO.test(t));
-  const numero = (partes[1] || '').match(/^\d{1,6}/)?.[0] || null;
+  // Palavras da rua, e também números de 3+ dígitos ("Quadra 104 Sul", "SQN 308"):
+  // nas cidades planejadas é a quadra que identifica o endereço.
+  const rua = semAc(partes[0] || '').split(/\s+/).filter(t => (t.length >= 4 && !TIPO_LOGRADOURO.test(t)) || /^\d{3,}$/.test(t));
+  // Sem zero à esquerda: o cadastro escreve "03", o Maps "3".
+  const numero = (partes[1] || '').match(/^\d{1,6}/)?.[0]?.replace(/^0+(?=\d)/, '') || null;
   const cep = (partes[partes.length - 1] || '').replace(/\D/g, '');
   return { rua, numero, cep: cep.length === 8 ? cep : null };
 }
@@ -275,8 +278,8 @@ function confere(lugar, { nome, nomes, cidade, uf, endereco, genericas = [] }) {
   const siglas = [...new Set((nomes || [nome]).flatMap(n => g.siglasDoNome(n)))];
   if (siglas.some(sg => new RegExp(`(^|[^a-z0-9])${sg}([^a-z0-9]|$)`).test(disp))) return true;
   const { rua, numero, cep } = ruaENumero(endereco);
-  const numeroOk = !!(end && numero && new RegExp(`\\b${numero}\\b`).test(end));
-  const ruaOk = !!(end && rua.length && rua.some(t => end.includes(t)));
+  const numeroOk = !!(end && numero && new RegExp(`(^|\\D)0*${numero}(\\D|$)`).test(end));
+  const ruaOk = !!(end && rua.length && rua.some(t => /^\d+$/.test(t) ? new RegExp(`(^|\\D)${t}(\\D|$)`).test(end) : end.includes(t)));
   const cepOk = !!(cep && cepsDe(lugar.endereco).includes(cep));
   if (bate.length) return numeroOk && (ruaOk || cepOk);
   return numeroOk && ruaOk;
