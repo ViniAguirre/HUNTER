@@ -12,11 +12,12 @@ const google = require('../providers/google');
 const fontes = require('./fontes');
 const typesafe = require('../providers/typesafe');
 const glasser = require('../providers/glasser');
+const orcamento = require('./orcamento');
 
 // Glasser (Google Maps) como ÚLTIMO recurso pago: só no lead que a busca grátis
 // não resolveu (sem telefone), na última tentativa (não paga duas vezes o mesmo
 // lead) e dentro do limite diário de consultas escolhido em Integrações.
-async function glasserDisponivel(pool) {
+async function cotaGlasser(pool) {
   const { rows: [ig] } = await pool.query(
     `SELECT key_cifrada, config FROM integracoes
       WHERE categoria='contato' AND provedor='glasser' AND ativo=true AND key_cifrada IS NOT NULL AND key_cifrada <> ''
@@ -27,7 +28,49 @@ async function glasserDisponivel(pool) {
     `SELECT COUNT(*)::int AS n FROM busca_contato_log
       WHERE pago_fonte='glasser'
         AND (criado_em AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date`);
-  return n < limite ? ig : null;
+  return { ig, limite, usados: n };
+}
+async function glasserDisponivel(pool) {
+  const c = await cotaGlasser(pool);
+  return c && c.usados < c.limite ? c.ig : null;
+}
+
+// ── Repescagem nos mapas ────────────────────────────────────────────────────
+// O lead novo do radar já passa pelos mapas sozinho (2ª tentativa, acima). Os
+// que ficaram sem telefone ANTES — Glasser ainda não ligado, limite do dia
+// acabado, radar antigo — não voltariam à busca sem alguém clicar em "Buscar
+// contato de novo". A cada minuto o motor manda alguns deles direto aos mapas
+// (sem refazer a busca na internet, que já não achou), usando só a SOBRA do
+// limite do dia: REPESCA_RESERVA dele fica para os leads novos dos radares.
+// Cada lead entra uma vez: quem já passou pelos mapas não volta.
+const REPESCA_POR_CICLO = 2;
+const REPESCA_RESERVA = 0.25;
+async function repescarSemTelefone(pool, queues) {
+  if (!queues?.validacao) return 0;
+  const cota = await cotaGlasser(pool);
+  if (!cota || cota.usados >= Math.floor(cota.limite * (1 - REPESCA_RESERVA))) return 0;
+  // Dentro do horário de funcionamento: o lead achado vai pro CRM, que não atende fora dele.
+  const vagas = await orcamento.disponivel(pool).catch(() => null);
+  if (!vagas || vagas.foraDaJanela) return 0;
+  // Fila da validação com trabalho na frente → espera: o lead novo tem prioridade.
+  const fila = await queues.validacao.getJobCounts('waiting', 'active').catch(() => null);
+  if (!fila || fila.waiting + fila.active > 0) return 0;
+  const { rows } = await pool.query(
+    `SELECT l.id, l.cnpj, l.busca_id FROM leads l
+      WHERE l.contato_status = 'sem_contato' AND l.status NOT IN ('Descartado', 'Enviado')
+        AND NOT EXISTS (SELECT 1 FROM busca_contato_log g WHERE g.lead_id = l.id AND g.pago_fonte = 'glasser')
+      ORDER BY l.score DESC NULLS LAST, l.criado_em DESC
+      LIMIT $1`, [Math.min(REPESCA_POR_CICLO, cota.limite - cota.usados)]);
+  const dia = new Date().toISOString().slice(0, 10);
+  for (const l of rows) {
+    await queues.validacao.add('validacao',
+      { cnpj: l.cnpj, busca_id: l.busca_id, lead_id: l.id, tentativa_contato: MAX_TENT_CONTATO, preservar: true, so_mapas: true },
+      // Um por lead por dia: se o job não chegar a consultar (limite acabou no
+      // meio), o lead volta à repescagem no dia seguinte.
+      { jobId: `repesca-mapas-${l.id}-${dia}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 },
+        attempts: 2, backoff: { type: 'exponential', delay: 10000 } });
+  }
+  return rows.length;
 }
 
 // Modo observação do Jev (só para o tenant com a integração decisao|typesafe
@@ -53,6 +96,9 @@ function observarSites(pool, jev, empresa) {
   };
 }
 
+// Lead que ficou 'Incompleto' (sem contato) e agora achou telefone volta pra
+// triagem como 'Novo' — o mesmo que acontece quando o contato entra à mão.
+const SAI_DO_INCOMPLETO = `status = CASE WHEN status='Incompleto' THEN 'Novo' ELSE status END, atualizado_em=now()`;
 const MAX_TENT_CONTATO = 1;   // 1 re-enriquecimento se o contato vier incompleto
 
 // Opção de contato da Estratégia (o cliente escolhe): WhatsApp basta pro envio
@@ -76,6 +122,9 @@ module.exports = async function validacao(job, pool, queues) {
   // lead que o usuário só queria atualizar (a regra de apagar vale só na
   // primeira passagem, quando o lead ainda nem "existia" pro usuário).
   const preservarLead = !!job.data.preservar;
+  // Repescagem (repescarSemTelefone): só os mapas — a busca na internet já
+  // rodou neste lead e não achou telefone.
+  const soMapas = !!job.data.so_mapas;
 
   const { rows: [ig] } = await pool.query(
     `SELECT provedor, key_cifrada, config FROM integracoes
@@ -100,6 +149,16 @@ module.exports = async function validacao(job, pool, queues) {
     let c = null;
     // Pro diagnóstico da busca de contato (Monitoramento → Busca de contato).
     let origem = null, diagBusca = null;
+    // Como o lead estava antes desta busca: quem sai de "sem contato" volta pra
+    // triagem, e o contador do radar não conta duas vezes o mesmo lead.
+    const { rows: [antes] } = await pool.query(
+      `SELECT contato_status, contato_validado FROM leads WHERE id=$1`, [lead_id]).catch(() => ({ rows: [] }));
+    const estavaSemContato = antes?.contato_status === 'sem_contato';
+    // Na repescagem o que a busca anterior achou (e-mail, site) continua valendo.
+    if (soMapas && antes?.contato_validado && Object.keys(antes.contato_validado).length) {
+      c = { ...antes.contato_validado };
+      origem = 'anterior';
+    }
     const t0 = Date.now();
     const tentativa = job.data.tentativa_contato || 0;
     // Nas retentativas, força busca FRESCA (não reaproveita cache) — a ideia é
@@ -111,7 +170,7 @@ module.exports = async function validacao(job, pool, queues) {
     //    é global): reaproveita em vez de gastar Tavily/scrape de novo. Antes só
     //    reaproveitava fonte==='web'; qualquer contato já achado e válido serve.
     const cvWeb = emp?.contatos_verificados;
-    if (!forcarFresco && cvWeb && (cvWeb.email || cvWeb.telefone || cvWeb.resumo_site)) {
+    if (!soMapas && !forcarFresco && cvWeb && (cvWeb.email || cvWeb.telefone || cvWeb.resumo_site)) {
       c = {
         telefone: cvWeb.telefone || null, whatsapp: cvWeb.telefone || null,
         email: cvWeb.email || null, website: cvWeb.website || null,
@@ -130,7 +189,7 @@ module.exports = async function validacao(job, pool, queues) {
     }
 
     // 1) Provedor pago ativo (Google Places / Econodata), se houver e a chave funcionar.
-    if (!c && ig) {
+    if (!soMapas && !c && ig) {
       try {
         if (ig.provedor === 'google') {
           c = await google.buscarContato(nome, emp?.cidade, emp?.uf, ig.key_cifrada);
@@ -147,7 +206,7 @@ module.exports = async function validacao(job, pool, queues) {
     //    provedor, quando o pago falhou, ou quando faltou o site/resumo (essencial
     //    pro SWOT). Se houver chave de busca web (Tavily), ela torna essa busca mais
     //    estável; senão, DuckDuckGo grátis.
-    if (!c || !c.website || !c.resumo_site) {
+    if (!soMapas && (!c || !c.website || !c.resumo_site)) {
       // O CNPJ vai junto: quando o site imprime o CNPJ no rodapé, ele CONFIRMA
       // (ou desmente) que aquele site é mesmo desta empresa — prova mais forte
       // que qualquer semelhança de domínio.
@@ -203,6 +262,7 @@ module.exports = async function validacao(job, pool, queues) {
               if (!c.resumo_site && m.resumo_site) { c.resumo_site = m.resumo_site; c.resumo_fonte = m.resumo_fonte; }
               c.validado = c.validado || m.validado;
               c.fonte = c.fonte ? `${c.fonte}+glasser` : 'glasser';
+              if (origem === 'anterior') origem = 'glasser';
             }
             delete c.custo_usd;
           }
@@ -212,6 +272,8 @@ module.exports = async function validacao(job, pool, queues) {
         }
       }
     }
+
+    if (origem === 'anterior') origem = null;   // os mapas não acharam nada novo
 
     // IMPORTANTE: o contato comercial (telefone/e-mail/site) SÓ vem de fontes
     // comerciais (site da empresa / rede social / Google Maps / Places /
@@ -284,7 +346,7 @@ module.exports = async function validacao(job, pool, queues) {
 
     // 1) Completo (telefone + e-mail) → segue e pode ir ao CRM automático.
     if (completo) {
-      await pool.query(`UPDATE leads SET contato_status='completo', contato_pendente=false WHERE id=$1`, [lead_id]);
+      await pool.query(`UPDATE leads SET contato_status='completo', contato_pendente=false, ${SAI_DO_INCOMPLETO} WHERE id=$1`, [lead_id]);
       await seguirParaSwot(queues, { cnpj, busca_id, lead_id, contato_ok: true });
       return { lead_id, contato: 'completo' };
     }
@@ -294,7 +356,7 @@ module.exports = async function validacao(job, pool, queues) {
     //    basta" (Estratégia), segue pro envio automático como o completo — o CRM
     //    atende pelo WhatsApp. O SWOT roda nos dois casos.
     if (hasPhone && !hasEmail) {
-      await pool.query(`UPDATE leads SET contato_status='decisao', contato_pendente=$2 WHERE id=$1`,
+      await pool.query(`UPDATE leads SET contato_status='decisao', contato_pendente=$2, ${SAI_DO_INCOMPLETO} WHERE id=$1`,
         [lead_id, !opcoes.soWhatsapp]);
       await seguirParaSwot(queues, { cnpj, busca_id, lead_id, contato_ok: opcoes.soWhatsapp });
       return { lead_id, contato: opcoes.soWhatsapp ? 'so_telefone_envia' : 'decisao_so_telefone' };
@@ -314,7 +376,9 @@ module.exports = async function validacao(job, pool, queues) {
       console.warn(`[validacao] lead ${lead_id} (${cnpj}): sem telefone e NENHUMA fonte de ` +
         `enriquecimento ativa (Integrações → Contato comercial / Busca na web) — configure um provedor.`);
     }
-    await pool.query(`UPDATE buscas SET sem_contato = sem_contato + 1 WHERE id=$1`, [busca_id]).catch(() => {});
+    if (!estavaSemContato) {
+      await pool.query(`UPDATE buscas SET sem_contato = sem_contato + 1 WHERE id=$1`, [busca_id]).catch(() => {});
+    }
     await pool.query(
       `UPDATE leads SET status = CASE WHEN status IN ('Novo','Qualificado') THEN 'Incompleto' ELSE status END,
                         contato_status='sem_contato', contato_pendente=true, atualizado_em=now()
@@ -332,3 +396,4 @@ module.exports = async function validacao(job, pool, queues) {
   }
 };
 
+module.exports.repescarSemTelefone = repescarSemTelefone;

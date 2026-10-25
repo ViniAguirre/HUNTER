@@ -1983,6 +1983,24 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
 }
 
 // ── Buscas ────────────────────────────────────────────────────────────────────
+
+// O que a descoberta do radar Ativa está fazendo (buscas.descoberta_estado):
+// buscando, esperando a cota/horário, ou falhando. Sem isso, "Ativa" com a
+// atividade de dias atrás parecia radar parado.
+const ESTADOS_DESCOBERTA = {
+  varrendo: 'buscando empresas',
+  cadencia_horaria: 'aguardando a cota de leads desta hora',
+  limite_diario: 'limite de leads do dia atingido — volta amanhã',
+  fora_da_janela: 'fora do horário de funcionamento',
+  sem_filtro: 'sem filtro para buscar — edite o radar',
+};
+function estadoDescoberta(b) {
+  if ((b.descoberta_falhas || 0) > 0)
+    return { texto: `a busca de empresas falhou ${b.descoberta_falhas}× — tentando de novo sozinha`, alerta: b.descoberta_falhas >= 3 };
+  const t = ESTADOS_DESCOBERTA[b.descoberta_estado];
+  return t ? { texto: t, alerta: b.descoberta_estado === 'sem_filtro' } : null;
+}
+
 function Buscas({ onOpen, onEstrategia }) {
   const [buscas, setBuscas] = useState(null);
   const [piloto, setPiloto] = useState(null);
@@ -2066,6 +2084,12 @@ function Buscas({ onOpen, onEstrategia }) {
               <span style={badgeStyle(buscaStatusColors[b.status]||C.gray)}>{b.status}</span>
               {b.status === 'Pausada' && b.pausa_auto && (
                 <div style={{ fontSize:10.5, color:'var(--faint)', marginTop:4 }}>fora do período da pauta</div>
+              )}
+              {b.status === 'Ativa' && estadoDescoberta(b) && (
+                <div title={b.descoberta_erro || undefined}
+                  style={{ fontSize:10.5, marginTop:4, color: estadoDescoberta(b).alerta ? C.red : 'var(--faint)' }}>
+                  {estadoDescoberta(b).texto}
+                </div>
               )}
             </div>
             {/* Radar aberto pelo piloto: quem "criou" foi a Estratégia, a partir
@@ -5927,7 +5951,7 @@ const INTEGRACOES_META = {
     icon:'M14 2v6h6M14 2l6 6v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1z', editavel:true },
   'contato|google': { nome:'Contato comercial (Google Meu Negócio)', provedor:'Places API — telefone/WhatsApp + site → e-mail',
     icon:'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18M3 12h18', editavel:true, placeholder:'Colar chave da Places API…' },
-  'contato|glasser': { nome:'Contato no Google Maps (último recurso)', provedor:'Glasser — paga só o uso. Entra só no lead que a busca grátis deixou sem telefone, até o limite de consultas por dia',
+  'contato|glasser': { nome:'Contato no Google Maps (último recurso)', provedor:'Glasser — paga só o uso. Entra só no lead que a busca grátis deixou sem telefone (os novos dos radares e, com a sobra do dia, os antigos), até o limite de consultas por dia',
     icon:'M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11zM12 12.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z', editavel:true,
     placeholder:'Colar chave do Glasser…', temLimite:true, limitePadrao:100 },
   'contato|econodata': { nome:'Contato do decisor (premium)', provedor:'Econodata (match por CNPJ) — opcional',
@@ -7628,6 +7652,8 @@ function BuscaContatoSaude() {
                 {d.glasser.consultas ? ` (${Math.round((d.glasser.com_telefone || 0) / d.glasser.consultas * 100)}%)` : ''}
                 · US$ {Number(d.glasser.custo_usd || 0).toFixed(3)}
                 {d.glasser.com_telefone ? ` (US$ ${(d.glasser.custo_usd / d.glasser.com_telefone).toFixed(4)} por telefone achado)` : ''}.
+                {d.glasser.a_repescar ? <> Leads antigos sem telefone esperando os mapas: <b style={{ color:'var(--text)' }}>{d.glasser.a_repescar}</b> —
+                  vão sozinhos, com a sobra do limite do dia (1/4 dele fica para os leads novos dos radares).</> : null}
               </>}
             </div>
           </>

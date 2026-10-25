@@ -78,12 +78,29 @@ if (process.env.REDIS_HOST) {
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
+// Esperas normais da descoberta (jobs/descoberta.js → descoberta_estado): o
+// radar está bem, só aguardando orçamento ou horário.
+const ESPERAS_DESCOBERTA = ['cadencia_horaria', 'limite_diario', 'fora_da_janela'];
+
+// O erro da descoberta nomeia o provedor (ex.: a fonte de empresas): só o
+// master vê; os outros veem só que a busca está falhando (descoberta_falhas).
+function semErroDescoberta(b, req) {
+  if (req.user?.master || !b) return b;
+  const { descoberta_erro, ...resto } = b;
+  return resto;
+}
+
 function computeHealth(b) {
   if (b.status === 'Encerrada') return 'gray';
   if (b.status === 'Pausada') return 'red';
   if (b.status === 'Esgotada') return 'amber';
-  if (!b.ultima_ativ) return 'amber';
-  const mins = (Date.now() - new Date(b.ultima_ativ).getTime()) / 60000;
+  if ((b.descoberta_falhas || 0) >= 3 || b.descoberta_estado === 'sem_filtro') return 'red';
+  // Último sinal de vida: empresa processada (ultima_ativ) ou passagem do motor
+  // pelo radar (descoberta_estado_em, a cada minuto enquanto ele espera).
+  const sinais = [b.ultima_ativ, b.descoberta_estado_em].filter(Boolean).map(d => new Date(d).getTime());
+  if (!sinais.length) return 'amber';
+  const mins = (Date.now() - Math.max(...sinais)) / 60000;
+  if (ESPERAS_DESCOBERTA.includes(b.descoberta_estado)) return mins < 15 ? 'amber' : 'red';
   if (mins < 10) return 'green';
   if (mins < 60) return 'amber';
   return 'red';
@@ -807,6 +824,15 @@ async function init() {
     -- Pausa feita PELO PILOTO (pauta fora do período). Só essas ele desfaz
     -- sozinho; a pausa que o usuário faz à mão ele respeita.
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS pausa_auto BOOLEAN NOT NULL DEFAULT false;
+    -- O que a descoberta do radar está fazendo (a lista mostra): 'varrendo', ou
+    -- o motivo da espera (cota da hora, limite do dia, fora do horário). Falhas
+    -- seguidas da descoberta e o último erro: com elas o radar que não anda
+    -- aparece como tal e deixa de ocupar a vaga do piloto.
+    ALTER TABLE buscas ADD COLUMN IF NOT EXISTS descoberta_estado TEXT;
+    ALTER TABLE buscas ADD COLUMN IF NOT EXISTS descoberta_estado_em TIMESTAMPTZ;
+    ALTER TABLE buscas ADD COLUMN IF NOT EXISTS descoberta_falhas INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE buscas ADD COLUMN IF NOT EXISTS descoberta_erro TEXT;
+    ALTER TABLE buscas ADD COLUMN IF NOT EXISTS descoberta_falha_em TIMESTAMPTZ;
     CREATE INDEX IF NOT EXISTS idx_buscas_estrategia ON buscas(estrategia_pauta_id) WHERE estrategia_pauta_id IS NOT NULL;
   `);
 
@@ -886,6 +912,8 @@ async function init() {
     -- Consulta paga (Glasser/Google Maps) nesta tentativa e quanto custou (USD).
     ALTER TABLE busca_contato_log ADD COLUMN IF NOT EXISTS pago_fonte TEXT;
     ALTER TABLE busca_contato_log ADD COLUMN IF NOT EXISTS custo_usd  NUMERIC(12,6);
+    -- Repescagem nos mapas: "este lead já passou pelo Glasser?" por lead.
+    CREATE INDEX IF NOT EXISTS idx_busca_contato_log_glasser ON busca_contato_log(lead_id) WHERE pago_fonte = 'glasser';
   `);
 
   for (const t of ['usuarios', 'buscas', 'leads', 'integracoes', 'sementes', 'contadores', 'contadores_hora', 'propostas_valor', 'listas_semelhantes', 'chaves_api',
@@ -1729,6 +1757,10 @@ app.get('/api/buscas', requireAuth, async (req, res) => {
     const where = conds.length ? 'WHERE ' + conds.join(' AND ') : '';
     const { rows } = await pool.query(`
       SELECT b.id, b.nome, b.tipo, b.status, b.ritmo, b.criterios, b.ultima_ativ, b.criado_em,
+        -- O que a descoberta está fazendo (buscando, esperando a cota…) e se ela
+        -- vem falhando: a lista mostra embaixo do status. O erro em si fica no
+        -- Monitoramento (só master): ele nomeia o provedor.
+        b.descoberta_estado, b.descoberta_estado_em, b.descoberta_falhas, b.descoberta_erro,
         -- crm_auto vai junto: sem ele o "Duplicar" nascia sempre no Manual, por
         -- mais que o radar original fosse automático, e a lista não tinha como
         -- mostrar em que modo cada radar está.
@@ -1748,7 +1780,7 @@ app.get('/api/buscas', requireAuth, async (req, res) => {
       LEFT JOIN estrategia_pautas ep ON ep.id = b.estrategia_pauta_id
       LEFT JOIN leads l ON l.busca_id = b.id
       ${where} GROUP BY b.id, u.nome, ep.nome ORDER BY b.criado_em DESC`, vals);
-    res.json(rows.map(b => ({ ...b, health: computeHealth(b) })));
+    res.json(rows.map(b => ({ ...semErroDescoberta(b, req), health: computeHealth(b) })));
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
@@ -1832,7 +1864,7 @@ app.get('/api/buscas/:id', requireAuth, async (req, res) => {
     const b = bRow.rows[0];
     if (!b) return res.status(404).json({ erro: 'não encontrada' });
     res.json({
-      ...b,
+      ...semErroDescoberta(b, req),
       health: computeHealth(b),
       // aliases que o front do detalhe consome
       enc: b.encontrados, qual: b.qualificados, crm: b.enviados, fora: b.fora_perfil,
@@ -1971,13 +2003,15 @@ app.patch('/api/buscas/:id', requireAuth, requireEditor, async (req, res) => {
   // desfaz pausa que ELE fez; esta ele passa a respeitar. (Fica por último: os
   // $n acima são numerados pela posição em `sets`.)
   if ('status' in req.body) sets.push('pausa_auto=false');
+  // Ligou/desligou à mão: começa a contagem de falhas da descoberta do zero.
+  if ('status' in req.body) sets.push('descoberta_falhas=0', 'descoberta_falha_em=NULL');
   vals.push(id);
   try {
     const { rows:[b] } = await pool.query(
       `UPDATE buscas SET ${sets.join(',')} WHERE id=$${vals.length} RETURNING *`, vals
     );
     if (!b) return res.status(404).json({ erro: 'não encontrada' });
-    res.json({ ...b, health: computeHealth(b) });
+    res.json({ ...semErroDescoberta(b, req), health: computeHealth(b) });
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
@@ -3014,8 +3048,16 @@ app.get('/api/monitor/busca-contato', requireAuth, requireMaster, async (req, re
          FROM busca_contato_log WHERE ${janela} AND pago_fonte = 'glasser'`, [dias]).catch(() => ({ rows: [null] }));
     const { rows: [igG] } = await pool.query(
       `SELECT ativo, config FROM integracoes WHERE categoria='contato' AND provedor='glasser' LIMIT 1`).catch(() => ({ rows: [] }));
+    // Leads sem telefone que ainda não passaram pelos mapas: a repescagem
+    // (jobs/validacao.js) vai mandando, com a sobra do limite do dia.
+    const { rows: [rep] } = igG ? await pool.query(
+      `SELECT COUNT(*)::int AS n FROM leads l
+        WHERE l.contato_status = 'sem_contato' AND l.status NOT IN ('Descartado', 'Enviado')
+          AND NOT EXISTS (SELECT 1 FROM busca_contato_log g WHERE g.lead_id = l.id AND g.pago_fonte = 'glasser')`)
+      .catch(() => ({ rows: [null] })) : { rows: [null] };
     const glasserInfo = igG ? { ativo: !!igG.ativo && !!igG.config?.maps?.endpoint,
       limite_dia: Number.isInteger(igG.config?.limite_dia) ? igG.config.limite_dia : require('./providers/glasser').LIMITE_DIA_PADRAO,
+      a_repescar: rep?.n ?? null,
       ...(pago || {}) } : null;
     const busca = await fontes.fontesBuscaWeb(pool);
     let teste = null;
@@ -3157,11 +3199,13 @@ app.get('/api/alertas', requireAuth, async (req, res) => {
     // Só alerta busca ATIVA que ficou de fato parada além da carência. Usa o
     // sinal de vida mais recente (heartbeat, última atividade OU criação) — assim
     // uma busca recém-criada, ainda sem heartbeat, NÃO dispara alerta na hora.
+    // GREATEST, não COALESCE: o sinal mais recente é o que vale (durante a
+    // varredura só ultima_ativ anda; o heartbeat muda só no fim de cada passada).
     const { rows: paradas } = await pool.query(
       `SELECT nome, ultimo_heartbeat FROM buscas
        WHERE status='Ativa' AND ritmo > 0
-         AND COALESCE(ultimo_heartbeat, ultima_ativ, criado_em) < now() - ($1 || ' minutes')::interval
-       ORDER BY COALESCE(ultimo_heartbeat, ultima_ativ, criado_em) NULLS FIRST LIMIT 5`, [paradaMin]
+         AND GREATEST(ultimo_heartbeat, ultima_ativ, descoberta_estado_em, criado_em) < now() - ($1 || ' minutes')::interval
+       ORDER BY GREATEST(ultimo_heartbeat, ultima_ativ, descoberta_estado_em, criado_em) LIMIT 5`, [paradaMin]
     );
     for (const b of paradas) {
       alertas.push({ tipo: 'aviso', titulo: `Busca "${b.nome}" sem atividade`, detalhe: `sem heartbeat há mais de ${paradaMin} min`, quando: b.ultimo_heartbeat ? new Date(b.ultimo_heartbeat).toISOString() : null });
