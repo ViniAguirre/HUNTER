@@ -84,6 +84,36 @@ async function nomeDoRadar(pool, busca_id) {
 
 const TRAVADOS = ['qualificado', 'em_crm', 'descarte_duro'];
 const TETO_PAGINAS = 20;   // com limit=100, até ~2000 empresas por varredura
+// Freios da busca paga (página a página — mais devagar, mas só paga o que
+// tem chance de virar lead):
+//  • banco próprio primeiro: até LOCAL_POR_PASSADA empresas do cadastro por
+//    passada; se vieram LOCAL_BASTA ou mais, não paga página nesta passada;
+//  • esteira cheia: com LIMIAR_ESTEIRA+ empresas ainda em análise (cadastro →
+//    filtro → score), espera elas virarem lead ou descarte antes de pagar mais;
+//  • sem conversão: AMOSTRA_CONVERSAO+ empresas do radar já analisadas e
+//    nenhuma virou lead → para de pagar (o filtro não serve pra esta região).
+const LOCAL_POR_PASSADA = 500;
+const LOCAL_BASTA = 50;
+const LIMIAR_ESTEIRA = 300;
+const AMOSTRA_CONVERSAO = 300;
+
+// Empresas ainda na esteira (cadastro → filtro → score, inclusive as aprovadas
+// esperando vaga no limite). null = não deu pra medir (segue sem freio).
+async function esteira(queues) {
+  try {
+    const cs = await Promise.all([queues.enriquecimento, queues.filtroContador, queues.score1]
+      .filter(Boolean).map(q => q.getJobCounts('waiting', 'active', 'delayed', 'prioritized')));
+    return cs.reduce((t, c) => t + (c.waiting || 0) + (c.active || 0) + (c.delayed || 0) + (c.prioritized || 0), 0);
+  } catch (_) { return null; }
+}
+
+// Quantas empresas deste radar o score já julgou e quantas viraram lead.
+async function conversao(pool, busca_id) {
+  const { rows: [r] } = await pool.query(
+    `SELECT b.fora_perfil::int AS fora, (SELECT COUNT(*)::int FROM leads l WHERE l.busca_id = b.id) AS leads
+       FROM buscas b WHERE b.id=$1`, [busca_id]);
+  return { avaliadas: (r?.fora || 0) + (r?.leads || 0), leads: r?.leads || 0 };
+}
 const TETO_AMOSTRA = 120;  // quantos CNPJs da lista analisamos pra montar o perfil
 
 module.exports = async function descoberta(job, pool, queues) {
@@ -205,11 +235,19 @@ module.exports = async function descoberta(job, pool, queues) {
 
   // ── 1) BANCO LOCAL PRIMEIRO (grátis) ────────────────────────────────────────
   // O cadastro `empresas` é global: o que qualquer cliente já descobriu serve
-  // pra todos. Só vamos à CNPJá (paga) pelo que faltar. `orcamentoDaHora` limita
-  // quantas cabem agora, então não adianta puxar mais do que isso.
+  // pra todos. Só vamos à CNPJá (paga) quando o local deste radar acabou.
   const counters = { novos: 0, pulados: 0, enfileirados: 0, total: 0, locais: 0, motivos: {} };
-  const tetoLocal = Math.min(orcamentoDaHora, TETO_PAGINAS * 100);
-  const locais = await buscarLocal(pool, params, tetoLocal);
+  // Esteira cheia: nem o banco local entra — o que já foi encontrado ainda está
+  // sendo analisado. O radar segue Ativa e tenta de novo no próximo ciclo.
+  const naEsteira = await esteira(queues);
+  if (naEsteira != null && naEsteira >= LIMIAR_ESTEIRA) {
+    await marcarEstado(pool, busca_id, 'analisando');
+    await pool.query(`UPDATE buscas SET ultimo_heartbeat=now() WHERE id=$1`, [busca_id]);
+    return { modo: tipo, skipped: 'esteira_cheia', na_esteira: naEsteira, novos: 0 };
+  }
+  // O banco local não depende da cota de leads da hora: a cota limita lead
+  // criado, não empresa analisada — e analisar o que já temos é de graça.
+  const locais = await buscarLocal(pool, params, LOCAL_POR_PASSADA);
   for (const emp of locais) {
     const antes = counters.enfileirados;
     await processarOffice(pool, queues, busca_id, emp, counters);
@@ -225,8 +263,9 @@ module.exports = async function descoberta(job, pool, queues) {
     await marcarEstado(pool, busca_id, 'varrendo', { trabalhou: true });
     console.log(`[descoberta] busca ${busca_id}: ${counters.locais} empresa(s) aproveitada(s) do banco local (sem custo CNPJá).`);
   }
-  // Encheu a cota da hora só com o banco local → nem toca na CNPJá nesta rodada.
-  if (counters.enfileirados >= orcamentoDaHora) {
+  // O banco local ainda tem empresa pra analisar → nem toca na CNPJá nesta
+  // passada: a próxima pega o resto do local e só depois vai à busca paga.
+  if (counters.enfileirados >= LOCAL_BASTA) {
     await contarDescartes(pool, busca_id, counters.motivos);
     await pool.query(`UPDATE buscas SET ultimo_heartbeat=now() WHERE id=$1`, [busca_id]);
     return { modo: tipo, ...counters, fonte: 'local', paginas: 0, esgotou: false };
@@ -247,6 +286,22 @@ module.exports = async function descoberta(job, pool, queues) {
   let pagina = 0, esgotou = false;
 
   do {
+    // Freios antes de cada página paga (ver LIMIAR_ESTEIRA / AMOSTRA_CONVERSAO).
+    // Parar aqui guarda o cursor: a próxima passada continua desta página.
+    const freio = await freioDaPagina(pool, queues, busca_id);
+    if (freio) {
+      await contarDescartes(pool, busca_id, counters.motivos);
+      if (freio === 'sem_conversao') {
+        await pool.query(
+          `UPDATE buscas SET status='Esgotada', descoberta_token=NULL, descoberta_fase=1, descoberta_estado='sem_conversao',
+                             descoberta_estado_em=now(), ultimo_heartbeat=now() WHERE id=$1`, [busca_id]);
+        console.log(`[descoberta] busca ${busca_id}: ${AMOSTRA_CONVERSAO}+ empresas analisadas e nenhuma virou lead — parou de pagar páginas.`);
+      } else {
+        await marcarEstado(pool, busca_id, freio);
+        await pool.query(`UPDATE buscas SET ultimo_heartbeat=now() WHERE id=$1`, [busca_id]);
+      }
+      return { modo: tipo, ...counters, paginas: pagina, fase, freio };
+    }
     // A fase 2 varre o CNAE inteiro; a palavra-chave sai do filtro e continua
     // valendo no score, onde ela é sinal e não porteira.
     const filtros = { ...params, names: fase === 1 ? params.names : [],
@@ -618,6 +673,17 @@ async function processarOffice(pool, queues, busca_id, office, counters) {
     { removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 3, backoff: { type: 'exponential', delay: 5000 } }
   );
   counters.enfileirados++;
+}
+
+// Vale pagar a próxima página? null = sim; senão o motivo de parar.
+async function freioDaPagina(pool, queues, busca_id) {
+  const naEsteira = await esteira(queues);
+  if (naEsteira != null && naEsteira >= LIMIAR_ESTEIRA) return 'analisando';
+  const v = await orcamento.disponivel(pool).catch(() => null);
+  if (v && (v.foraDaJanela || v.dia <= 0)) return v.foraDaJanela ? 'fora_da_janela' : 'limite_diario';
+  const c = await conversao(pool, busca_id).catch(() => null);
+  if (c && c.avaliadas >= AMOSTRA_CONVERSAO && c.leads === 0) return 'sem_conversao';
+  return null;
 }
 
 // Varre o CADASTRO LOCAL (tabela `empresas`, global entre todos os clientes)

@@ -24,16 +24,32 @@ async function cotaGlasser(pool) {
       LIMIT 1`).catch(() => ({ rows: [] }));
   if (!ig || !ig.config?.maps?.endpoint) return null;
   const limite = Number.isInteger(ig.config.limite_dia) ? ig.config.limite_dia : glasser.LIMITE_DIA_PADRAO;
+  // Conta no limite só a consulta que RODOU: a recusada antes de rodar (chave,
+  // saldo, formato) não custa nada e não deveria tirar a vez de outro lead.
   const { rows: [{ n }] } = await pool.query(
-    `SELECT COUNT(*)::int AS n FROM busca_contato_log
-      WHERE pago_fonte='glasser'
+    `SELECT COALESCE(SUM(COALESCE(pago_consultas, 1)), 0)::int AS n FROM busca_contato_log
+      WHERE pago_fonte='glasser' AND ${CONSULTA_RODOU}
         AND (criado_em AT TIME ZONE 'America/Sao_Paulo')::date = (now() AT TIME ZONE 'America/Sao_Paulo')::date`);
-  return { ig, limite, usados: n };
+  // Disjuntor: as últimas consultas deram todas erro (serviço fora, formato
+  // recusado)? Pausa PAUSA_ERRO_MIN e tenta de novo — sem queimar a vez dos
+  // leads numa integração que não está respondendo.
+  const { rows: ult } = await pool.query(
+    `SELECT pago_resultado, criado_em FROM busca_contato_log WHERE pago_fonte='glasser'
+      ORDER BY id DESC LIMIT ${ERROS_PARA_PAUSAR}`).catch(() => ({ rows: [] }));
+  const pausado = ult.length === ERROS_PARA_PAUSAR && ult.every(r => r.pago_resultado === 'erro')
+    && Date.now() - new Date(ult[0].criado_em).getTime() < PAUSA_ERRO_MIN * 60_000;
+  return { ig, limite, usados: n, pausado };
 }
 async function glasserDisponivel(pool) {
   const c = await cotaGlasser(pool);
-  return c && c.usados < c.limite ? c.ig : null;
+  return c && !c.pausado && c.usados < c.limite ? c.ig : null;
 }
+const ERROS_PARA_PAUSAR = 5;
+const PAUSA_ERRO_MIN = 30;
+// A consulta rodou de fato (achou, não conferiu ou voltou vazia — ou deu erro
+// mas cobrou). Linha antiga, de antes do resultado ser gravado: só conta se
+// teve custo (as de custo vazio eram recusas).
+const CONSULTA_RODOU = `(pago_resultado <> 'erro' OR custo_usd > 0 OR (pago_resultado IS NULL AND custo_usd IS NOT NULL))`;
 
 // ── Repescagem nos mapas ────────────────────────────────────────────────────
 // O lead novo do radar já passa pelos mapas sozinho (2ª tentativa, acima). Os
@@ -42,13 +58,14 @@ async function glasserDisponivel(pool) {
 // contato de novo". A cada minuto o motor manda alguns deles direto aos mapas
 // (sem refazer a busca na internet, que já não achou), usando só a SOBRA do
 // limite do dia: REPESCA_RESERVA dele fica para os leads novos dos radares.
-// Cada lead entra uma vez: quem já passou pelos mapas não volta.
+// Cada lead entra uma vez: quem já passou pelos mapas não volta (a consulta
+// que deu erro não conta — o lead volta quando a integração responder).
 const REPESCA_POR_CICLO = 2;
 const REPESCA_RESERVA = 0.25;
 async function repescarSemTelefone(pool, queues) {
   if (!queues?.validacao) return 0;
   const cota = await cotaGlasser(pool);
-  if (!cota || cota.usados >= Math.floor(cota.limite * (1 - REPESCA_RESERVA))) return 0;
+  if (!cota || cota.pausado || cota.usados >= Math.floor(cota.limite * (1 - REPESCA_RESERVA))) return 0;
   // Dentro do horário de funcionamento: o lead achado vai pro CRM, que não atende fora dele.
   const vagas = await orcamento.disponivel(pool).catch(() => null);
   if (!vagas || vagas.foraDaJanela) return 0;
@@ -58,7 +75,8 @@ async function repescarSemTelefone(pool, queues) {
   const { rows } = await pool.query(
     `SELECT l.id, l.cnpj, l.busca_id FROM leads l
       WHERE l.contato_status = 'sem_contato' AND l.status NOT IN ('Descartado', 'Enviado')
-        AND NOT EXISTS (SELECT 1 FROM busca_contato_log g WHERE g.lead_id = l.id AND g.pago_fonte = 'glasser')
+        AND NOT EXISTS (SELECT 1 FROM busca_contato_log g WHERE g.lead_id = l.id AND g.pago_fonte = 'glasser'
+                          AND ${CONSULTA_RODOU.replace(/(pago_resultado|custo_usd)/g, 'g.$1')})
       ORDER BY l.score DESC NULLS LAST, l.criado_em DESC
       LIMIT $1`, [Math.min(REPESCA_POR_CICLO, cota.limite - cota.usados)]);
   const dia = new Date().toISOString().slice(0, 10);
@@ -142,7 +160,7 @@ module.exports = async function validacao(job, pool, queues) {
 
   try {
     const { rows: [emp] } = await pool.query(
-      `SELECT razao, fantasia, cidade, uf, setor, contato_receita, contatos_verificados FROM empresas WHERE cnpj=$1`, [cnpj]
+      `SELECT razao, fantasia, cidade, uf, setor, endereco, contato_receita, contatos_verificados FROM empresas WHERE cnpj=$1`, [cnpj]
     );
     const nome = emp?.fantasia || emp?.razao || '';
 
@@ -241,14 +259,17 @@ module.exports = async function validacao(job, pool, queues) {
 
     // 3) Google Maps pelo Glasser (pago, último recurso): a busca grátis não
     //    achou telefone, é a última tentativa e há cota no dia.
-    let pagoFonte = null, custoUsd = null;
+    let pagoFonte = null, custoUsd = null, pagoResultado = null, pagoErro = null, pagoConsultas = null;
     if (!(c && (c.telefone || c.whatsapp)) && tentativa >= MAX_TENT_CONTATO) {
       const ig = await glasserDisponivel(pool).catch(() => null);
       if (ig) {
         pagoFonte = 'glasser';
         try {
-          const m = await glasser.buscarNoMaps(nome, emp?.cidade, emp?.uf, ig.key_cifrada, ig.config);
+          const m = await glasser.buscarNoMaps(nome, emp?.cidade, emp?.uf, ig.key_cifrada, ig.config,
+            { razao: emp?.razao, endereco: emp?.endereco });
           custoUsd = m.custo_usd ?? null;
+          pagoResultado = m.resultado || (m.encontrado ? 'achou' : 'lugar_nao_confere');
+          pagoConsultas = m.consultas ?? 1;
           if (m.encontrado && (m.telefone || m.website || m.perfil_social)) {
             if (m.website && !(c && c.resumo_site)) {
               const sx = await google.scrapeSite(m.website).catch(() => null);
@@ -268,6 +289,7 @@ module.exports = async function validacao(job, pool, queues) {
           }
         } catch (e) {
           custoUsd = e.custo_usd ?? null;
+          pagoResultado = 'erro'; pagoErro = String(e.message || e).slice(0, 300); pagoConsultas = e.consultas ?? 1;
           console.warn(`[validacao] lead ${lead_id} (${cnpj}): Google Maps (Glasser) falhou — ${e.message}`);
         }
       }
@@ -317,12 +339,14 @@ module.exports = async function validacao(job, pool, queues) {
     // internet está achando contato, por qual caminho e por que falha.
     await pool.query(
       `INSERT INTO busca_contato_log (lead_id, busca_id, tentativa, origem, resultado, conferido, fonte_busca,
-                                      consultas, regras, motivo, telefone, email, ms, pago_fonte, custo_usd)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11,$12,$13,$14,$15)`,
+                                      consultas, regras, motivo, telefone, email, ms, pago_fonte, custo_usd,
+                                      pago_resultado, pago_erro, pago_consultas)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
       [lead_id, busca_id || null, tentativa, origem || (diagBusca ? 'gratis' : 'nenhum'),
        diagBusca?.resultado || (c ? 'site' : 'nada'), c?.site_conferido || null, c?.fonte_busca || null,
        JSON.stringify(diagBusca?.consultas || []), JSON.stringify(diagBusca?.regras || {}),
-       diagBusca?.motivo || null, hasPhone, hasEmail, Date.now() - t0, pagoFonte, custoUsd]
+       diagBusca?.motivo || null, hasPhone, hasEmail, Date.now() - t0, pagoFonte, custoUsd,
+       pagoResultado, pagoErro, pagoConsultas]
     ).catch(e => console.error('[validacao] log da busca:', e.message));
 
     // Incompleto (falta telefone OU e-mail): 1 re-enriquecimento (busca fresca).
@@ -397,3 +421,5 @@ module.exports = async function validacao(job, pool, queues) {
 };
 
 module.exports.repescarSemTelefone = repescarSemTelefone;
+module.exports.cotaGlasser = cotaGlasser;
+module.exports.CONSULTA_RODOU = CONSULTA_RODOU;

@@ -56,14 +56,20 @@ const atendimento = require('./jobs/atendimento');
 // nenhum job é consumido antes de confirmar que o RLS vale pro usuário do banco.
 const workers = {};
 
+// Etapas longas (varredura paga, busca de contato com vários sites e os mapas,
+// análise por IA): a trava do job dura 2 min em vez de 30 s. Um engasgo do
+// processo não vira mais "job stalled" (que, na 2ª vez, mata o job sem
+// tentar de novo); se o motor cair de verdade, o job volta em até 2 min.
+const LONGA = { lockDuration: 120_000, stalledInterval: 60_000 };
+
 function iniciarWorkers() {
   Object.assign(workers, {
-    descoberta: new Worker('hunter-descoberta', job => descobertaFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 2 }),
+    descoberta: new Worker('hunter-descoberta', job => descobertaFn(job, pool, queues), { connection: REDIS_OPTS, ...LONGA, concurrency: 2 }),
     enriquecimento: new Worker('hunter-enriquecimento', (job, token) => enriquecimentoFn(job, pool, queues, token), { connection: REDIS_OPTS, concurrency: 5 }),
     filtroContador: new Worker('hunter-filtro_contador', job => filtroContadorFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 10 }),
     score1: new Worker('hunter-score1', job => score1Fn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 10 }),
-    validacao: new Worker('hunter-validacao', job => validacaoFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 4 }),
-    swot: new Worker('hunter-swot', job => swotFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 3 }),
+    validacao: new Worker('hunter-validacao', job => validacaoFn(job, pool, queues), { connection: REDIS_OPTS, ...LONGA, concurrency: 4 }),
+    swot: new Worker('hunter-swot', job => swotFn(job, pool, queues), { connection: REDIS_OPTS, ...LONGA, concurrency: 3 }),
     crm: new Worker('hunter-crm', job => crmFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 5 }),
     tracking: new Worker('hunter-tracking', job => trackingFn(job, pool), { connection: REDIS_OPTS, concurrency: 4 }),
     // Nota de segurança da lista (Jev). Uma por vez: pode consultar a CNPJá.
@@ -143,6 +149,8 @@ async function runScheduler() {
   // Atendimento no CRM: confere uma leva de leads enviados que ainda estão
   // aguardando. Não espera — uma consulta lenta ao CRM não atrasa o disparo.
   atendimento.verificar(pool).catch(err => console.error('[atendimento] erro:', err.message));
+  pool.query(`UPDATE motor_status SET memoria_mb=$1, memoria_em=now()`, [Math.round(process.memoryUsage().rss / 1048576)])
+    .catch(() => {});
   // Leads sem telefone de antes (radar antigo, Glasser ainda desligado, limite
   // do dia acabado) vão aos mapas sozinhos, com a sobra do limite do dia.
   validacaoFn.repescarSemTelefone(pool, queues)
@@ -196,9 +204,15 @@ async function registrarBoot() {
   try {
     await pool.query(`CREATE TABLE IF NOT EXISTS motor_status (worker_boot timestamptz, worker_versao text)`);
     await migrarSingletonParaTenant(pool, 'motor_status');
+    await pool.query(`ALTER TABLE motor_status ADD COLUMN IF NOT EXISTS boots JSONB NOT NULL DEFAULT '[]'`);
+    await pool.query(`ALTER TABLE motor_status ADD COLUMN IF NOT EXISTS memoria_mb INTEGER`);
+    await pool.query(`ALTER TABLE motor_status ADD COLUMN IF NOT EXISTS memoria_em TIMESTAMPTZ`);
     await pool.query(
       `INSERT INTO motor_status (tenant_id, worker_boot, worker_versao) VALUES ($1, now(), $2)
-       ON CONFLICT (tenant_id) DO UPDATE SET worker_boot=now(), worker_versao=EXCLUDED.worker_versao`,
+       ON CONFLICT (tenant_id) DO UPDATE SET worker_boot=now(), worker_versao=EXCLUDED.worker_versao,
+         boots = (SELECT COALESCE(jsonb_agg(b), '[]'::jsonb) FROM (
+                    SELECT b FROM jsonb_array_elements(motor_status.boots || jsonb_build_array(now())) b
+                     ORDER BY (b #>> '{}')::timestamptz DESC LIMIT 30) x)`,
       // A release da imagem (a mesma que o rodapé mostra pra API). Com ela o
       // Monitoramento compara API × motor e avisa quando só um foi atualizado.
       [TENANT_ID, (process.env.HUNTER_VERSION || '').trim() || WORKER_VERSAO]);

@@ -1993,6 +1993,8 @@ const ESTADOS_DESCOBERTA = {
   limite_diario: 'limite de leads do dia atingido — volta amanhã',
   fora_da_janela: 'fora do horário de funcionamento',
   sem_filtro: 'sem filtro para buscar — edite o radar',
+  analisando: 'analisando as empresas já encontradas antes de buscar mais',
+  sem_conversao: `parou de buscar: 300+ empresas analisadas e nenhuma virou lead — revise os filtros`,
 };
 function estadoDescoberta(b) {
   // A falha só vale enquanto é o último estado: se a tentativa seguinte já
@@ -2000,7 +2002,7 @@ function estadoDescoberta(b) {
   if (b.descoberta_estado === 'erro' && (b.descoberta_falhas || 0) > 0)
     return { texto: `a busca de empresas falhou ${b.descoberta_falhas}× — tentando de novo sozinha`, alerta: b.descoberta_falhas >= 3 };
   const t = ESTADOS_DESCOBERTA[b.descoberta_estado];
-  return t ? { texto: t, alerta: b.descoberta_estado === 'sem_filtro' } : null;
+  return t ? { texto: t, alerta: ['sem_filtro', 'sem_conversao'].includes(b.descoberta_estado) } : null;
 }
 
 function Buscas({ onOpen, onEstrategia }) {
@@ -2087,7 +2089,7 @@ function Buscas({ onOpen, onEstrategia }) {
               {b.status === 'Pausada' && b.pausa_auto && (
                 <div style={{ fontSize:10.5, color:'var(--faint)', marginTop:4 }}>fora do período da pauta</div>
               )}
-              {b.status === 'Ativa' && estadoDescoberta(b) && (
+              {(b.status === 'Ativa' || b.descoberta_estado === 'sem_conversao') && estadoDescoberta(b) && (
                 <div title={b.descoberta_erro || undefined}
                   style={{ fontSize:10.5, marginTop:4, color: estadoDescoberta(b).alerta ? C.red : 'var(--faint)' }}>
                   {estadoDescoberta(b).texto}
@@ -6487,6 +6489,22 @@ function Integracoes() {
     } finally { setTestando(null); }
   };
 
+  // Teste real no Maps pelo CNPJ de um lead (gasta uma consulta).
+  const [mapsCnpj, setMapsCnpj] = useState('');
+  const [mapsTeste, setMapsTeste] = useState(null);
+  const [mapsTestando, setMapsTestando] = useState(false);
+  const testarMaps = async () => {
+    setMapsTestando(true); setMapsTeste(null);
+    try {
+      const r = await fetch('/api/integracoes/glasser/testar-maps', {
+        method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ cnpj: mapsCnpj })
+      });
+      const d = await r.json().catch(() => ({}));
+      setMapsTeste(r.ok ? d : { ok:false, erro: d.erro || 'Falha no teste.' });
+    } finally { setMapsTestando(false); }
+  };
+
   const alternar = async (chave) => {
     const existente = porChave[chave];
     if (!existente) return;
@@ -6618,9 +6636,55 @@ function Integracoes() {
                   : <>Não funcionou{testes[chave].dica ? <> — <b>{testes[chave].dica}</b></> : ''}. {testes[chave].erro}</>}
               </div>
             )}
+            {provedor === 'glasser' && row?.tem_chave && row?.config?.maps?.endpoint && (
+              <div style={{ flexBasis:'100%', display:'flex', flexWrap:'wrap', alignItems:'center', gap:8, fontSize:12, color:'var(--faint)' }}>
+                <span>Testar uma empresa no Maps (gasta 1 consulta):</span>
+                <input value={mapsCnpj} onChange={e => setMapsCnpj(e.target.value)} placeholder="CNPJ de um lead sem telefone"
+                  style={{ width:210, maxWidth:'100%', height:34, borderRadius:8, border:'1px solid var(--border)',
+                    background:'var(--panel2)', color:'var(--text)', padding:'0 10px', fontSize:12, fontFamily:'inherit' }}/>
+                <button onClick={testarMaps} disabled={mapsTestando || mapsCnpj.replace(/\D/g, '').length !== 14}
+                  style={{ height:34, padding:'0 12px', borderRadius:8, border:'1px solid var(--border)', background:'transparent',
+                    color:'var(--text)', fontSize:12, fontFamily:'inherit', cursor:'pointer',
+                    opacity: mapsTestando || mapsCnpj.replace(/\D/g, '').length !== 14 ? .5 : 1 }}>
+                  {mapsTestando ? 'Buscando…' : 'Buscar no Maps'}
+                </button>
+                {mapsTeste && <TesteMaps t={mapsTeste}/>}
+              </div>
+            )}
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// Resultado do "Buscar no Maps" (Integrações → Glasser): o que voltou e por
+// que conferiu ou não. Tela só do master.
+function TesteMaps({ t }) {
+  const caixa = { flexBasis:'100%', borderRadius:9, padding:'9px 11px', lineHeight:1.55, fontSize:12 };
+  if (!t.ok) return (
+    <div style={{ ...caixa, color:C.red, background:'rgba(248,113,113,.08)' }}>
+      {t.empresa ? <>{t.empresa.nome} ({t.empresa.cidade}/{t.empresa.uf}): </> : null}<b>a consulta falhou</b> — {t.erro}
+    </div>
+  );
+  const motivo = { achou:'achou e conferiu', lugar_nao_confere:'o Maps trouxe lugares, mas nenhum conferiu com a empresa',
+    sem_resultado:'o Maps não trouxe nenhum lugar' }[t.resultado] || t.resultado;
+  return (
+    <div style={{ ...caixa, color:'var(--dim)', background:'var(--panel2)' }}>
+      <div><b style={{ color:'var(--text)' }}>{t.empresa.nome}</b> · {t.empresa.cidade}/{t.empresa.uf}
+        {t.empresa.endereco ? <> · {t.empresa.endereco}</> : null}</div>
+      <div style={{ color: t.achou ? C.green : C.amber, marginTop:2 }}>
+        Resultado: <b>{motivo}</b>{t.achou ? <> — {t.nome_google}{t.telefone ? ` · ${t.telefone}` : ' · sem telefone no Maps'}{t.site ? ` · ${t.site}` : ''}</> : null}
+        {' '}· {t.consultas} consulta(s){t.custo_usd != null ? ` · US$ ${t.custo_usd}` : ' · custo não informado'}
+      </div>
+      {(t.vistos || []).map((v, i) => (
+        <div key={i} style={{ marginTop:6 }}>
+          <div>Busca: <b>“{v.termo}”</b> — {v.lugares.length ? `${v.lugares.length} lugar(es):` : `nenhum lugar (resposta: ${Array.isArray(v.chaves) ? v.chaves.join(', ') || 'vazia' : v.chaves})`}</div>
+          {v.lugares.map((l, j) => (
+            <div key={j} style={{ paddingLeft:10, color:'var(--faint)' }}>• {l.nome}{l.endereco ? ` — ${l.endereco}` : ''}{l.telefone ? ` · ${l.telefone}` : ' · sem telefone'}</div>
+          ))}
+        </div>
+      ))}
     </div>
   );
 }
@@ -7457,6 +7521,17 @@ function Monitor() {
           {' '}Atualize também o serviço do motor (hunter-worker) — sem isso, buscas, envios e o diagnóstico seguem no código antigo.
         </div>
       )}
+      {/* Motor caindo: muitos "job stalled" juntos vêm daqui (quase sempre
+          falta de memória no serviço hunter-worker). */}
+      {data.motor?.reinicios_24h >= 3 && (
+        <div style={{ background:'rgba(248,113,113,.08)', border:'1px solid '+C.red, borderRadius:12,
+          padding:'12px 16px', marginBottom:18, fontSize:12.5, color:C.red, lineHeight:1.5 }}>
+          <b>O motor reiniciou {data.motor.reinicios_24h} vezes nas últimas 24 h</b>
+          {data.motor.memoria_mb ? ` (memória em uso: ${data.motor.memoria_mb} MB)` : ''}.
+          {' '}Cada queda interrompe as buscas em andamento — é daí que vêm os "job stalled". Sem deploy no meio, a causa
+          mais comum é falta de memória no serviço hunter-worker: aumente o limite de memória dele.
+        </div>
+      )}
       {!data.motor_conectado && (
         <div style={{ background:'rgba(251,191,36,.08)', border:'1px solid '+C.amber, borderRadius:12,
           padding:'12px 16px', marginBottom:18, fontSize:12.5, color:C.amber }}>
@@ -7654,6 +7729,11 @@ function BuscaContatoSaude() {
                 {d.glasser.consultas ? ` (${Math.round((d.glasser.com_telefone || 0) / d.glasser.consultas * 100)}%)` : ''}
                 · US$ {Number(d.glasser.custo_usd || 0).toFixed(3)}
                 {d.glasser.com_telefone ? ` (US$ ${(d.glasser.custo_usd / d.glasser.com_telefone).toFixed(4)} por telefone achado)` : ''}.
+                {d.glasser.pausado ? <> <b style={{ color:C.red }}>Pausado por 30 min: as últimas 5 consultas deram erro.</b></> : null}
+                {(d.glasser.desfechos || []).length ? <> Resultado das consultas: {d.glasser.desfechos.map(x =>
+                  `${{ achou:'achou', lugar_nao_confere:'achou lugares, mas nenhum era a empresa', sem_resultado:'o Maps não trouxe nada',
+                       erro:'erro', sem_registro:'sem registro (antes desta versão)' }[x.r] || x.r} ${x.n}`).join(' · ')}.</> : null}
+                {d.glasser.ultimo_erro ? <> Último erro ({timeAgo(d.glasser.ultimo_erro.criado_em)}): <b style={{ color:C.red }}>{d.glasser.ultimo_erro.pago_erro}</b>.</> : null}
                 {d.glasser.a_repescar ? <> Leads antigos sem telefone esperando os mapas: <b style={{ color:'var(--text)' }}>{d.glasser.a_repescar}</b> —
                   vão sozinhos, com a sobra do limite do dia (1/4 dele fica para os leads novos dos radares).</> : null}
               </>}
