@@ -259,6 +259,18 @@ function genericasDe({ setor = null, criterios = null } = {}) {
 //  • nome nenhum, mas a mesma rua e número (muita empresa pequena está no
 //    Maps com um nome sem nada a ver com a razão social).
 // O Maps devolve o "mais parecido" mesmo quando não acha, por isso as provas.
+// Guia de empresas, lista telefônica, agregador de CNPJ ou rede: os bloqueados
+// da busca na internet (google.hostBloqueado) e domínio que começa por
+// guia/lista/catálogo/diretório ("guiatocantins.org", "listamais…").
+function siteDeGuia(url) {
+  const g = require('./google');
+  if (g.hostBloqueado(url)) return true;
+  let host = '';
+  try { host = new URL(url).hostname.replace(/^www\./, '').toLowerCase(); } catch { return true; }
+  return /^(guia|lista|catalogo|diretorio|paginas?amarelas|classificados)/.test(host)
+    || /(guiade|guiado|guiada|listatelefonica|empresasde|empresasdo|empresasda)/.test(host.replace(/[-.]/g, ''));
+}
+
 // Na cidade certa: a cidade no endereço (ou, sem endereço, o DDD do telefone
 // batendo com a UF) e sem telefone de outro estado.
 function noLugarCerto(lugar, { cidade, uf }) {
@@ -373,6 +385,9 @@ async function buscarNoMaps(nome, cidade, uf, apiKey, cfg = {}, { razao = null, 
   const host = (() => { try { return new URL(website).hostname.replace(/^www\./, ''); } catch { return ''; } })();
   const social = website && /(^|\.)(instagram\.com|facebook\.com|linktr\.ee)$/i.test(host) ? website : null;
   if (social) website = null;
+  // O "site" do Maps às vezes é a página da empresa num guia ("guiatocantins.org/…")
+  // ou num agregador: não é o site dela e não serve de material pra análise.
+  if (website && siteDeGuia(website)) website = null;
   return {
     encontrado: true, resultado: pelaIa ? 'achou_ia' : 'achou', telefone, whatsapp: telefone, website, email: null,
     ...(social ? { perfil_social: social } : {}),
@@ -382,4 +397,4 @@ async function buscarNoMaps(nome, cidade, uf, apiKey, cfg = {}, { razao = null, 
   };
 }
 
-module.exports = { saldo, descobrirMaps, inspecionar, executar, buscarNoMaps, lugaresDe, confere, entradaMaps, resumoSchema, textoPreco, limparRazao, ruaENumero, genericasDe, noLugarCerto, JUIZ_MIN, LIMITE_DIA_PADRAO };
+module.exports = { saldo, descobrirMaps, inspecionar, executar, buscarNoMaps, lugaresDe, confere, entradaMaps, resumoSchema, textoPreco, limparRazao, ruaENumero, genericasDe, noLugarCerto, siteDeGuia, JUIZ_MIN, LIMITE_DIA_PADRAO };

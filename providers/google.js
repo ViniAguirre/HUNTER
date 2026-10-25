@@ -810,4 +810,4 @@ async function buscarContato(nome, cidade, uf, apiKey) {
 
 module.exports = { buscarContato, buscarContatoGratis, buscarEmpresasWeb, scrapeSite,
   forcaDominio, confereLugar, tokensNome, hostBase, paginaSeApresentaComo, identidadeDa,
-  telefoneDesmenteUf, siglasDoNome };
+  telefoneDesmenteUf, siglasDoNome, hostBloqueado };
