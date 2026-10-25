@@ -109,6 +109,45 @@ function motivoFalhaIA(falhas) {
   return 'ia_falhou';
 }
 
+// Orientação de abordagem PADRÃO, sem IA: sai quando nenhuma IA está ativa ou
+// todas falharam na última tentativa. Usa só o cadastro e a proposta de valor
+// — o lead com WhatsApp não fica parado por falta de análise e chega ao CRM
+// com um roteiro de primeiro contato. "Refazer análise" troca pela da IA.
+function abordagemPadrao(empresa, { contexto = '', temTelefone = false } = {}) {
+  const nome = empresa?.fantasia || empresa?.razao || 'a empresa';
+  const ativ = String(empresa?.setor || '').trim();
+  const local = [empresa?.cidade, empresa?.uf].filter(Boolean).join('/');
+  const proposta = String(contexto || '').replace(/\s+/g, ' ').trim();
+  return {
+    modo: 'abordagem',
+    generico: true,
+    resumo: `${nome}${ativ ? ` — ${ativ.charAt(0).toLowerCase() + ativ.slice(1)}` : ''}${local ? `, em ${local}` : ''}. `
+      + 'Não há site nem perfil da empresa na internet: o primeiro contato serve para conhecer o negócio antes de oferecer.',
+    abordagem: {
+      canal: temTelefone ? 'WhatsApp (mensagem curta, depois ligação se responder)' : 'Ligação ou e-mail',
+      gancho: proposta
+        ? `Apresente-se em uma frase e conecte com o que você oferece: ${proposta.slice(0, 220)}${proposta.length > 220 ? '…' : ''}`
+        : 'Apresente-se em uma frase e pergunte se é a pessoa certa para falar sobre fornecedores.',
+      perguntas: [
+        'Quem cuida das compras e dos fornecedores aí?',
+        'Como vocês resolvem isso hoje — e o que mais incomoda nesse processo?',
+        'Faz sentido eu mandar uma proposta rápida para vocês avaliarem?',
+      ],
+      cuidados: [
+        'Não temos informações da internet sobre esta empresa: confirme o ramo e o porte logo no início.',
+        'Evite proposta longa na primeira mensagem — o objetivo é abrir a conversa.',
+      ],
+    },
+    dores_provaveis: [],
+    fatos_uteis: [],
+    swot: { forcas: [], fraquezas: [], oportunidades: [], ameacas: [] },
+    sinal_comercial: '',
+    aderencia: null,
+    baseado_em_site: false,
+    gerado_em: new Date().toISOString(),
+  };
+}
+
 async function registrarFalha(pool, lead_id, motivo) {
   await pool.query(`UPDATE leads SET swot_erro=$2, swot_erro_em=now() WHERE id=$1`, [lead_id, motivo])
     .catch(e => console.error('[swot] gravar motivo da falha:', e.message));
@@ -133,6 +172,7 @@ module.exports = async function swot(job, pool, queues) {
     console.warn(`[swot] lead ${lead_id} (${cnpj}): NENHUMA integração de IA ativa ` +
       `(Integrações → Inteligência: salve a chave E clique em "Ativar"). Briefing não gerado.`);
     await registrarFalha(pool, lead_id, 'sem_ia');
+    await gravarPadrao(pool, { lead_id, cnpj, busca });
   }
 
   if (igs.length) {
@@ -200,13 +240,19 @@ module.exports = async function swot(job, pool, queues) {
       // Todas as chaves falharam → job re-tenta com backoff.
       if (!briefing) {
         await registrarFalha(pool, lead_id, motivoFalhaIA(falhas));
-        throw new Error('IA: todos os provedores falharam — ' + falhas.map(f => f.erro).join(' | '));
+        // Ainda há tentativa do job: re-tenta com backoff. Na última, sai a
+        // orientação padrão e o lead segue (inclusive pro CRM).
+        const ultima = (job.attemptsMade || 0) + 1 >= (job.opts?.attempts || 1);
+        if (!ultima) throw new Error('IA: todos os provedores falharam — ' + falhas.map(f => f.erro).join(' | '));
+        console.warn(`[swot] lead ${lead_id} (${cnpj}): IA falhou em todas as tentativas — orientação padrão. ${falhas.map(f => f.erro).join(' | ')}`);
+        briefing = abordagemPadrao(empresa, { contexto, temTelefone: !!(cv.telefone || cv.whatsapp) });
       }
       await pool.query(
-        `UPDATE leads SET swot=$2::jsonb, estagio='pronto', swot_erro=NULL, swot_erro_em=NULL, atualizado_em=now() WHERE id=$1`,
+        `UPDATE leads SET swot=$2::jsonb, estagio='pronto', atualizado_em=now()
+                          ${briefing.generico ? '' : ', swot_erro=NULL, swot_erro_em=NULL'} WHERE id=$1`,
         [lead_id, JSON.stringify(briefing)]
       );
-      console.log(`[swot] lead ${lead_id} (${cnpj}): ${comMaterial ? 'briefing' : 'orientação de abordagem'} gerado (${usado.provedor} · ${usado.modelo || 'padrão'}).`);
+      console.log(`[swot] lead ${lead_id} (${cnpj}): ${briefing.generico ? 'orientação padrão' : comMaterial ? 'briefing' : 'orientação de abordagem'} gerado${usado ? ` (${usado.provedor} · ${usado.modelo || 'padrão'})` : ''}.`);
     } else {
       console.warn(`[swot] lead ${lead_id}: empresa ${cnpj} não encontrada na base — briefing não gerado.`);
       await registrarFalha(pool, lead_id, 'sem_firmografia');
@@ -214,18 +260,48 @@ module.exports = async function swot(job, pool, queues) {
   }
   // Sem chave IA: o lead segue 'scored' (sem gasto). Mesmo assim pode ir ao CRM.
 
-  // Gate de contato: envio AUTOMÁTICO ao CRM só acontece com telefone E e-mail
-  // validados — ou só com o telefone/WhatsApp, se o cliente escolheu "WhatsApp
-  // basta" na Estratégia. Fora disso fica pendente/decisão manual — o envio
-  // manual pela triagem continua liberado.
-  let contatoOk = job.data.contato_ok;
-  if (contatoOk === undefined) {
+  const { contatoOk, retido } = await portaoDoCrm(pool, queues, { lead_id, cnpj, crmAuto, contatoOk: job.data.contato_ok });
+
+  return { cnpj, lead_id, swot: igs.length > 0, crm_auto: crmAuto, contato_ok: contatoOk,
+    ...(retido ? { retido } : {}), ...(usado ? { ia: usado } : {}) };
+};
+
+// O lead já tem análise? (a coluna nasce '{}', não nula)
+const temAnalise = sw => !!(sw && (String(sw.resumo || '').trim() || sw.modo
+  || Object.values(sw.swot || {}).some(x => Array.isArray(x) && x.length)));
+
+// Sem IA nenhuma: grava a orientação padrão (se o lead ainda não tem análise).
+async function gravarPadrao(pool, { lead_id, cnpj, busca }) {
+  const [{ rows: [empresa] }, { rows: [lead] }] = await Promise.all([
+    pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [cnpj]),
+    pool.query(`SELECT swot, contato_validado FROM leads WHERE id=$1`, [lead_id]),
+  ]);
+  if (!empresa || (temAnalise(lead?.swot) && !lead.swot.generico)) return;
+  const crit = busca?.criterios || {};
+  const cv = lead?.contato_validado || {};
+  const b = abordagemPadrao(empresa, { contexto: crit.params?.proposta_valor || crit.proposta_valor || crit.texto || '',
+    temTelefone: !!(cv.telefone || cv.whatsapp) });
+  await pool.query(`UPDATE leads SET swot=$2::jsonb, estagio='pronto', atualizado_em=now() WHERE id=$1`, [lead_id, JSON.stringify(b)]);
+}
+
+// Portão do envio AUTOMÁTICO ao CRM (depois da análise, ou pela liberação dos
+// que aguardavam decisão): só com telefone E e-mail validados — ou só com o
+// telefone/WhatsApp, se o cliente escolheu "WhatsApp basta" na Estratégia —,
+// com o radar em envio automático e passando na qualidade mínima. Fora disso
+// fica pra triagem; o envio manual continua liberado.
+async function portaoDoCrm(pool, queues, { lead_id, cnpj = null, crmAuto = null, contatoOk }) {
+  if (crmAuto == null) {
+    const { rows: [r] } = await pool.query(
+      `SELECT b.crm_auto, (SELECT crm_auto_global FROM config) AS global FROM leads l JOIN buscas b ON b.id = l.busca_id WHERE l.id=$1`,
+      [lead_id]).catch(() => ({ rows: [] }));
+    crmAuto = !!(r?.crm_auto || r?.global);
+  }
+  if (contatoOk === undefined || contatoOk === null) {
     const { rows: [l] } = await pool.query(`SELECT contato_validado FROM leads WHERE id=$1`, [lead_id]);
     const cv = l?.contato_validado || {};
     const { rows: [op] } = await pool.query(`SELECT crm_so_whatsapp FROM estrategia`).catch(() => ({ rows: [] }));
     contatoOk = !!((cv.whatsapp || cv.telefone) && (cv.email || op?.crm_so_whatsapp));
   }
-
   // Qualidade mínima pro envio automático (Estratégia). Quem não passa fica na
   // lista pra triagem, com o motivo — o envio manual continua liberado.
   let retido = null;
@@ -236,18 +312,47 @@ module.exports = async function swot(job, pool, queues) {
     ]);
     retido = motivoRetencao(l, l?.swot?.aderencia, e);
     await pool.query(`UPDATE leads SET crm_retido=$2 WHERE id=$1`, [lead_id, retido]);
-    if (retido) console.log(`[swot] lead ${lead_id} (${cnpj}): não vai ao CRM sozinho — ${retido}. Fica pra triagem.`);
+    if (retido) console.log(`[swot] lead ${lead_id}${cnpj ? ` (${cnpj})` : ''}: não vai ao CRM sozinho — ${retido}. Fica pra triagem.`);
   }
-
-  if (crmAuto && contatoOk && !retido && queues?.crm) {
+  const enviado = !!(crmAuto && contatoOk && !retido && queues?.crm);
+  if (enviado) {
     await queues.crm.add('crm', { lead_id },
       { jobId: `crm-${lead_id}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 4, backoff: { type: 'exponential', delay: 15000 } });
   }
+  return { crmAuto, contatoOk, retido, enviado };
+}
 
-  return { cnpj, lead_id, swot: igs.length > 0, crm_auto: crmAuto, contato_ok: contatoOk,
-    ...(retido ? { retido } : {}), ...(usado ? { ia: usado } : {}) };
-};
+// ── Liberação dos que aguardavam decisão ────────────────────────────────────
+// Com "WhatsApp basta" ligado, o lead com telefone e sem e-mail não precisa
+// mais da decisão manual. Os que já estavam esperando (de antes da opção, ou
+// achados depois) saem da fila de decisão a cada minuto: com análise pronta,
+// passam direto pelo portão do CRM; sem análise, ganham a análise primeiro (e
+// o job da análise passa pelo portão no fim).
+const LIBERA_POR_CICLO = 20;
+async function liberarDecisoesWhatsapp(pool, queues) {
+  const { rows: [op] } = await pool.query(`SELECT crm_so_whatsapp FROM estrategia`).catch(() => ({ rows: [] }));
+  if (!op?.crm_so_whatsapp) return 0;
+  const { rows } = await pool.query(
+    `UPDATE leads SET contato_pendente=false, atualizado_em=now()
+      WHERE id IN (SELECT id FROM leads
+                    WHERE contato_status='decisao' AND contato_pendente
+                      AND status NOT IN ('Descartado', 'Enviado') AND enviado_crm_em IS NULL
+                      AND COALESCE(contato_validado->>'telefone', contato_validado->>'whatsapp', '') <> ''
+                    ORDER BY score DESC NULLS LAST, id LIMIT $1)
+      RETURNING id, cnpj, busca_id, swot`, [LIBERA_POR_CICLO]);
+  for (const l of rows) {
+    if (temAnalise(l.swot)) await portaoDoCrm(pool, queues, { lead_id: l.id, cnpj: l.cnpj, contatoOk: true });
+    else if (queues?.swot) {
+      await queues.swot.add('swot', { cnpj: l.cnpj, busca_id: l.busca_id, lead_id: l.id, contato_ok: true },
+        { jobId: `swot-libera-${l.id}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 2, backoff: { type: 'exponential', delay: 10000 } });
+    }
+  }
+  return rows.length;
+}
 
 module.exports.motivoFalhaIA = motivoFalhaIA;
+module.exports.abordagemPadrao = abordagemPadrao;
+module.exports.portaoDoCrm = portaoDoCrm;
+module.exports.liberarDecisoesWhatsapp = liberarDecisoesWhatsapp;
 module.exports.combinarAderencia = combinarAderencia;
 module.exports.motivoRetencao = motivoRetencao;
