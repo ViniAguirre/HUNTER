@@ -6662,9 +6662,22 @@ function Integracoes() {
 // que conferiu ou não. Tela só do master.
 function TesteMaps({ t }) {
   const caixa = { flexBasis:'100%', borderRadius:9, padding:'9px 11px', lineHeight:1.55, fontSize:12 };
+  // O que foi enviado e o que o endpoint aceita: é o que mostra por que ele
+  // recusou a entrada (campo obrigatório faltando, valor fora da lista).
+  const tecnico = t.entrada ? (
+    <div style={{ color:'var(--faint)', marginTop:6 }}>
+      <div>Endpoint: {t.endpoint} · enviado: <code>{JSON.stringify(t.entrada)}</code></div>
+      {t.schema?.campos?.length ? (
+        <div>Campos que ele aceita{t.schema.livre === false ? ' (só estes)' : ''}: {t.schema.campos.map(c =>
+          `${c.nome}${c.tipo ? ` (${c.tipo}${c.obrigatorio ? ', obrigatório' : ''})` : c.obrigatorio ? ' (obrigatório)' : ''}`
+          + (c.valores ? ` = ${c.valores.slice(0, 8).join('|')}${c.valores.length > 8 ? '…' : ''}` : '')).join(' · ')}</div>
+      ) : <div>O endpoint não informou os campos que aceita.</div>}
+    </div>
+  ) : null;
   if (!t.ok) return (
     <div style={{ ...caixa, color:C.red, background:'rgba(248,113,113,.08)' }}>
       {t.empresa ? <>{t.empresa.nome} ({t.empresa.cidade}/{t.empresa.uf}): </> : null}<b>a consulta falhou</b> — {t.erro}
+      {tecnico}
     </div>
   );
   const motivo = { achou:'achou e conferiu', lugar_nao_confere:'o Maps trouxe lugares, mas nenhum conferiu com a empresa',
@@ -6677,6 +6690,7 @@ function TesteMaps({ t }) {
         Resultado: <b>{motivo}</b>{t.achou ? <> — {t.nome_google}{t.telefone ? ` · ${t.telefone}` : ' · sem telefone no Maps'}{t.site ? ` · ${t.site}` : ''}</> : null}
         {' '}· {t.consultas} consulta(s){t.custo_usd != null ? ` · US$ ${t.custo_usd}` : ' · custo não informado'}
       </div>
+      {tecnico}
       {(t.vistos || []).map((v, i) => (
         <div key={i} style={{ marginTop:6 }}>
           <div>Busca: <b>“{v.termo}”</b> — {v.lugares.length ? `${v.lugares.length} lugar(es):` : `nenhum lugar (resposta: ${Array.isArray(v.chaves) ? v.chaves.join(', ') || 'vazia' : v.chaves})`}</div>
