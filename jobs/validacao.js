@@ -265,8 +265,11 @@ module.exports = async function validacao(job, pool, queues) {
       if (ig) {
         pagoFonte = 'glasser';
         try {
+          // Palavras do ramo do radar (e da atividade): no título do lugar, sozinhas
+          // não provam que é esta empresa (glasser.confere).
+          const { rows: [bz] } = await pool.query(`SELECT criterios FROM buscas WHERE id=$1`, [busca_id]).catch(() => ({ rows: [] }));
           const m = await glasser.buscarNoMaps(nome, emp?.cidade, emp?.uf, ig.key_cifrada, ig.config,
-            { razao: emp?.razao, endereco: emp?.endereco });
+            { razao: emp?.razao, endereco: emp?.endereco, genericas: glasser.genericasDe({ setor: emp?.setor, criterios: bz?.criterios }) });
           custoUsd = m.custo_usd ?? null;
           pagoResultado = m.resultado || (m.encontrado ? 'achou' : 'lugar_nao_confere');
           pagoConsultas = m.consultas ?? 1;

@@ -223,21 +223,40 @@ function limparRazao(razao) {
 const semAc = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 const TIPO_LOGRADOURO = /^(rua|r|avenida|av|rodovia|rod|estrada|est|travessa|tv|alameda|al|praca|pc|largo|via|servidao|quadra|qd)\.?$/;
 
-// Rua e número do endereço do cadastro ("Rua X, 123, Bairro, Cidade, UF, CEP").
+// Rua, número e CEP do endereço do cadastro ("Rua X, 123, Bairro, Cidade, UF, CEP").
 function ruaENumero(endereco) {
   const partes = String(endereco || '').split(',').map(x => x.trim());
   const rua = semAc(partes[0] || '').split(/\s+/).filter(t => t.length >= 4 && !TIPO_LOGRADOURO.test(t));
   const numero = (partes[1] || '').match(/^\d{1,6}/)?.[0] || null;
-  return { rua, numero };
+  const cep = (partes[partes.length - 1] || '').replace(/\D/g, '');
+  return { rua, numero, cep: cep.length === 8 ? cep : null };
+}
+const cepsDe = texto => (String(texto || '').match(/\b\d{5}-?\d{3}\b/g) || []).map(c => c.replace('-', ''));
+
+// Palavras que não identificam a empresa: as do ramo (o que os clientes têm
+// no nome — "filtros", "purificadores" —, as palavras-chave do radar e as da
+// atividade do cadastro) e as de loja em geral. "Filtros" no título do lugar
+// casa qualquer loja de filtros da cidade; sozinha, não prova que é ESTA.
+const GENERICAS_LOJA = ['loja', 'lojas', 'center', 'centro', 'store', 'shop', 'express', 'brasil', 'brazil', 'nacional',
+  'assistencia', 'tecnica', 'tecnico', 'solucoes', 'sistemas', 'equipamentos', 'produtos', 'materiais', 'artigos',
+  'casa', 'mundo', 'ponto', 'mega', 'super', 'grupo', 'atacado', 'varejo', 'importadora', 'comercio', 'servicos',
+  'distribuidora', 'representacoes', 'industria', 'company', 'oficial'];
+function genericasDe({ setor = null, criterios = null } = {}) {
+  const p = criterios?.params || {};
+  const ramo = (p.perfil?.palavras || []).flatMap(x => x?.formas || []);
+  return [...new Set([...ramo, ...(p.keywords || []), ...require('./google').tokensNome(setor || '')]
+    .map(t => semAc(t).trim()).filter(Boolean))];
 }
 
 // É mesmo esta empresa? Precisa estar no lugar certo (a cidade no endereço,
-// ou — sem endereço — o DDD do telefone batendo com a UF) E ser ela: uma
-// palavra distintiva de um dos nomes no título do lugar, OU o endereço do
-// cadastro (rua e número) no endereço do lugar — muita empresa pequena está
-// no Maps com um nome que não tem nada a ver com a razão social. O Maps
-// devolve o "mais parecido" mesmo quando não acha, por isso as duas provas.
-function confere(lugar, { nome, nomes, cidade, uf, endereco }) {
+// ou — sem endereço — o DDD do telefone batendo com a UF) E ser ela:
+//  • uma palavra DISTINTIVA de um dos nomes no título do lugar ("Aiqa"); ou
+//  • só palavra do ramo/genérica no título ("filtros") + o mesmo número E a
+//    mesma rua ou o mesmo CEP do cadastro; ou
+//  • nome nenhum, mas a mesma rua e número (muita empresa pequena está no
+//    Maps com um nome sem nada a ver com a razão social).
+// O Maps devolve o "mais parecido" mesmo quando não acha, por isso as provas.
+function confere(lugar, { nome, nomes, cidade, uf, endereco, genericas = [] }) {
   const g = require('./google');
   const disp = semAc(lugar.nome);
   const cid = semAc(cidade).trim();
@@ -246,10 +265,21 @@ function confere(lugar, { nome, nomes, cidade, uf, endereco }) {
   const end = semAc(lugar.endereco);
   const lugarCerto = end ? (!!cid && end.includes(cid)) : (!!tel && !!uf);
   if (!lugarCerto) return false;
+  const fam = require('./palavras').familia;
+  const gen = new Set([...GENERICAS_LOJA, ...genericas].map(fam));
   const toks = [...new Set((nomes || [nome]).flatMap(n => g.tokensNome(n)))].filter(t => !cid.split(/\s+/).includes(t));
-  if (toks.some(t => disp.includes(t))) return true;
-  const { rua, numero } = ruaENumero(endereco);
-  return !!(end && numero && rua.length && rua.some(t => end.includes(t)) && new RegExp(`\\b${numero}\\b`).test(end));
+  const bate = toks.filter(t => disp.includes(t));
+  if (bate.some(t => !gen.has(fam(t)))) return true;
+  // Sigla de 2 letras ("HD" Purificadores, "SG" Refrigeração) também identifica,
+  // como palavra inteira no título.
+  const siglas = [...new Set((nomes || [nome]).flatMap(n => g.siglasDoNome(n)))];
+  if (siglas.some(sg => new RegExp(`(^|[^a-z0-9])${sg}([^a-z0-9]|$)`).test(disp))) return true;
+  const { rua, numero, cep } = ruaENumero(endereco);
+  const numeroOk = !!(end && numero && new RegExp(`\\b${numero}\\b`).test(end));
+  const ruaOk = !!(end && rua.length && rua.some(t => end.includes(t)));
+  const cepOk = !!(cep && cepsDe(lugar.endereco).includes(cep));
+  if (bate.length) return numeroOk && (ruaOk || cepOk);
+  return numeroOk && ruaOk;
 }
 
 // Uma consulta ao Maps. Devolve os lugares e o custo.
@@ -280,14 +310,14 @@ const somaUsd = (a, b) => a == null ? (b ?? null) : b == null ? a
 // de providers/google.js, com custo, número de consultas e o resultado:
 //   achou | lugar_nao_confere | sem_resultado.
 // `debug`: devolve também os lugares vistos (tela de teste das Integrações).
-async function buscarNoMaps(nome, cidade, uf, apiKey, cfg = {}, { razao = null, endereco = null, debug = false } = {}) {
+async function buscarNoMaps(nome, cidade, uf, apiKey, cfg = {}, { razao = null, endereco = null, genericas = [], debug = false } = {}) {
   const ep = cfg.maps;
   if (!ep?.provider || !ep?.endpoint) throw new Error('Glasser: endpoint do Google Maps ainda não configurado (Integrações → Testar).');
   const nomes = [nome];
   const rz = limparRazao(razao);
   const tokNome = new Set(require('./google').tokensNome(nome));
   if (rz && require('./google').tokensNome(rz).some(t => !tokNome.has(t))) nomes.push(rz);
-  const alvo = { nome, nomes, cidade, uf, endereco };
+  const alvo = { nome, nomes, cidade, uf, endereco, genericas };
   let custo = null, consultas = 0, lugar = null, vistos = [], semNada = true;
   for (const n of nomes) {
     let r;
@@ -324,4 +354,4 @@ async function buscarNoMaps(nome, cidade, uf, apiKey, cfg = {}, { razao = null, 
   };
 }
 
-module.exports = { saldo, descobrirMaps, inspecionar, executar, buscarNoMaps, lugaresDe, confere, entradaMaps, resumoSchema, textoPreco, limparRazao, ruaENumero, LIMITE_DIA_PADRAO };
+module.exports = { saldo, descobrirMaps, inspecionar, executar, buscarNoMaps, lugaresDe, confere, entradaMaps, resumoSchema, textoPreco, limparRazao, ruaENumero, genericasDe, LIMITE_DIA_PADRAO };
