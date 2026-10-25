@@ -34,8 +34,11 @@ async function chamar(metodo, caminho, apiKey, corpo, { idempotencia, timeout = 
   } catch (err) {
     if (err.response) {
       const d = err.response.data || {};
-      const msg = d.error?.message || d.detail?.message || d.message || (typeof d.detail === 'string' ? d.detail : '')
-        || JSON.stringify(d).slice(0, 200);
+      const base = d.error?.message || d.detail?.message || d.message || (typeof d.detail === 'string' ? d.detail : '');
+      // O 400 de schema traz o porquê nos detalhes (campo faltando, valor fora
+      // da lista): sem eles a mensagem não diz o que corrigir.
+      const det = d.error?.details ?? d.error?.errors ?? d.errors ?? (Array.isArray(d.detail) ? d.detail : null);
+      const msg = (base ? base + (det ? ' — ' + JSON.stringify(det).slice(0, 300) : '') : '') || JSON.stringify(d).slice(0, 300);
       const e = new Error(`Glasser HTTP ${err.response.status}: ${msg}`);
       e.status = err.response.status;
       throw e;
@@ -72,7 +75,7 @@ async function descobrirMaps(apiKey) {
   const insp = await inspecionar(apiKey, escolhido.provider, escolhido.endpoint).catch(() => null);
   return {
     endpoint: { provider: escolhido.provider, endpoint: escolhido.endpoint, versao: insp?.versao || escolhido.versao || null,
-      campos: insp?.campos || [], preco: insp?.preco || null, preco_bruto: insp?.preco_bruto || null },
+      campos: insp?.campos || [], schema: insp?.schema || null, preco: insp?.preco || null, preco_bruto: insp?.preco_bruto || null },
     candidatos: cands.slice(0, 8).map(({ provider, endpoint }) => ({ provider, endpoint })),
   };
 }
@@ -80,10 +83,11 @@ async function descobrirMaps(apiKey) {
 // Schema de entrada e preço do endpoint (grátis).
 async function inspecionar(apiKey, provider, endpoint) {
   const { data } = await chamar('POST', '/v1/endpoints/inspect', apiKey, { provider, endpoint });
-  const sch = data?.input_schema || data?.endpoint?.input_schema || {};
-  const campos = Object.keys(sch.properties || sch || {});
+  const sch = data?.input_schema || data?.endpoint?.input_schema || data?.schemas?.input || {};
+  const schema = resumoSchema(sch);
+  const campos = schema.campos.map(c => c.nome);
   const p = data?.price || data?.pricing || data?.endpoint?.price || null;
-  return { versao: data?.endpoint_version || data?.version || data?.endpoint?.version || null, campos,
+  return { versao: data?.endpoint_version || data?.version || data?.endpoint?.version || null, campos, schema,
     preco: textoPreco(p), preco_bruto: p == null ? null : JSON.stringify(p).slice(0, 400) };
 }
 
@@ -110,13 +114,59 @@ function textoPreco(p) {
   return JSON.stringify(p).slice(0, 120);
 }
 
-// Entrada pro endpoint conforme o schema: Serper usa `q` (+ gl/hl); outros
-// costumam usar `query` ou `keyword`.
-function entradaMaps(campos, termo) {
-  const tem = c => !campos.length || campos.includes(c);
-  if (campos.includes('keyword')) return { keyword: termo, location_name: 'Brazil', language_code: 'pt' };
-  if (campos.includes('query') && !campos.includes('q')) return { query: termo };
-  return { q: termo, ...(tem('gl') ? { gl: 'br' } : {}), ...(tem('hl') ? { hl: 'pt-br' } : {}) };
+// Schema de entrada resumido: nome, tipo, obrigatório, valores aceitos e padrão
+// de cada campo. É o que monta a consulta (entradaMaps) e o que a tela de
+// teste mostra quando o endpoint recusa a entrada.
+function resumoSchema(sch) {
+  const props = sch && typeof sch === 'object' && sch.properties && typeof sch.properties === 'object' ? sch.properties : {};
+  const obrig = new Set(Array.isArray(sch?.required) ? sch.required : []);
+  return {
+    campos: Object.entries(props).slice(0, 30).map(([nome, d]) => ({
+      nome, tipo: d?.type || (d?.enum ? 'enum' : null), obrigatorio: obrig.has(nome),
+      ...(Array.isArray(d?.enum) ? { valores: d.enum.slice(0, 40) } : {}),
+      ...(d?.default !== undefined ? { padrao: d.default } : {}),
+      ...(d?.description ? { descricao: String(d.description).slice(0, 160) } : {}),
+    })),
+    livre: sch?.additionalProperties !== false,
+  };
+}
+
+const CAMPOS_TEXTO = ['q', 'query', 'keyword', 'search', 'term', 'text', 'searchQuery', 'search_query'];
+
+// Entrada pro endpoint. Com o schema do Inspect: só os campos que ele aceita,
+// o texto no campo de busca que ele tiver, país/idioma/local só se existirem e
+// com valor que caiba na lista aceita. Sem schema (integração antiga): o
+// formato do Serper (q + gl/hl) ou o que os campos sugerirem.
+// `minimo`: só o texto — a 2ª tentativa quando o endpoint recusa a entrada.
+function entradaMaps(campos, termo, { schema = null, cidade = null, uf = null, minimo = false } = {}) {
+  const lista = schema?.campos?.length ? schema.campos : (campos || []).map(nome => ({ nome }));
+  const nomes = lista.map(c => c.nome);
+  const campoTexto = CAMPOS_TEXTO.find(c => nomes.includes(c)) || (nomes.length ? null : 'q');
+  if (!campoTexto) {
+    if (nomes.includes('keyword')) return { keyword: termo };
+    // Nenhum campo de texto conhecido: usa o primeiro obrigatório de texto.
+    const alt = lista.find(c => c.obrigatorio && (!c.tipo || c.tipo === 'string')) || lista.find(c => c.tipo === 'string');
+    return { [alt ? alt.nome : 'q']: termo };
+  }
+  const out = { [campoTexto]: termo };
+  if (minimo) return out;
+  const cabe = (nome, valor) => {
+    if (!nomes.length) return nome === 'gl' || nome === 'hl';   // sem schema: formato do Serper
+    const c = lista.find(x => x.nome === nome);
+    if (!c) return false;
+    return !c.valores || c.valores.map(v => String(v).toLowerCase()).includes(String(valor).toLowerCase());
+  };
+  const valorDe = (nome, valor) => {
+    const c = lista.find(x => x.nome === nome);
+    return c?.valores?.find(v => String(v).toLowerCase() === String(valor).toLowerCase()) ?? valor;
+  };
+  for (const [nome, valor] of [['gl', 'br'], ['hl', 'pt-br'], ['location_name', 'Brazil'], ['language_code', 'pt'], ['country', 'br']]) {
+    if (cabe(nome, valor)) out[nome] = valorDe(nome, valor);
+  }
+  if (cidade && nomes.includes('location') && !lista.find(x => x.nome === 'location')?.valores) {
+    out.location = [cidade, uf, 'Brazil'].filter(Boolean).join(', ');
+  }
+  return out;
 }
 
 // Executa e devolve { output, custo_usd, run_id }. Run assíncrono (202): espera.
@@ -203,9 +253,20 @@ function confere(lugar, { nome, nomes, cidade, uf, endereco }) {
 }
 
 // Uma consulta ao Maps. Devolve os lugares e o custo.
-async function consultarMaps(apiKey, ep, termo) {
-  const r = await executar(apiKey, { provider: ep.provider, endpoint: ep.endpoint, versao: ep.versao,
-    input: entradaMaps(ep.campos || [], termo), metadata: { origem: 'hunter_contato' } });
+async function consultarMaps(apiKey, ep, termo, local = {}) {
+  const rodar = input => executar(apiKey, { provider: ep.provider, endpoint: ep.endpoint, versao: ep.versao,
+    input, metadata: { origem: 'hunter_contato' } });
+  const input = entradaMaps(ep.campos || [], termo, { schema: ep.schema, ...local });
+  let r;
+  try {
+    r = await rodar(input);
+  } catch (e) {
+    // Entrada recusada (HTTP 400/422: o run nem é criado, não cobra): tenta
+    // uma vez só com o texto da busca.
+    const minimo = entradaMaps(ep.campos || [], termo, { schema: ep.schema, minimo: true });
+    if (!(e.status === 400 || e.status === 422) || JSON.stringify(minimo) === JSON.stringify(input)) throw e;
+    r = await rodar(minimo);
+  }
   return { lugares: lugaresDe(r.output), custo_usd: r.custo_usd, output: r.output };
 }
 
@@ -231,7 +292,7 @@ async function buscarNoMaps(nome, cidade, uf, apiKey, cfg = {}, { razao = null, 
   for (const n of nomes) {
     let r;
     try {
-      r = await consultarMaps(apiKey, ep, [n, cidade, uf].filter(Boolean).join(' '));
+      r = await consultarMaps(apiKey, ep, [n, cidade, uf].filter(Boolean).join(' '), { cidade, uf });
     } catch (e) {
       e.custo_usd = somaUsd(custo, e.custo_usd); e.consultas = consultas + 1;
       throw e;
@@ -263,4 +324,4 @@ async function buscarNoMaps(nome, cidade, uf, apiKey, cfg = {}, { razao = null, 
   };
 }
 
-module.exports = { saldo, descobrirMaps, inspecionar, executar, buscarNoMaps, lugaresDe, confere, entradaMaps, textoPreco, limparRazao, ruaENumero, LIMITE_DIA_PADRAO };
+module.exports = { saldo, descobrirMaps, inspecionar, executar, buscarNoMaps, lugaresDe, confere, entradaMaps, resumoSchema, textoPreco, limparRazao, ruaENumero, LIMITE_DIA_PADRAO };

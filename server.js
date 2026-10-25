@@ -3535,14 +3535,26 @@ app.post('/api/integracoes/glasser/testar-maps', requireAuth, requireMaster, asy
     if (!emp) return res.status(404).json({ erro: 'CNPJ não está no cadastro do Hunter.' });
     const glasser = require('./providers/glasser');
     const nome = emp.fantasia || emp.razao;
+    // Relê o schema do endpoint (Inspect, grátis) e guarda: é por ele que a
+    // consulta é montada — a integração configurada antes não o tinha.
+    const cfg = { ...ig.config };
+    const insp = await glasser.inspecionar(ig.key_cifrada, cfg.maps.provider, cfg.maps.endpoint).catch(() => null);
+    if (insp?.schema?.campos?.length) {
+      cfg.maps = { ...cfg.maps, campos: insp.campos, schema: insp.schema, versao: insp.versao || cfg.maps.versao || null };
+      await pool.query(`UPDATE integracoes SET config = COALESCE(config, '{}'::jsonb) || $1::jsonb WHERE categoria='contato' AND provedor='glasser'`,
+        [JSON.stringify({ maps: cfg.maps })]);
+    }
+    const entrada = glasser.entradaMaps(cfg.maps.campos || [], [nome, emp.cidade, emp.uf].filter(Boolean).join(' '),
+      { schema: cfg.maps.schema, cidade: emp.cidade, uf: emp.uf });
+    const tecnico = { endpoint: `${cfg.maps.provider} ${cfg.maps.endpoint}`, entrada, schema: cfg.maps.schema || null };
     try {
-      const m = await glasser.buscarNoMaps(nome, emp.cidade, emp.uf, ig.key_cifrada, ig.config,
+      const m = await glasser.buscarNoMaps(nome, emp.cidade, emp.uf, ig.key_cifrada, cfg,
         { razao: emp.razao, endereco: emp.endereco, debug: true });
-      res.json({ ok: true, empresa: { nome, razao: emp.razao, cidade: emp.cidade, uf: emp.uf, endereco: emp.endereco },
+      res.json({ ok: true, ...tecnico, empresa: { nome, razao: emp.razao, cidade: emp.cidade, uf: emp.uf, endereco: emp.endereco },
         achou: !!m.encontrado, resultado: m.resultado, telefone: m.telefone || null, nome_google: m.nome_google || null,
         site: m.website || m.perfil_social || null, consultas: m.consultas, custo_usd: m.custo_usd, vistos: m.vistos || [] });
     } catch (e) {
-      res.json({ ok: false, empresa: { nome, cidade: emp.cidade, uf: emp.uf }, erro: String(e.message || e).slice(0, 400) });
+      res.json({ ok: false, ...tecnico, empresa: { nome, cidade: emp.cidade, uf: emp.uf }, erro: String(e.message || e).slice(0, 600) });
     }
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
