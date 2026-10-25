@@ -80,19 +80,54 @@ function iniciarWorkers() {
   // esse campo (ex.: worker reiniciado no meio por um deploy), o radar fica
   // preso pra sempre em "Ativa" com zero resultado: o scheduler recalcula o
   // mesmo jobId a cada ciclo e o BullMQ o ignora por já existir (mesmo morto).
-  // Ao esgotar as tentativas de verdade (sem mais retry pendente do BullMQ),
-  // tocamos o heartbeat pra o PRÓXIMO ciclo do scheduler gerar um jobId novo e
-  // tentar de novo — sem exigir destravamento manual.
-  workers.descoberta.on('failed', (job, err) => {
+  // Ao falhar DE VEZ, registramos a falha e tocamos o heartbeat pra o próximo
+  // ciclo gerar um jobId novo e tentar de novo — sem destravamento manual.
+  // "De vez" é o estado do job, não a conta de tentativas: o job que travou
+  // em dois reinícios seguidos do worker (stalled) vai pra falha SEM esgotar
+  // as tentativas, e era justamente esse que deixava o radar parado em "Ativa".
+  workers.descoberta.on('failed', async (job, err) => {
     const buscaId = job?.data?.busca_id;
-    const tentativas = job?.attemptsMade || 0;
-    const maxTentativas = job?.opts?.attempts || 1;
-    if (!buscaId || tentativas < maxTentativas) return;   // ainda vai reter internamente — não mexe
-    pool.query(`UPDATE buscas SET ultimo_heartbeat=now() WHERE id=$1 AND status='Ativa'`, [buscaId])
-      .then(() => console.warn(`[descoberta] busca ${buscaId}: esgotou as tentativas — heartbeat liberado pro próximo ciclo do scheduler.`))
-      .catch(e => console.error(`[descoberta] falha ao liberar heartbeat da busca ${buscaId}: ${e.message}`));
+    if (!buscaId) return;
+    const estado = await job.getState().catch(() => null);
+    if (estado && estado !== 'failed') return;   // o BullMQ ainda vai tentar de novo — não mexe
+    await falhaDescoberta(buscaId, err?.message);
+  });
+  workers.descoberta.on('completed', job => {
+    const buscaId = job?.data?.busca_id;
+    if (!buscaId) return;
+    pool.query(`UPDATE buscas SET descoberta_falhas=0, descoberta_erro=NULL, descoberta_falha_em=NULL
+                 WHERE id=$1 AND descoberta_falhas > 0`, [buscaId])
+      .catch(e => console.error(`[descoberta] busca ${buscaId}: não zerou as falhas: ${e.message}`));
   });
 }
+
+// Falha definitiva de um job da descoberta: conta a falha seguida, guarda o
+// motivo e libera o heartbeat pro scheduler tentar de novo (com espera
+// crescente — ver esperaAposFalha). Radar com FALHAS_TRAVADO+ falhas seguidas
+// não ocupa vaga do piloto da Estratégia (jobs/estrategia.js).
+async function falhaDescoberta(buscaId, motivo) {
+  const msg = String(motivo || 'falha desconhecida').slice(0, 300);
+  try {
+    const { rows: [b] } = await pool.query(
+      `UPDATE buscas SET ultimo_heartbeat=now(), descoberta_falhas=descoberta_falhas+1, descoberta_erro=$2,
+              descoberta_falha_em=now(), descoberta_estado='erro', descoberta_estado_em=now()
+        WHERE id=$1 AND status='Ativa' RETURNING descoberta_falhas, descoberta_token`, [buscaId, msg]);
+    if (!b) return;
+    console.warn(`[descoberta] busca ${buscaId}: falhou (${b.descoberta_falhas}ª seguida) — ${msg}`);
+    // Cursor recusado (HTTP 400 continuando uma varredura guardada): a página
+    // guardada não vale mais. Recomeça a fase em vez de repetir o erro pra sempre.
+    if (b.descoberta_token && /HTTP 400/.test(msg) && b.descoberta_falhas >= 2) {
+      await pool.query(`UPDATE buscas SET descoberta_token=NULL WHERE id=$1`, [buscaId]);
+      console.warn(`[descoberta] busca ${buscaId}: cursor da varredura recusado — recomeça a fase.`);
+    }
+  } catch (e) {
+    console.error(`[descoberta] falha ao registrar a falha da busca ${buscaId}: ${e.message}`);
+  }
+}
+
+// Depois de N falhas seguidas, espera 2^(N-1) min (1, 2, 4… até 60) antes de
+// tentar de novo: não martela a fonte enquanto ela está fora.
+const esperaAposFalha = n => Math.min(60, 2 ** Math.max(0, n - 1)) * 60_000;
 
 // ── scheduler: respeita o ritmo (leads/h) de cada busca Ativa ───────────────
 async function runScheduler() {
@@ -108,23 +143,39 @@ async function runScheduler() {
   // Atendimento no CRM: confere uma leva de leads enviados que ainda estão
   // aguardando. Não espera — uma consulta lenta ao CRM não atrasa o disparo.
   atendimento.verificar(pool).catch(err => console.error('[atendimento] erro:', err.message));
+  // Leads sem telefone de antes (radar antigo, Glasser ainda desligado, limite
+  // do dia acabado) vão aos mapas sozinhos, com a sobra do limite do dia.
+  validacaoFn.repescarSemTelefone(pool, queues)
+    .then(n => { if (n) console.log(`[validacao] repescagem: ${n} lead(s) sem telefone mandados aos mapas`); })
+    .catch(err => console.error('[validacao] repescagem:', err.message));
   try {
     const { rows: buscas } = await pool.query(
-      `SELECT id, criterios, ultimo_heartbeat FROM buscas WHERE status='Ativa'`
+      `SELECT id, criterios, ultimo_heartbeat, descoberta_falhas, descoberta_falha_em FROM buscas WHERE status='Ativa'`
     );
 
     for (const busca of buscas) {
+      if (busca.descoberta_falhas > 0 && busca.descoberta_falha_em
+          && Date.now() - new Date(busca.descoberta_falha_em).getTime() < esperaAposFalha(busca.descoberta_falhas)) continue;
       // jobId estável DENTRO de um ciclo de varredura: enquanto ela roda, o
       // heartbeat não muda → novos disparos são deduplicados (sem varredura
       // concorrente / custo duplicado). Quando a busca é reativada (ex.: a lista
       // de semelhantes ganhou semente nova via CRM), o heartbeat da última
       // varredura difere do jobId anterior → roda de novo e re-perfila.
       const hb = busca.ultimo_heartbeat ? new Date(busca.ultimo_heartbeat).getTime() : 0;
+      const jobId = `descoberta-busca-${busca.id}-${hb}`;
+      // Rede de segurança: o job deste ciclo já falhou de vez e o evento não
+      // chegou a liberar o radar (worker caiu no meio, por exemplo). Sem isto o
+      // add abaixo seria ignorado pra sempre e o radar ficaria "Ativa" parado.
+      const anterior = await queues.descoberta.getJob(jobId).catch(() => null);
+      if (anterior && await anterior.isFailed().catch(() => false)) {
+        await falhaDescoberta(busca.id, anterior.failedReason);
+        continue;
+      }
       await queues.descoberta.add('descoberta', {
         busca_id: busca.id,
         criterios: busca.criterios,
       }, {
-        jobId: `descoberta-busca-${busca.id}-${hb}`,
+        jobId,
         removeOnComplete: { count: 200, age: 3600 },
         removeOnFail: { count: 100 },
         attempts: 2,

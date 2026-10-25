@@ -28,6 +28,14 @@ const LIMIAR_FILA = 50;
 // não tem empresa nova pra devolver — seria pagar pelas mesmas páginas.
 const DIAS_RECOMECO = 30;
 const MAX_SIMULTANEOS = 5;
+// Radar "Ativa" que não anda não ocupa vaga: com tantas falhas seguidas da
+// descoberta (worker.js), ou parado por falta de filtro. Ele segue tentando
+// sozinho; a vaga vai pro próximo radar da linha editorial.
+const FALHAS_TRAVADO = 3;
+const RODANDO_SQL = `estrategia_pauta_id IS NOT NULL AND status='Ativa'
+  AND descoberta_falhas < ${FALHAS_TRAVADO} AND COALESCE(descoberta_estado, '') <> 'sem_filtro'`;
+const TRAVADO_SQL = `estrategia_pauta_id IS NOT NULL AND status='Ativa'
+  AND (descoberta_falhas >= ${FALHAS_TRAVADO} OR descoberta_estado = 'sem_filtro')`;
 const MAX_REGIOES = 60;
 const MAX_PAUTAS = 50;
 
@@ -527,8 +535,7 @@ async function passo(db, pool, queues) {
     if (crm.livre) await soltarEsperaDaHora(pool, queues);
   }
 
-  const { rows: [{ n: ativos }] } = await db.query(
-    `SELECT COUNT(*)::int n FROM buscas WHERE estrategia_pauta_id IS NOT NULL AND status='Ativa'`);
+  const { rows: [{ n: ativos }] } = await db.query(`SELECT COUNT(*)::int n FROM buscas WHERE ${RODANDO_SQL}`);
   const simultaneos = Math.max(1, Math.min(MAX_SIMULTANEOS, plano.simultaneos || 1));
   if (ativos >= simultaneos) {
     return { acoes, estado: ativos === 1 ? '1 radar da estratégia rodando' : `${ativos} radares da estratégia rodando` };
@@ -723,13 +730,21 @@ async function diagnostico(pool, queues) {
      pautas.length > ativas.length ? `Desligadas: ${pautas.filter(p => !p.ativo).map(p => `"${p.nome}"`).join(', ')}` : '']
       .filter(Boolean).join(' · '));
 
-  const { rows: rodando } = await pool.query(
-    `SELECT nome FROM buscas WHERE estrategia_pauta_id IS NOT NULL AND status='Ativa' ORDER BY id`);
+  const { rows: rodando } = await pool.query(`SELECT nome FROM buscas WHERE ${RODANDO_SQL} ORDER BY id`);
+  const { rows: travados } = await pool.query(
+    `SELECT nome, descoberta_falhas, descoberta_estado FROM buscas WHERE ${TRAVADO_SQL} ORDER BY id`);
   const simult = Math.max(1, Math.min(MAX_SIMULTANEOS, plano.simultaneos || 1));
   add(rodando.length < simult,
     rodando.length < simult ? `Há vaga para radar (${rodando.length} de ${simult} rodando)`
       : `${rodando.length} radar(es) rodando — o máximo é ${simult} ao mesmo tempo; o próximo abre quando um esgotar`,
     rodando.length ? `Rodando: ${rodando.map(r => `"${r.nome}"`).join(', ')}` : '');
+  if (travados.length) {
+    add(false, `${travados.length} radar(es) ativo(s) sem conseguir buscar — não ocupam vaga`,
+      travados.map(r => `"${r.nome}": ${r.descoberta_estado === 'sem_filtro'
+        ? 'sem filtro para buscar (edite o radar)'
+        : `a busca de empresas falhou ${r.descoberta_falhas} vezes seguidas e segue tentando sozinha`}`).join(' · '));
+    itens[itens.length - 1].aviso = true;   // mostra, mas não segura o próximo radar
+  }
 
   let crm = { livre: true };
   if (plano.crm_controle) {
@@ -791,7 +806,7 @@ async function diagnostico(pool, queues) {
       d.acao === 'concluir' ? d.estado.replace(/^linha editorial concluída — /, '') : '');
   }
 
-  return { itens, pode_abrir: itens.every(i => i.ok !== false), estado: plano.estado, estado_em: plano.estado_em };
+  return { itens, pode_abrir: itens.every(i => i.ok !== false || i.aviso), estado: plano.estado, estado_em: plano.estado_em };
 }
 
 // Roda um passo com trava por cliente: dois workers (ou um deploy com o antigo

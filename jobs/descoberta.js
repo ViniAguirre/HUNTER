@@ -30,6 +30,17 @@ async function contarDescartes(pool, busca_id, motivos) {
   }
 }
 
+// O que a descoberta do radar está fazendo agora — a lista de radares mostra e
+// o piloto da Estratégia usa: 'varrendo', ou o motivo da espera ('cadencia_horaria',
+// 'limite_diario', 'fora_da_janela', 'sem_filtro'…). NULL = terminou.
+// `trabalhou`: processou empresa agora; é o que a coluna "Atividade" mostra.
+// Não toca em ultimo_heartbeat: ele é a chave de deduplicação do scheduler.
+async function marcarEstado(pool, busca_id, estado, { trabalhou = false } = {}) {
+  await pool.query(
+    `UPDATE buscas SET descoberta_estado=$2, descoberta_estado_em=now()${trabalhou ? ', ultima_ativ=now()' : ''} WHERE id=$1`,
+    [busca_id, estado]).catch(() => {});
+}
+
 // A IA julga as palavras dos nomes da lista (do ramo × genéricas) e sugere
 // outras (providers/palavras.js). Em cache por 24 h: cada radar de cidade
 // re-perfila a MESMA lista e a resposta seria a mesma.
@@ -114,15 +125,19 @@ module.exports = async function descoberta(job, pool, queues) {
   const vagas = await orcamento.disponivel(pool);
   const orcamentoDia = vagas.dia, orcamentoDaHora = vagas.hora;
   if (orcamentoDia <= 0 || orcamentoDaHora <= 0) {
+    const espera = vagas.foraDaJanela ? 'fora_da_janela' : (orcamentoDia <= 0 ? 'limite_diario' : 'cadencia_horaria');
+    await marcarEstado(pool, busca_id, espera);
     await pool.query(`UPDATE buscas SET ultimo_heartbeat=now() WHERE id=$1`, [busca_id]);
     return {
-      skipped: vagas.foraDaJanela ? 'fora_da_janela' : (orcamentoDia <= 0 ? 'limite_diario' : 'cadencia_horaria'),
+      skipped: espera,
       motivo: vagas.motivo || (orcamentoDia <= 0
         ? 'teto diário de leads atingido'
         : 'cota da hora atual já usada — retoma na próxima hora'),
       novos: 0,
     };
   }
+
+  await marcarEstado(pool, busca_id, 'varrendo');
 
   // ── Modo WEB-FIRST (icp): descobre pela internet e confirma CNPJ/ativa na CNPJá.
   if (tipo === 'icp') {
@@ -163,10 +178,12 @@ module.exports = async function descoberta(job, pool, queues) {
         catch (_) { counters.pulados++; continue; }   // CNPJ inválido/indisponível → pula
       }
       await processarOffice(pool, queues, busca_id, emp, counters);
-      await pool.query(`UPDATE buscas SET ultimo_heartbeat=now() WHERE id=$1`, [busca_id]);   // sinal de vida em lista longa
+      // Sinal de vida em lista longa (em ultima_ativ: o heartbeat no meio da
+      // varredura faria o scheduler disparar outro job deste radar em paralelo).
+      await pool.query(`UPDATE buscas SET ultima_ativ=now() WHERE id=$1`, [busca_id]);
     }
     await pool.query(
-      `UPDATE buscas SET status='Esgotada', ultimo_heartbeat=now() WHERE id=$1`, [busca_id]
+      `UPDATE buscas SET status='Esgotada', descoberta_estado=NULL, ultimo_heartbeat=now() WHERE id=$1`, [busca_id]
     );
     return { modo: 'importacao', ...counters };
   }
@@ -181,6 +198,7 @@ module.exports = async function descoberta(job, pool, queues) {
   const temFiltro = params.states.length || params.activities.length
     || (params.municipalities || []).length || (params.names || []).length;
   if (!temFiltro) {
+    await marcarEstado(pool, busca_id, 'sem_filtro');
     await pool.query(`UPDATE buscas SET ultimo_heartbeat=now() WHERE id=$1`, [busca_id]);
     return { skipped: 'sem_filtro', motivo: 'busca sem UF, CNAE, município nem palavra-chave — defina ao menos um', novos: 0 };
   }
@@ -204,6 +222,7 @@ module.exports = async function descoberta(job, pool, queues) {
                          varrido_local    = varrido_local + $1 WHERE id=$2`,
       [locais.length, busca_id]
     );
+    await marcarEstado(pool, busca_id, 'varrendo', { trabalhou: true });
     console.log(`[descoberta] busca ${busca_id}: ${counters.locais} empresa(s) aproveitada(s) do banco local (sem custo CNPJá).`);
   }
   // Encheu a cota da hora só com o banco local → nem toca na CNPJá nesta rodada.
@@ -246,7 +265,7 @@ module.exports = async function descoberta(job, pool, queues) {
     await pool.query(
       `UPDATE buscas SET universo_varrido = universo_varrido + $1,
                          varrido_api      = varrido_api + $1,
-                         descoberta_token = $2, descoberta_fase = $3 WHERE id=$4`,
+                         descoberta_token = $2, descoberta_fase = $3, ultima_ativ = now() WHERE id=$4`,
       [offices.length, next, fase, busca_id]
     );
     if (!next) {
@@ -271,7 +290,7 @@ module.exports = async function descoberta(job, pool, queues) {
   // onde estava sem repagar nem pular a fase.
   await contarDescartes(pool, busca_id, counters.motivos);
   await pool.query(
-    `UPDATE buscas SET status='Esgotada', descoberta_token=$1, descoberta_fase=$2,
+    `UPDATE buscas SET status='Esgotada', descoberta_token=$1, descoberta_fase=$2, descoberta_estado=NULL,
                        ultimo_heartbeat=now() WHERE id=$3`,
     [esgotou ? null : token, esgotou ? 1 : fase, busca_id]
   );
@@ -298,6 +317,7 @@ async function descobrirWebFirst(pool, queues, busca_id, criterios, cnpjaKey) {
   const uf = (p.ufs || [])[0] || '';
   const cidade = (p.municipios_rotulos || [])[0]?.n || '';
   if (!termo) {
+    await marcarEstado(pool, busca_id, 'sem_filtro');
     await pool.query(`UPDATE buscas SET ultimo_heartbeat=now() WHERE id=$1`, [busca_id]);
     return { skipped: 'sem_termo_web', motivo: 'modo internet exige palavra-chave (ou atividade)', novos: 0 };
   }
@@ -354,7 +374,7 @@ async function descobrirWebFirst(pool, queues, busca_id, criterios, cnpjaKey) {
   }
 
   await pool.query(
-    `UPDATE buscas SET status='Esgotada', ultimo_heartbeat=now() WHERE id=$1`, [busca_id]
+    `UPDATE buscas SET status='Esgotada', descoberta_estado=NULL, ultima_ativ=now(), ultimo_heartbeat=now() WHERE id=$1`, [busca_id]
   );
   return { modo: 'web', ...counters };
 }
@@ -454,9 +474,11 @@ async function perfilarComLista(pool, criterios, busca_id, cnpjs, negativos = []
     }
     if (emp) amostra.push(emp);
     // Sinal de vida: sem isso o painel acusa "busca sem atividade" durante a
-    // espera do rate limit, que numa lista grande passa de 20 minutos.
+    // espera do rate limit, que numa lista grande passa de 20 minutos. Vai em
+    // ultima_ativ, não no heartbeat: mudar o heartbeat no meio da varredura faz
+    // o scheduler disparar um segundo job do mesmo radar em paralelo.
     if (++lidas % 5 === 0) {
-      await pool.query(`UPDATE buscas SET ultimo_heartbeat=now() WHERE id=$1`, [busca_id]);
+      await pool.query(`UPDATE buscas SET ultima_ativ=now() WHERE id=$1`, [busca_id]);
     }
   }
 
