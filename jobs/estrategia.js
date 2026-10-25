@@ -29,13 +29,13 @@ const LIMIAR_FILA = 50;
 const DIAS_RECOMECO = 30;
 const MAX_SIMULTANEOS = 5;
 // Radar "Ativa" que não anda não ocupa vaga: com tantas falhas seguidas da
-// descoberta (worker.js), ou parado por falta de filtro. Ele segue tentando
-// sozinho; a vaga vai pro próximo radar da linha editorial.
+// descoberta (worker.js) e ainda no erro, ou parado por falta de filtro. Ele
+// segue tentando sozinho; a vaga vai pro próximo radar da linha editorial.
+// Voltou a buscar (estado 'varrendo') → ocupa a vaga de novo.
 const FALHAS_TRAVADO = 3;
-const RODANDO_SQL = `estrategia_pauta_id IS NOT NULL AND status='Ativa'
-  AND descoberta_falhas < ${FALHAS_TRAVADO} AND COALESCE(descoberta_estado, '') <> 'sem_filtro'`;
-const TRAVADO_SQL = `estrategia_pauta_id IS NOT NULL AND status='Ativa'
-  AND (descoberta_falhas >= ${FALHAS_TRAVADO} OR descoberta_estado = 'sem_filtro')`;
+const TRAVADO = `((descoberta_falhas >= ${FALHAS_TRAVADO} AND descoberta_estado = 'erro') OR descoberta_estado = 'sem_filtro')`;
+const RODANDO_SQL = `estrategia_pauta_id IS NOT NULL AND status='Ativa' AND NOT COALESCE(${TRAVADO}, false)`;
+const TRAVADO_SQL = `estrategia_pauta_id IS NOT NULL AND status='Ativa' AND ${TRAVADO}`;
 const MAX_REGIOES = 60;
 const MAX_PAUTAS = 50;
 

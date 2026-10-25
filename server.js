@@ -94,7 +94,7 @@ function computeHealth(b) {
   if (b.status === 'Encerrada') return 'gray';
   if (b.status === 'Pausada') return 'red';
   if (b.status === 'Esgotada') return 'amber';
-  if ((b.descoberta_falhas || 0) >= 3 || b.descoberta_estado === 'sem_filtro') return 'red';
+  if (((b.descoberta_falhas || 0) >= 3 && b.descoberta_estado === 'erro') || b.descoberta_estado === 'sem_filtro') return 'red';
   // Último sinal de vida: empresa processada (ultima_ativ) ou passagem do motor
   // pelo radar (descoberta_estado_em, a cada minuto enquanto ele espera).
   const sinais = [b.ultima_ativ, b.descoberta_estado_em].filter(Boolean).map(d => new Date(d).getTime());

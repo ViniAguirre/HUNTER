@@ -1995,7 +1995,9 @@ const ESTADOS_DESCOBERTA = {
   sem_filtro: 'sem filtro para buscar — edite o radar',
 };
 function estadoDescoberta(b) {
-  if ((b.descoberta_falhas || 0) > 0)
+  // A falha só vale enquanto é o último estado: se a tentativa seguinte já
+  // voltou a buscar, mostra o que ele está fazendo agora.
+  if (b.descoberta_estado === 'erro' && (b.descoberta_falhas || 0) > 0)
     return { texto: `a busca de empresas falhou ${b.descoberta_falhas}× — tentando de novo sozinha`, alerta: b.descoberta_falhas >= 3 };
   const t = ESTADOS_DESCOBERTA[b.descoberta_estado];
   return t ? { texto: t, alerta: b.descoberta_estado === 'sem_filtro' } : null;
