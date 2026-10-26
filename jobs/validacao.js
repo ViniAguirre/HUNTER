@@ -64,6 +64,7 @@ const CONSULTA_RODOU = `(pago_resultado <> 'erro' OR custo_usd > 0 OR (pago_resu
 const REPESCA_POR_CICLO = 2;
 const REPESCA_RESERVA = 0.25;
 const REPESCA_DIAS = 15;
+const REPESCA_FILA_MAX = 5;   // até tantos leads novos esperando, a repescagem ainda entra
 const REPESCA_MAX_VEZES = 3;
 // Leads elegíveis à repescagem (usado aqui e no Monitoramento).
 function sqlRepescaveis(alias = 'l') {
@@ -80,9 +81,11 @@ async function repescarSemTelefone(pool, queues) {
   // Dentro do horário de funcionamento: o lead achado vai pro CRM, que não atende fora dele.
   const vagas = await orcamento.disponivel(pool).catch(() => null);
   if (!vagas || vagas.foraDaJanela) return 0;
-  // Fila da validação com trabalho na frente → espera: o lead novo tem prioridade.
-  const fila = await queues.validacao.getJobCounts('waiting', 'active').catch(() => null);
-  if (!fila || fila.waiting + fila.active > 0) return 0;
+  // Lead novo esperando na fila → espera: ele tem prioridade. (Só a fila de
+  // espera conta: exigir também nenhuma em andamento fazia a repescagem quase
+  // nunca rodar com os radares ligados.)
+  const fila = await queues.validacao.getJobCounts('waiting').catch(() => null);
+  if (!fila || fila.waiting > REPESCA_FILA_MAX) return 0;
   const rodou = CONSULTA_RODOU.replace(/(pago_resultado|custo_usd)/g, 'g.$1');
   const { rows } = await pool.query(
     `SELECT l.id, l.cnpj, l.busca_id FROM leads l
@@ -208,7 +211,10 @@ module.exports = async function validacao(job, pool, queues) {
       origem = 'anterior';
     }
     const t0 = Date.now();
-    const tentativa = job.data.tentativa_contato || 0;
+    // Pedido do usuário pra ESTE lead: uma passada só, já como a última (busca
+    // fresca na internet e, sem telefone, os mapas na sequência) — sem esperar
+    // os 2 min da 2ª tentativa; ele está olhando a tela.
+    const tentativa = job.data.manual ? MAX_TENT_CONTATO : (job.data.tentativa_contato || 0);
     // Nas retentativas, força busca FRESCA (não reaproveita cache) — a ideia é
     // justamente tentar de novo achar o contato que faltou.
     const forcarFresco = tentativa > 0;

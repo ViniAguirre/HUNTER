@@ -196,7 +196,7 @@ module.exports = async function swot(job, pool, queues) {
     }
     if (empresa) {
       const crit = busca?.criterios || {};
-      const contexto = crit.params?.proposta_valor || crit.proposta_valor || crit.texto || '';
+      const contexto = (await require('./proposta').propostaDoRadar(pool, crit)).texto;
       // Com material (site/perfil): análise completa da empresa. Sem material:
       // ORIENTAÇÃO DE ABORDAGEM — o agente não tem o que analisar sobre ela, mas
       // diz como chegar nela a partir do cadastro e da nossa proposta, deixando
@@ -279,7 +279,7 @@ async function gravarPadrao(pool, { lead_id, cnpj, busca }) {
   if (!empresa || (temAnalise(lead?.swot) && !lead.swot.generico)) return;
   const crit = busca?.criterios || {};
   const cv = lead?.contato_validado || {};
-  const b = abordagemPadrao(empresa, { contexto: crit.params?.proposta_valor || crit.proposta_valor || crit.texto || '',
+  const b = abordagemPadrao(empresa, { contexto: (await require('./proposta').propostaDoRadar(pool, crit)).texto,
     temTelefone: !!(cv.telefone || cv.whatsapp) });
   await pool.query(`UPDATE leads SET swot=$2::jsonb, estagio='pronto', atualizado_em=now() WHERE id=$1`, [lead_id, JSON.stringify(b)]);
 }

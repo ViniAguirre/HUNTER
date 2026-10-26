@@ -68,7 +68,11 @@ function iniciarWorkers() {
     enriquecimento: new Worker('hunter-enriquecimento', (job, token) => enriquecimentoFn(job, pool, queues, token), { connection: REDIS_OPTS, concurrency: 5 }),
     filtroContador: new Worker('hunter-filtro_contador', job => filtroContadorFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 10 }),
     score1: new Worker('hunter-score1', job => score1Fn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 10 }),
-    validacao: new Worker('hunter-validacao', job => validacaoFn(job, pool, queues), { connection: REDIS_OPTS, ...LONGA, concurrency: 4 }),
+    // Busca de contato: quase toda espera de rede (sites, busca, mapas). Com 4
+    // por vez e ~40 s cada, uma leva grande de leads de um radar enchia a fila
+    // por mais de uma hora. VALIDACAO_CONCORRENCIA ajusta sem novo deploy.
+    validacao: new Worker('hunter-validacao', job => validacaoFn(job, pool, queues),
+      { connection: REDIS_OPTS, ...LONGA, concurrency: Math.max(1, parseInt(process.env.VALIDACAO_CONCORRENCIA, 10) || 8) }),
     swot: new Worker('hunter-swot', job => swotFn(job, pool, queues), { connection: REDIS_OPTS, ...LONGA, concurrency: 3 }),
     crm: new Worker('hunter-crm', job => crmFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 5 }),
     tracking: new Worker('hunter-tracking', job => trackingFn(job, pool), { connection: REDIS_OPTS, concurrency: 4 }),

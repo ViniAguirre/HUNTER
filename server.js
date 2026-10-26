@@ -1842,6 +1842,17 @@ app.get('/api/tags', requireAuth, async (req, res) => {
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
+// Semelhantes: a segunda verificação de quem entra só pela atividade (Score 1)
+// está valendo pra este radar? Precisa da integração de Decisões e de uma
+// proposta de valor (a do radar ou a primeira de "Propostas").
+async function conferenciaIa(b) {
+  const { rows: [ig] } = await pool.query(
+    `SELECT 1 FROM integracoes WHERE categoria='decisao' AND provedor='typesafe' AND ativo=true
+       AND key_cifrada IS NOT NULL AND key_cifrada <> '' LIMIT 1`).catch(() => ({ rows: [] }));
+  const prop = await require('./jobs/proposta').propostaDoRadar(pool, b.criterios);
+  return { ativa: !!ig && !!prop.origem, decisoes: !!ig, proposta: prop.origem };
+}
+
 app.get('/api/buscas/:id', requireAuth, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
@@ -1883,6 +1894,7 @@ app.get('/api/buscas/:id', requireAuth, async (req, res) => {
       universo_est: b.universo_varrido || 0,
       producao: prodRow.rows.map(r => r.n),
       leads: leadsRow.rows,
+      conferencia_ia: b.tipo === 'lookalike' ? await conferenciaIa(b) : null,
     });
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
@@ -2950,11 +2962,15 @@ app.post('/api/leads/acoes', requireAuth, requireEditor, async (req, res) => {
         `UPDATE leads SET contato_validado=NULL, contato_pendente=false WHERE id = ANY($1::int[])`, [idsInt]);
       // preservar: o usuário pediu pra ATUALIZAR estes leads — se a busca nova
       // não achar telefone, o lead fica pendente, mas NUNCA é apagado.
+      const manual = req.body.manual === true && rows.length === 1;
       await Promise.all(rows.map(r =>
         monitorQueues.validacao.add('validacao', { cnpj: r.cnpj, busca_id: r.busca_id, lead_id: r.id, preservar: true,
           // Um lead só, pelo botão do lead: os mapas não esbarram no limite do dia.
-          ...(req.body.manual === true && rows.length === 1 ? { manual: true } : {}) },
-          { jobId: `reval-${r.id}-${Date.now()}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 2, backoff: { type: 'exponential', delay: 10000 } })
+          ...(manual ? { manual: true } : {}) },
+          // Manual entra na FRENTE da fila (lifo): com centenas de leads na busca
+          // de contato, no fim da fila ele levaria quase uma hora.
+          { jobId: `reval-${r.id}-${Date.now()}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 2, backoff: { type: 'exponential', delay: 10000 },
+            ...(manual ? { lifo: true } : {}) })
       ));
       return res.json({ ok: true, reenfileirados: rows.length });
     }
