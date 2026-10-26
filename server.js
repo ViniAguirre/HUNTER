@@ -2988,7 +2988,8 @@ app.post('/api/leads/acoes', requireAuth, requireEditor, async (req, res) => {
       // não achar telefone, o lead fica pendente, mas NUNCA é apagado.
       const manual = req.body.manual === true && rows.length === 1;
       await Promise.all(rows.map(r =>
-        monitorQueues.validacao.add('validacao', { cnpj: r.cnpj, busca_id: r.busca_id, lead_id: r.id, preservar: true,
+        // reanalise: atualizar o lead nunca dispara o envio automático ao CRM.
+        monitorQueues.validacao.add('validacao', { cnpj: r.cnpj, busca_id: r.busca_id, lead_id: r.id, preservar: true, reanalise: true,
           // Um lead só, pelo botão do lead: os mapas não esbarram no limite do dia.
           ...(manual ? { manual: true } : {}) },
           // Manual entra na FRENTE da fila (lifo): com centenas de leads na busca

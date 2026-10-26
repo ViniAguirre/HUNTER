@@ -321,7 +321,8 @@ function extrairTicket(data) {
           : alvo;
   const id = t.ticketId ?? t.id;
   return id != null ? { id, status: t.status, queueId: t.queueId ?? t.queue?.id ?? null, contactId: t.contactId,
-                        whatsappId: t.whatsappId ?? t.whatsapp?.id ?? null } : null;
+                        whatsappId: t.whatsappId ?? t.whatsapp?.id ?? null,
+                        userId: t.userId ?? t.user?.id ?? null } : null;
 }
 
 // Quando o createTicketAPI não devolve o ticket (doc: "se o contato já tiver
@@ -357,11 +358,10 @@ async function acharTicketPendente(backend, token, { contactId, number, whatsapp
 // caía sem fila. Por isso a fila é aplicada depois, no updateAPI, com o id do
 // ticket. Ticket já em atendimento (open) não é mexido: tem alguém nele.
 //
-// `atendimento: true` (lead com tag do radar) põe o ticket direto em
-// atendimento (status "open", o "Atendimento" da doc) em vez de Aguardando.
-// A doc não aceita status no createTicketAPI, então vai no mesmo updateAPI
-// que aplica a fila. Sem userId: a chamada não escolhe operador.
-async function abrirTicket(backend, token, { contactId, queueId, status, number, whatsappId, atendimento = false }) {
+// O ticket fica SEMPRE em Aguardando na fila: é ali que os atendentes da fila
+// o enxergam, e é o que a Estratégia conta (cartão de filas e freio do piloto).
+// Pôr direto em atendimento sem atendente deixava o ticket invisível na fila.
+async function abrirTicket(backend, token, { contactId, queueId, status, number, whatsappId }) {
   let data;
   try {
     ({ data } = await comAuth(backend, token, (c) =>
@@ -381,19 +381,25 @@ async function abrirTicket(backend, token, { contactId, queueId, status, number,
   if (ticket.status && ticket.status !== 'pending') {
     return { ticketId: ticket.id, filaAplicada: false, motivo: `ticket_${ticket.status}` };
   }
-  const mudaFila = !!queueId && String(ticket.queueId) !== String(queueId);
-  if (!mudaFila && !atendimento) {
+  if (!queueId || String(ticket.queueId) === String(queueId)) {
     return { ticketId: ticket.id, filaAplicada: !!queueId };
   }
-  const corpo = { ticketId: String(ticket.id), status: atendimento ? 'open' : 'pending' };
-  if (queueId) corpo.queueId = String(queueId);
+  try {
+    await comAuth(backend, token, (c) =>
+      c.post('/api/tickets/updateAPI', { ticketId: String(ticket.id), queueId: String(queueId), status: 'pending' }),
+      ['bearer', 'raw']);
+  } catch (err) { throw traduzErro(err, `Pôr o ticket ${ticket.id} na fila ${queueId}`); }
+  return { ticketId: ticket.id, filaAplicada: true };
+}
+
+// Devolve à fila (Aguardando) um ticket que ficou em atendimento sem atendente.
+// Doc: POST /api/tickets/updateAPI com status "pending".
+async function devolverParaFila(backend, token, ticketId, queueId) {
+  const corpo = { ticketId: String(ticketId), status: 'pending' };
+  if (queueId != null && queueId !== '') corpo.queueId = String(queueId);
   try {
     await comAuth(backend, token, (c) => c.post('/api/tickets/updateAPI', corpo), ['bearer', 'raw']);
-  } catch (err) {
-    const alvo = atendimento ? 'Pôr o ticket em atendimento' : `Pôr o ticket na fila ${queueId}`;
-    throw traduzErro(err, `${alvo} (ticket ${ticket.id})`);
-  }
-  return { ticketId: ticket.id, filaAplicada: !!queueId, ...(atendimento ? { atendimento: true } : {}) };
+  } catch (err) { throw traduzErro(err, `Devolver o ticket ${ticketId} à fila`); }
 }
 
 // Tags de verdade no CRM (doc: GET /api/tags, POST /api/tags e
@@ -618,5 +624,5 @@ function montarContato(empresa, lead, extras = {}) {
 }
 
 module.exports = { listarEmpresas, listarFilas, listarConexoes, comConexao, upsertContato, criarContato, buscarContato, mesclarContato, contatoJaExistente, ticketsDoContato,
-  aplicarTagsNoTicket,
+  aplicarTagsNoTicket, devolverParaFila,
   abrirTicket, montarContato, montarBriefing, enviarNotaInterna, checarRotaContato, normalizarNumero, EP_CONTATO, EP_CONTATO_ALT };

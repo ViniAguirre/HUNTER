@@ -62,7 +62,8 @@ async function conferir(pool) {
   // Leads enviados antes deste acompanhamento existir não guardaram o ticket:
   // acha pelo telefone, uma vez, pra fila já começar com o número real.
   const legado = await adotarLegado(pool, ig, authDe, Math.max(0, LOTE - leads.length));
-  if (!leads.length) return { conferidos: 0, legado };
+  const devolvidos = await devolverAbertosSemAtendente(pool, ig, authDe, LOTE);
+  if (!leads.length) return { conferidos: 0, legado, devolvidos };
 
   let conferidos = 0, mudaram = 0, falhas = 0;
   const fila = [...leads];
@@ -97,6 +98,51 @@ async function conferir(pool) {
 // Os 15 últimos dias de leads enviados ao CRM GK sem acompanhamento. O número
 // sai do mesmo lugar que o envio usa (contato validado → Receita).
 const DIAS_LEGADO = 15;
+
+// Correção dos envios feitos entre o PR #93 e este: o ticket ia direto para
+// "open" (Atendendo) sem atendente — invisível pros atendentes da fila — e o
+// lead ficava sem fila no Hunter, fora do cartão e do freio do piloto. Aqui,
+// uma vez por lead, o Hunter confere o ticket no CRM:
+//   open sem atendente → volta pra Aguardando na mesma fila;
+//   com atendente (alguém pegou de verdade) → fica, só ganha a fila;
+//   resolvido / sumiu → finalizado / fora.
+// Só mexe nos enviados depois do PR #93: antes dele, "em atendimento sem fila"
+// era o ticket que já estava com alguém, e esse não se toca.
+const INICIO_ATENDIMENTO_DIRETO = '2026-10-26T21:00:00Z';
+async function devolverAbertosSemAtendente(pool, ig, authDe, limite) {
+  const { rows } = await pool.query(
+    `SELECT id, crm_ticket_id, crm_numero, crm_conexao_id FROM leads
+      WHERE crm_atendimento = 'em_atendimento' AND crm_fila_id IS NULL
+        AND crm_ticket_id IS NOT NULL AND crm_numero IS NOT NULL
+        AND enviado_crm_em >= $1::timestamptz
+        AND (crm_checado_em IS NULL OR crm_checado_em < now() - make_interval(mins => $2))
+      ORDER BY id LIMIT $3`, [INICIO_ATENDIMENTO_DIRETO, INTERVALO_MIN, limite]);
+  let devolvidos = 0;
+  for (const l of rows) {
+    try {
+      const tickets = await gk.ticketsDoContato(ig.config.backend, authDe(l), l.crm_numero);
+      const t = tickets.find(x => String(x.id) === String(l.crm_ticket_id));
+      const fila = t?.queueId != null ? String(t.queueId) : null;
+      if (t && String(t.status).toLowerCase() === 'open' && t.userId == null) {
+        await gk.devolverParaFila(ig.config.backend, authDe(l), t.id, fila);
+        await pool.query(
+          `UPDATE leads SET crm_atendimento='aguardando', crm_fila_id=$2, crm_atendimento_em=now(), crm_checado_em=now()
+            WHERE id=$1`, [l.id, fila]);
+        devolvidos++;
+      } else {
+        const estado = t ? (estadoDoStatus(t.status) || 'em_atendimento') : 'fora';
+        await pool.query(
+          `UPDATE leads SET crm_atendimento=$2, crm_fila_id=COALESCE($3, crm_fila_id), crm_checado_em=now()
+            WHERE id=$1`, [l.id, estado, fila]);
+      }
+    } catch (err) {
+      await pool.query(`UPDATE leads SET crm_checado_em=now() WHERE id=$1`, [l.id]).catch(() => {});
+      console.warn(`[atendimento] não deu pra devolver o ticket do lead ${l.id} à fila: ${err.message}`);
+    }
+  }
+  if (devolvidos) console.log(`[atendimento] ${devolvidos} ticket(s) aberto(s) sem atendente voltaram pra Aguardando`);
+  return devolvidos;
+}
 async function adotarLegado(pool, ig, authDe, limite) {
   if (limite <= 0) return 0;
   const { rows } = await pool.query(

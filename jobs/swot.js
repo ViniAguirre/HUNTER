@@ -260,7 +260,9 @@ module.exports = async function swot(job, pool, queues) {
   }
   // Sem chave IA: o lead segue 'scored' (sem gasto). Mesmo assim pode ir ao CRM.
 
-  const { contatoOk, retido } = await portaoDoCrm(pool, queues, { lead_id, cnpj, crmAuto, contatoOk: job.data.contato_ok });
+  // Reanálise pedida pelo usuário não envia sozinha: o envio fica pelo botão.
+  const { contatoOk, retido } = await portaoDoCrm(pool, queues,
+    { lead_id, cnpj, crmAuto, contatoOk: job.data.reanalise ? false : job.data.contato_ok });
 
   return { cnpj, lead_id, swot: igs.length > 0, crm_auto: crmAuto, contato_ok: contatoOk,
     ...(retido ? { retido } : {}), ...(usado ? { ia: usado } : {}) };
