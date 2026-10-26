@@ -356,7 +356,12 @@ async function acharTicketPendente(backend, token, { contactId, number, whatsapp
 // abre "em Aguardando, sem Setor" — o queueId mandado ali é ignorado, e o lead
 // caía sem fila. Por isso a fila é aplicada depois, no updateAPI, com o id do
 // ticket. Ticket já em atendimento (open) não é mexido: tem alguém nele.
-async function abrirTicket(backend, token, { contactId, queueId, status, number, whatsappId }) {
+//
+// `atendimento: true` (lead com tag do radar) põe o ticket direto em
+// atendimento (status "open", o "Atendimento" da doc) em vez de Aguardando.
+// A doc não aceita status no createTicketAPI, então vai no mesmo updateAPI
+// que aplica a fila. Sem userId: a chamada não escolhe operador.
+async function abrirTicket(backend, token, { contactId, queueId, status, number, whatsappId, atendimento = false }) {
   let data;
   try {
     ({ data } = await comAuth(backend, token, (c) =>
@@ -376,15 +381,19 @@ async function abrirTicket(backend, token, { contactId, queueId, status, number,
   if (ticket.status && ticket.status !== 'pending') {
     return { ticketId: ticket.id, filaAplicada: false, motivo: `ticket_${ticket.status}` };
   }
-  if (!queueId || String(ticket.queueId) === String(queueId)) {
+  const mudaFila = !!queueId && String(ticket.queueId) !== String(queueId);
+  if (!mudaFila && !atendimento) {
     return { ticketId: ticket.id, filaAplicada: !!queueId };
   }
+  const corpo = { ticketId: String(ticket.id), status: atendimento ? 'open' : 'pending' };
+  if (queueId) corpo.queueId = String(queueId);
   try {
-    await comAuth(backend, token, (c) =>
-      c.post('/api/tickets/updateAPI', { ticketId: String(ticket.id), queueId: String(queueId), status: 'pending' }),
-      ['bearer', 'raw']);
-  } catch (err) { throw traduzErro(err, `Pôr o ticket ${ticket.id} na fila ${queueId}`); }
-  return { ticketId: ticket.id, filaAplicada: true };
+    await comAuth(backend, token, (c) => c.post('/api/tickets/updateAPI', corpo), ['bearer', 'raw']);
+  } catch (err) {
+    const alvo = atendimento ? 'Pôr o ticket em atendimento' : `Pôr o ticket na fila ${queueId}`;
+    throw traduzErro(err, `${alvo} (ticket ${ticket.id})`);
+  }
+  return { ticketId: ticket.id, filaAplicada: !!queueId, ...(atendimento ? { atendimento: true } : {}) };
 }
 
 const LIMITE_CAMPO = 250;
