@@ -84,6 +84,36 @@ function provaPelaLista(segmento, rx) {
   };
 }
 
+// ── Jev como PORTÃO de quem entra só pela atividade (Semelhantes) ──────────
+// A atividade principal dos clientes (ex.: comércio de artigos de uso
+// doméstico) também é a de loja de presentes, utilidades, variedades… Quem
+// passou no perfil SEM palavra do ramo no nome passou só por ela. Com o Jev
+// ativo e a proposta de valor no radar, ele julga se a empresa é o tipo de
+// cliente que compra: abaixo de "provável" (JEV_PASSARIA), não vira lead.
+// Falha ou sem nota: não bloqueia (fica a regra de sempre).
+async function portaoJev(pool, { empresa, busca_id, criterios, score, corte }) {
+  const icp = criterios?.proposta_valor || criterios?.params?.proposta_valor;
+  if (!icp || !String(icp).trim()) return null;
+  const jev = await integracaoJev(pool);
+  if (!jev) return null;
+  let r = null, erro = null;
+  try {
+    r = await typesafe.avaliarEmpresa(jev.apiKey, icp,
+      { ...empresa, resumo_site: typesafe.resumoSite(empresa.contatos_verificados) },
+      { modelo: jev.modelo, timeout: 10000, perfil: jev.perfil });
+  } catch (e) { erro = String(e.message || e).slice(0, 300); }
+  const cortou = r?.norm != null && r.norm < JEV_PASSARIA;
+  await pool.query(
+    `INSERT INTO decisoes_jev (tipo, cnpj, alvo, regra, busca_id, regra_score, corte, jev_score, jev_tipo,
+       jev_confianca, jev_probabilidades, modelo, latencia_ms, erro)
+     VALUES ('score1',$1,'so_atividade',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+    [empresa.cnpj, cortou ? 'cortado_jev' : 'passou', busca_id, score, corte, r?.norm ?? null,
+     r?.norm == null ? null : (cortou ? 'cortaria' : 'passaria'), r?.confianca ?? null,
+     r?.probabilidades ? JSON.stringify(r.probabilidades) : null, r?.modelo ?? null, r?.latencia_ms ?? null, erro])
+    .catch(e => console.error('[jev] portão score1:', e.message));
+  return { norm: r?.norm ?? null, cortou };
+}
+
 async function observarScore(pool, { empresa, busca_id, criterios, score, corte, passou, lista }) {
   const icp = criterios?.proposta_valor || criterios?.params?.proposta_valor;
   if (!icp || !String(icp).trim()) return;
@@ -160,15 +190,28 @@ module.exports = async function score1(job, pool, queues) {
   // Portões de perfil (providers/perfil.js): "é do ramo dos clientes?" vem
   // ANTES da nota — acertar estado, porte e capital não compensa uma atividade
   // que nenhum cliente tem, nem transforma uma paróquia em oportunidade.
-  const barrada = importacao ? null : perfilamento.portaoPerfil(empresa, {
+  let barrada = importacao ? null : perfilamento.portaoPerfil(empresa, {
     perfil: busca.tipo === 'lookalike' ? params?.perfil : null,
     cnaesRadar: busca.tipo === 'lookalike' ? [] : (params?.cnaes || []),
   });
   if (barrada) breakdown = [...breakdown, { item: barrada.item, pts: 0 }];
-  const passou = importacao ? true : (!barrada && score >= corte);
+  let passou = importacao ? true : (!barrada && score >= corte);
+
+  // Semelhantes: passou só pela atividade (sem palavra do ramo no nome)? O Jev,
+  // se ativo, confirma antes de virar lead (portaoJev).
+  let julgadoJev = null;
+  if (passou && busca.tipo === 'lookalike' && params?.perfil && !perfilamento.palavraDoRamo(empresa, params.perfil)) {
+    julgadoJev = await portaoJev(pool, { empresa, busca_id, criterios: busca.criterios, score, corte })
+      .catch(e => { console.error('[jev] portão score1:', e.message); return null; });
+    if (julgadoJev?.cortou) {
+      passou = false;
+      barrada = { motivo: 'nao_e_comprador', item: 'Só a atividade bate com a dos clientes, e a segunda verificação diz que não é o tipo de empresa que compra' };
+      breakdown = [...breakdown, { item: barrada.item, pts: 0 }];
+    }
+  }
 
   // Observação do Jev em paralelo: não atrasa nem muda a decisão do corte.
-  if (!importacao) {
+  if (!importacao && !julgadoJev) {
     observarScore(pool, { empresa, busca_id, criterios: busca.criterios, score, corte, passou,
       lista: busca.tipo === 'lookalike' ? busca.lista : null })
       .catch(e => console.error('[jev] score1:', e.message));
