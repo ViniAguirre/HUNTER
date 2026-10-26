@@ -2145,6 +2145,7 @@ const MOTIVOS_DESCARTE = [
   ['atividade_desconhecida', 'Atividade desconhecida, sem palavra do ramo no nome'],
   ['entidade_nao_empresarial', 'Igreja, órgão público, condomínio, sindicato…'],
   ['abaixo_do_corte', 'Nota abaixo do corte'],
+  ['nao_e_comprador', 'Só a atividade bate, e a segunda verificação diz que não é o tipo de empresa que compra'],
   ['radar_sem_perfil', 'Radar ainda sem perfil'],
   ['desistiu_de_esperar', 'Aprovadas que desistiram de esperar vaga (7 dias)'],
 ];

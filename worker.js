@@ -120,12 +120,7 @@ async function falhaDescoberta(buscaId, motivo) {
         WHERE id=$1 AND status='Ativa' RETURNING descoberta_falhas, descoberta_token`, [buscaId, msg]);
     if (!b) return;
     console.warn(`[descoberta] busca ${buscaId}: falhou (${b.descoberta_falhas}ª seguida) — ${msg}`);
-    // Cursor recusado (HTTP 400 continuando uma varredura guardada): a página
-    // guardada não vale mais. Recomeça a fase em vez de repetir o erro pra sempre.
-    if (b.descoberta_token && /HTTP 400/.test(msg) && b.descoberta_falhas >= 2) {
-      await pool.query(`UPDATE buscas SET descoberta_token=NULL WHERE id=$1`, [buscaId]);
-      console.warn(`[descoberta] busca ${buscaId}: cursor da varredura recusado — recomeça a fase.`);
-    }
+    // (Cursor vencido não chega aqui: a descoberta trata — ver jobs/descoberta.js.)
   } catch (e) {
     console.error(`[descoberta] falha ao registrar a falha da busca ${buscaId}: ${e.message}`);
   }

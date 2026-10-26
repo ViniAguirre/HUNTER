@@ -683,4 +683,4 @@ function portaoPerfil(emp, { perfil = null, cnaesRadar = [] } = {}) {
 }
 
 module.exports = { MIN_PERFIL, W, parseCnpjs, construirPerfil, pontuarProximidade, poderDimensao, calcularPesos, tokensNome,
-  portaoPerfil, entidadeDe, ATIVIDADE_FREQ_MIN, NOME_FREQ_MIN };
+  portaoPerfil, palavraDoRamo, entidadeDe, ATIVIDADE_FREQ_MIN, NOME_FREQ_MIN };

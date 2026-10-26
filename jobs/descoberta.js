@@ -89,9 +89,13 @@ const TETO_PAGINAS = 20;   // com limit=100, até ~2000 empresas por varredura
 //  • banco próprio primeiro: até LOCAL_POR_PASSADA empresas do cadastro por
 //    passada; se vieram LOCAL_BASTA ou mais, não paga página nesta passada;
 //  • esteira cheia: com LIMIAR_ESTEIRA+ empresas ainda em análise (cadastro →
-//    filtro → score), espera elas virarem lead ou descarte antes de pagar mais;
+//    filtro → score), a passada nem começa — espera elas virarem lead ou descarte;
 //  • sem conversão: AMOSTRA_CONVERSAO+ empresas do radar já analisadas e
-//    nenhuma virou lead → para de pagar (o filtro não serve pra esta região).
+//    nenhuma virou lead → para de pagar no meio da varredura e encerra o radar.
+// Uma varredura começada vai até o fim (ou o teto) de uma vez: o cursor da
+// CNPJá vence em pouco tempo, e parar no meio pra retomar depois fazia a
+// retomada falhar ("token is invalid or expired") e a busca recomeçar da
+// página 1 — pagando de novo por empresas já vistas.
 const LOCAL_POR_PASSADA = 500;
 const LOCAL_BASTA = 50;
 const LIMIAR_ESTEIRA = 300;
@@ -247,7 +251,9 @@ module.exports = async function descoberta(job, pool, queues) {
   }
   // O banco local não depende da cota de leads da hora: a cota limita lead
   // criado, não empresa analisada — e analisar o que já temos é de graça.
-  const locais = await buscarLocal(pool, params, LOCAL_POR_PASSADA);
+  const { rows: [faseAtual] } = await pool.query(`SELECT descoberta_fase FROM buscas WHERE id=$1`, [busca_id]);
+  const locais = await buscarLocal(pool, params, LOCAL_POR_PASSADA,
+    { fase: params.duasFases ? (faseAtual?.descoberta_fase || 1) : 2 });
   for (const emp of locais) {
     const antes = counters.enfileirados;
     await processarOffice(pool, queues, busca_id, emp, counters);
@@ -291,22 +297,29 @@ module.exports = async function descoberta(job, pool, queues) {
     const freio = await freioDaPagina(pool, queues, busca_id);
     if (freio) {
       await contarDescartes(pool, busca_id, counters.motivos);
-      if (freio === 'sem_conversao') {
-        await pool.query(
-          `UPDATE buscas SET status='Esgotada', descoberta_token=NULL, descoberta_fase=1, descoberta_estado='sem_conversao',
-                             descoberta_estado_em=now(), ultimo_heartbeat=now() WHERE id=$1`, [busca_id]);
-        console.log(`[descoberta] busca ${busca_id}: ${AMOSTRA_CONVERSAO}+ empresas analisadas e nenhuma virou lead — parou de pagar páginas.`);
-      } else {
-        await marcarEstado(pool, busca_id, freio);
-        await pool.query(`UPDATE buscas SET ultimo_heartbeat=now() WHERE id=$1`, [busca_id]);
-      }
+      await pool.query(
+        `UPDATE buscas SET status='Esgotada', descoberta_token=NULL, descoberta_fase=1, descoberta_estado='sem_conversao',
+                           descoberta_estado_em=now(), ultimo_heartbeat=now() WHERE id=$1`, [busca_id]);
+      console.log(`[descoberta] busca ${busca_id}: ${AMOSTRA_CONVERSAO}+ empresas analisadas e nenhuma virou lead — parou de pagar páginas.`);
       return { modo: tipo, ...counters, paginas: pagina, fase, freio };
     }
     // A fase 2 varre o CNAE inteiro; a palavra-chave sai do filtro e continua
     // valendo no score, onde ela é sinal e não porteira.
     const filtros = { ...params, names: fase === 1 ? params.names : [],
       activities: fase === 2 && params.duasFases && params.activitiesFase2 ? params.activitiesFase2 : params.activities };
-    const { offices, next } = await cnpja.search({ ...filtros, token }, ig.key_cifrada);
+    let resp;
+    try {
+      resp = await cnpja.search({ ...filtros, token }, ig.key_cifrada);
+    } catch (e) {
+      // Cursor guardado de outra passada venceu. Recomeçar da página 1 pagaria
+      // de novo por tudo que já foi visto: a fase 1 passa pra fase 2 (outra
+      // consulta); na fase 2, a varredura deste radar termina aqui.
+      if (!(token && /token is invalid or expired|token.*expired|invalid token/i.test(e.message))) throw e;
+      console.warn(`[descoberta] busca ${busca_id}: cursor da varredura venceu na fase ${fase} — ${fase === 1 && params.duasFases ? 'segue na fase 2' : 'varredura encerrada'} (sem repagar páginas).`);
+      if (fase === 1 && params.duasFases && !(params.activitiesFase2 && !params.activitiesFase2.length)) { fase = 2; token = null; continue; }
+      esgotou = true; break;
+    }
+    const { offices, next } = resp;
     counters.total += offices.length;
     for (const office of offices) {
       await processarOffice(pool, queues, busca_id, office, counters);
@@ -675,12 +688,8 @@ async function processarOffice(pool, queues, busca_id, office, counters) {
   counters.enfileirados++;
 }
 
-// Vale pagar a próxima página? null = sim; senão o motivo de parar.
+// Vale pagar a próxima página? null = sim; 'sem_conversao' = encerra o radar.
 async function freioDaPagina(pool, queues, busca_id) {
-  const naEsteira = await esteira(queues);
-  if (naEsteira != null && naEsteira >= LIMIAR_ESTEIRA) return 'analisando';
-  const v = await orcamento.disponivel(pool).catch(() => null);
-  if (v && (v.foraDaJanela || v.dia <= 0)) return v.foraDaJanela ? 'fora_da_janela' : 'limite_diario';
   const c = await conversao(pool, busca_id).catch(() => null);
   if (c && c.avaliadas >= AMOSTRA_CONVERSAO && c.leads === 0) return 'sem_conversao';
   return null;
@@ -693,7 +702,10 @@ async function freioDaPagina(pool, queues, busca_id) {
 // só recebe as que ele ainda não processou.
 // Devolve os offices no mesmo formato que a CNPJá entrega, pra reaproveitar
 // `processarOffice` sem nenhuma diferença de tratamento.
-async function buscarLocal(pool, params, limite) {
+// `fase` (Semelhantes com palavras do ramo): na 1 só as com palavra do ramo no
+// nome — as mais certeiras primeiro, como na busca paga; na 2 também as da
+// atividade principal dos clientes sem a palavra.
+async function buscarLocal(pool, params, limite, { fase = 2 } = {}) {
   const conds = [`(situacao IS NULL OR situacao ILIKE '%ativa%')`];
   const vals = [];
   const add = (sql, val) => { vals.push(val); conds.push(sql.replace('$?', `$${vals.length}`)); };
@@ -701,7 +713,7 @@ async function buscarLocal(pool, params, limite) {
   // Semelhantes com palavras do ramo: atividade principal OU (qualquer atividade
   // dos clientes COM palavra no nome) — o mesmo que as duas fases da CNPJá.
   const limpaCnae = l => l.map(c => String(c).replace(/\D/g, ''));
-  const combinar = Array.isArray(params.activitiesFase2) && params.activities?.length > 0 && params.names?.length > 0;
+  const combinar = fase === 2 && Array.isArray(params.activitiesFase2) && params.activities?.length > 0 && params.names?.length > 0;
   if (params.states?.length)         add(`uf = ANY($?)`, params.states.map(s => String(s).toUpperCase()));
   if (params.activities?.length && !combinar) add(`cnae = ANY($?)`, limpaCnae(params.activities));
   if (params.municipiosNomes?.length) add(`cidade ILIKE ANY($?)`, params.municipiosNomes);
