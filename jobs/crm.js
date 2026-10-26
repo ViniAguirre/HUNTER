@@ -7,6 +7,7 @@
  * SWOT). Roda em fila com retry — falha vai pra DLQ com mensagem clara.
  */
 const crypto = require('crypto');
+const { juntarTags } = require('../tags');
 const webhook = require('../providers/webhook');
 const gk = require('../providers/gk');
 const afiliados = require('../providers/afiliados');
@@ -46,11 +47,13 @@ module.exports = async function crm(job, pool, queues) {
     `SELECT l.id, l.cnpj, l.busca_id, l.score, l.swot, l.contato_validado, l.crm_ref,
             l.fantasia, l.razao, l.setor, l.cnae, l.porte, l.cidade, l.uf,
             l.decisor, l.cargo, l.endereco, l.situacao, l.abertura, l.capital, l.breakdown, l.crm_conexao_id,
-            b.nome AS busca_nome, b.crm_queue_id AS busca_queue_id, b.tags AS busca_tags,
+            b.nome AS busca_nome, b.crm_queue_id AS busca_queue_id, b.tags AS busca_tags, l.tags AS lead_tags,
             b.crm_destino AS busca_crm_destino, b.afiliados_alvo AS busca_afiliados_alvo
      FROM leads l LEFT JOIN buscas b ON b.id=l.busca_id WHERE l.id=$1`, [lead_id]
   );
   if (!lead) return { error: 'lead ausente', lead_id };
+  // Tags que vão pro CRM: as do radar + as postas no próprio lead.
+  lead.busca_tags = juntarTags(lead.busca_tags, lead.lead_tags);
   // Trava de reenvio: vale pra todo caminho (botão, lote, decisão, automático).
   // Lead descartado (inclui o negativado "fora do perfil") também não vai.
   const { rows: [ja] } = await pool.query(

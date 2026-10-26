@@ -7826,6 +7826,53 @@ function RefCrm({ valor }) {
   );
 }
 
+// Tags do lead: escolhe entre as existentes (as reconhecidas pelo CRM e as já
+// usadas) ou cria uma nova. Salvam sozinhas e vão pro CRM junto com as do radar.
+function TagsDoLead({ lead, onSalvo }) {
+  const [tags, setTags] = useState(Array.isArray(lead?.tags) ? lead.tags : []);
+  const [estado, setEstado] = useState(null);   // 'salvando' | 'salvo' | 'erro'
+  const ultimo = useRef(JSON.stringify(Array.isArray(lead?.tags) ? lead.tags : []));
+  useEffect(() => {
+    const atual = JSON.stringify(tags);
+    if (atual === ultimo.current) return;
+    setEstado('salvando');
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch('/api/leads/' + lead.id + '/tags', { method:'PUT', credentials:'same-origin',
+          headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ tags }) });
+        if (!r.ok) throw new Error();
+        const d = await r.json();
+        ultimo.current = JSON.stringify(d.tags || []);
+        onSalvo && onSalvo(d.tags || []);
+        setEstado('salvo');
+      } catch (_) { setEstado('erro'); }
+    }, 600);
+    return () => clearTimeout(t);
+  }, [tags]);
+  const doRadar = Array.isArray(lead?.busca_tags) ? lead.busca_tags : [];
+  const noCrm = !!(lead?.enviado_crm_em || lead?.status === 'Enviado');
+  return (
+    <section style={{ borderTop:'1px solid var(--border)', paddingTop:18 }}>
+      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:10 }}>
+        <span style={{ fontSize:11, fontWeight:600, letterSpacing:'.08em', color:'var(--faint)', textTransform:'uppercase', flex:1 }}>Tags</span>
+        {estado && <span style={{ fontSize:11, color: estado === 'erro' ? C.red : 'var(--faint)' }}>
+          {estado === 'salvando' ? 'Salvando…' : estado === 'salvo' ? 'Salvo' : 'Não salvou — tente de novo'}</span>}
+      </div>
+      <TagsInput value={tags} onChange={setTags} rotuloId={'tags-lead-' + lead.id}/>
+      {doRadar.length > 0 && (
+        <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:8 }}>
+          Do radar (vão sempre): {doRadar.join(', ')}
+        </div>
+      )}
+      {noCrm && (
+        <div style={{ fontSize:11.5, color:C.amber, marginTop:6 }}>
+          Este lead já está no CRM: tag mudada aqui não é enviada de novo.
+        </div>
+      )}
+    </section>
+  );
+}
+
 function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
   const [lead, setLead] = useState(null);
   const [displayStatus, setDisplayStatus] = useState(null);
@@ -8490,6 +8537,8 @@ function LeadDetailPanel({ leadId, onClose, onCrm, onStatusChange }) {
               </div>
             </section>
           )}
+
+          <TagsDoLead key={l.id} lead={l} onSalvo={tags => setLead(x => ({ ...x, tags }))}/>
 
           {breakdown.length > 0 && (
             <section style={{ borderTop:'1px solid var(--border)', paddingTop:18 }}>

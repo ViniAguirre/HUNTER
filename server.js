@@ -812,6 +812,8 @@ async function init() {
     -- Tags do radar: vão em cada lead enviado ao CRM, pra triagem lá. A pauta
     -- da Estratégia carrega as dela e passa pros radares que abrir.
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
+    -- Tags do próprio lead (postas na tela do lead): vão pro CRM junto com as do radar.
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
     ALTER TABLE estrategia_pautas ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
     -- Destino dos leads do radar quando há dois CRMs: o principal (GK/webhook)
     -- ou o CRM dos Afiliados. afiliados_alvo = {tipo:'grupo'|'afiliado', id, nome}.
@@ -1835,6 +1837,7 @@ app.get('/api/tags', requireAuth, async (req, res) => {
         SELECT tag, COUNT(*)::int AS usos FROM (
           SELECT unnest(tags) AS tag FROM buscas
           UNION ALL SELECT unnest(tags) FROM estrategia_pautas
+          UNION ALL SELECT unnest(tags) FROM leads WHERE tags <> '{}'
         ) t GROUP BY tag ORDER BY usos DESC, tag LIMIT 50`),
       pool.query(`SELECT crm_tags_regras, crm_tags_regras_em FROM config`),
     ]);
@@ -2591,7 +2594,7 @@ app.get('/api/leads/:id', requireAuth, async (req, res) => {
   if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
   try {
     const { rows:[l] } = await pool.query(
-      `SELECT l.*, b.nome AS busca_nome FROM leads l
+      `SELECT l.*, b.nome AS busca_nome, b.tags AS busca_tags FROM leads l
        LEFT JOIN buscas b ON b.id=l.busca_id WHERE l.id=$1`, [id]);
     if (!l) return res.status(404).json({ erro: 'não encontrado' });
     // Como terminou a última busca nos mapas deste lead (achou, não conferiu,
@@ -2616,6 +2619,19 @@ app.get('/api/leads/:id', requireAuth, async (req, res) => {
     }
     res.json(l);
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// Tags do lead: escolhidas na tela do lead (existentes ou novas). Vão pro CRM
+// junto com as do radar quando o lead for enviado.
+app.put('/api/leads/:id/tags', requireAuth, requireEditor, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
+  try {
+    const { rows: [l] } = await pool.query(
+      `UPDATE leads SET tags=$2::text[], atualizado_em=now() WHERE id=$1 RETURNING id, tags`, [id, normalizarTags(req.body.tags)]);
+    if (!l) return res.status(404).json({ erro: 'não encontrado' });
+    res.json(l);
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
 app.patch('/api/leads/:id', requireAuth, requireEditor, async (req, res) => {
