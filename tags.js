@@ -12,7 +12,7 @@ const MAX_TAG = 40;
 // Aceita array ou texto separado por vírgula. Tira espaço sobrando, corta no
 // tamanho máximo e remove repetida sem diferenciar maiúscula/acento — "VIP" e
 // "vip" virariam duas regras diferentes no CRM. Mantém a grafia da 1ª vez.
-function normalizarTags(entrada) {
+function normalizarTags(entrada, max = MAX_TAGS) {
   const lista = Array.isArray(entrada) ? entrada : String(entrada || '').split(',');
   const vistas = new Set();
   const out = [];
@@ -23,7 +23,7 @@ function normalizarTags(entrada) {
     if (vistas.has(chave)) continue;
     vistas.add(chave);
     out.push(tag);
-    if (out.length >= MAX_TAGS) break;
+    if (out.length >= max) break;
   }
   return out;
 }
@@ -54,4 +54,8 @@ function normalizarListaCrm(entrada) {
   return { tags, ignoradas };
 }
 
-module.exports = { normalizarTags, normalizarListaCrm, chaveTag, MAX_TAGS, MAX_TAG, MAX_TAGS_CRM };
+// Tags que vão com o lead pro CRM: as do radar mais as que o usuário pôs no
+// próprio lead, sem repetir (até 2× o teto de cada lado).
+const juntarTags = (radar, lead) => normalizarTags([...(radar || []), ...(lead || [])], MAX_TAGS * 2);
+
+module.exports = { normalizarTags, juntarTags, normalizarListaCrm, chaveTag, MAX_TAGS, MAX_TAG, MAX_TAGS_CRM };
