@@ -169,6 +169,17 @@ module.exports = async function crm(job, pool, queues) {
     const tk = await gk.abrirTicket(backend, auth,
       { contactId, queueId, status: ig.config?.status || 'pending', number: contato.number,
         whatsappId: conexao?.id || null, atendimento: tags.length > 0 });
+    // Tags do radar e do lead vão para o TICKET no CRM (tags de verdade, não só
+    // texto no contato). Idempotente: uma retentativa não duplica nada.
+    let tagsCrm = null;
+    if (tk.ticketId && tags.length) {
+      try {
+        tagsCrm = await gk.aplicarTagsNoTicket(backend, auth, tk.ticketId, tags);
+      } catch (err) {
+        tagsCrm = { erro: err.message };
+        console.warn('[crm] tags não aplicadas no ticket', tk.ticketId, err.message);
+      }
+    }
     // Briefing completo do agente (empresa + SWOT + fatos + dores + sinal +
     // motivos do score) como nota interna no ticket: é o material que o closer
     // usa, e não cabe nos campos do contato. Sem ticket não há onde gravar —
@@ -191,6 +202,7 @@ module.exports = async function crm(job, pool, queues) {
          emAtendimento ? 'em_atendimento' : 'aguardando']);
     }
     resultadoGk = { contactId, ticketId: tk.ticketId, fila_aplicada: tk.filaAplicada, nota_briefing: nota,
+                    ...(tagsCrm ? { tags_crm: tagsCrm } : {}),
                     fila: { id: String(queueId), origem: origemFila },
                     ...(conexao ? { conexao: { id: conexao.id, nome: conexao.nome } } : {}),
                     ...(distribMotivo ? { distribuicao: distribMotivo } : {}),
