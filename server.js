@@ -3544,6 +3544,28 @@ app.get('/api/crm/filas', requireAuth, async (req, res) => {
   } catch (e) { console.error(e); res.json({ filas: [], padrao: null }); }
 });
 
+// Filas que o radar pode escolher: só as das conexões marcadas na aba Estratégia
+// (cada uma com a própria fila). Fila que não existe mais no CRM não entra.
+app.get('/api/crm/filas-radar', requireAuth, async (req, res) => {
+  try {
+    const { rows: [ig] } = await pool.query(
+      `SELECT provedor, key_cifrada, config FROM integracoes
+       WHERE categoria='crm' AND provedor='gk' AND ativo=true
+         AND key_cifrada IS NOT NULL AND key_cifrada <> '' LIMIT 1`
+    );
+    if (!ig?.config?.backend) return res.json({ filas: [], padrao: null, padraoNome: null });
+    const { rows: [est] } = await pool.query(`SELECT distrib_conexoes FROM estrategia`);
+    const marcadas = (Array.isArray(est?.distrib_conexoes) ? est.distrib_conexoes : [])
+      .filter(c => c && c.ativo && c.fila != null && String(c.fila).trim() !== '');
+    const ids = [...new Set(marcadas.map(c => String(c.fila).trim()))];
+    const doCrm = await gk.listarFilas(ig.config.backend, ig.key_cifrada).catch(() => null);
+    const nomeDe = new Map((doCrm || []).map(f => [String(f.id), f.queue]));
+    const filas = ids.filter(id => !doCrm || nomeDe.has(id)).map(id => ({ id, queue: nomeDe.get(id) }));
+    const padrao = ig.config.queueId != null ? String(ig.config.queueId) : null;
+    res.json({ filas, padrao, padraoNome: padrao ? (nomeDe.get(padrao) || null) : null });
+  } catch (e) { console.error(e); res.json({ filas: [], padrao: null, padraoNome: null }); }
+});
+
 // Testa a chave de IA salva (OpenRouter ou OpenAI) com o modelo salvo e diz
 // qual modelo de fato respondeu. Não grava nada.
 // Glasser: confere a chave pelo saldo (grátis), descobre o endpoint do Google
