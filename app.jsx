@@ -2179,6 +2179,14 @@ function RaioXRadar({ b }) {
       <div style={{ fontSize:12, color:'var(--faint)', margin:'4px 0 10px', lineHeight:1.45 }}>
         Das <b style={{ color:'var(--text)' }}>{fmtNum(enc)}</b> empresas encontradas, quantas viraram lead e por que as outras não viraram.
       </div>
+      {/* Semelhantes: a conferência de quem entra só pela atividade está valendo? */}
+      {b.conferencia_ia && (
+        <div style={{ fontSize:12, lineHeight:1.45, margin:'0 0 10px', color: b.conferencia_ia.ativa ? C.green : C.amber }}>
+          {b.conferencia_ia.ativa
+            ? <>Segunda verificação ligada: empresa que entra só pela atividade (sem palavra do ramo no nome) só vira lead se for um provável comprador da proposta{b.conferencia_ia.proposta === 'cadastro' ? ' (cadastrada em Propostas)' : ''}.</>
+            : <>Segunda verificação desligada{!b.conferencia_ia.decisoes ? ' — ative "Decisões" em Integrações' : ' — cadastre uma proposta de valor em Propostas'}: empresa que entra só pela atividade vira lead sem essa conferência.</>}
+        </div>
+      )}
       {linha('Viraram lead', leads, C.green,
         `${fmtNum(b.qual ?? b.qualificados ?? 0)} com telefone e e-mail · ${fmtNum(b.so_telefone ?? 0)} só com telefone · ${fmtNum(b.sem_contato ?? 0)} sem contato`)}
       {linhas.map(([k, rot, n]) => linha(rot, n, k === 'ja_vista' || k === 'cliente_da_lista' ? C.gray : C.amber))}

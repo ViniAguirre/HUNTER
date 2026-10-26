@@ -208,7 +208,10 @@ module.exports = async function validacao(job, pool, queues) {
       origem = 'anterior';
     }
     const t0 = Date.now();
-    const tentativa = job.data.tentativa_contato || 0;
+    // Pedido do usuário pra ESTE lead: uma passada só, já como a última (busca
+    // fresca na internet e, sem telefone, os mapas na sequência) — sem esperar
+    // os 2 min da 2ª tentativa; ele está olhando a tela.
+    const tentativa = job.data.manual ? MAX_TENT_CONTATO : (job.data.tentativa_contato || 0);
     // Nas retentativas, força busca FRESCA (não reaproveita cache) — a ideia é
     // justamente tentar de novo achar o contato que faltou.
     const forcarFresco = tentativa > 0;

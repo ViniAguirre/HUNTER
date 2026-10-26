@@ -16,6 +16,7 @@ const orcamento = require('./orcamento');
 const tracking = require('../providers/tracking');
 const { registrar } = require('./tracking');
 const typesafe = require('../providers/typesafe');
+const { propostaDoRadar } = require('./proposta');
 
 // Raio-X do radar (buscas.descartes): por que a empresa não virou lead.
 const contarDescarte = (pool, busca_id, motivo) => require('./descoberta').contarDescartes(pool, busca_id, { [motivo]: 1 });
@@ -92,7 +93,7 @@ function provaPelaLista(segmento, rx) {
 // cliente que compra: abaixo de "provável" (JEV_PASSARIA), não vira lead.
 // Falha ou sem nota: não bloqueia (fica a regra de sempre).
 async function portaoJev(pool, { empresa, busca_id, criterios, score, corte }) {
-  const icp = criterios?.proposta_valor || criterios?.params?.proposta_valor;
+  const icp = (await propostaDoRadar(pool, criterios)).texto;
   if (!icp || !String(icp).trim()) return null;
   const jev = await integracaoJev(pool);
   if (!jev) return null;
@@ -115,7 +116,7 @@ async function portaoJev(pool, { empresa, busca_id, criterios, score, corte }) {
 }
 
 async function observarScore(pool, { empresa, busca_id, criterios, score, corte, passou, lista }) {
-  const icp = criterios?.proposta_valor || criterios?.params?.proposta_valor;
+  const icp = (await propostaDoRadar(pool, criterios)).texto;
   if (!icp || !String(icp).trim()) return;
   if (!passou && score < corte - ZONA_CINZA) return;
   const jev = await integracaoJev(pool);
