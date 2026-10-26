@@ -396,6 +396,69 @@ async function abrirTicket(backend, token, { contactId, queueId, status, number,
   return { ticketId: ticket.id, filaAplicada: !!queueId, ...(atendimento ? { atendimento: true } : {}) };
 }
 
+// Tags de verdade no CRM (doc: GET /api/tags, POST /api/tags e
+// POST /api/tickets/{ticketId}/tags). Não é o texto em informação adicional do
+// contato: a tag precisa estar no ticket para aparecer em filtro e triagem.
+const MIN_TAG_CRM = 3;
+const chaveTagCrm = s => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+  .replace(/\s+/g, ' ').trim().toLowerCase();
+
+async function listarTagsCrm(backend, token) {
+  const { data } = await comAuth(backend, token, (c) => c.get('/api/tags?todas=1'), ['bearer', 'raw']);
+  const lista = Array.isArray(data) ? data : (data?.tags || data?.data || []);
+  return lista.filter(t => t && t.id != null && t.name != null)
+    .map(t => ({ id: t.id, name: String(t.name), kanban: !!t.kanban }));
+}
+
+async function criarTagCrm(backend, token, nome) {
+  const { data } = await comAuth(backend, token, (c) => c.post('/api/tags', {
+    name: nome, tagType: 'Atendimento', kanban: 0, active: true, color: '#0a84ff',
+  }), ['bearer', 'raw']);
+  const t = data && typeof data === 'object' && data.tag && typeof data.tag === 'object' ? data.tag : data;
+  return t?.id ?? null;
+}
+
+// Garante que cada nome exista como tag de Atendimento e devolve os ids. Tag
+// de raia do Kanban não serve: vincular uma delas move o card de lugar.
+async function garantirTagsCrm(backend, token, nomes) {
+  const existentes = await listarTagsCrm(backend, token);
+  const porNome = new Map(existentes.map(t => [chaveTagCrm(t.name), t]));
+  const ids = [], falhas = [];
+  for (const nome of nomes) {
+    if (nome.length < MIN_TAG_CRM) { falhas.push({ tag: nome, motivo: `menos de ${MIN_TAG_CRM} caracteres (mínimo do CRM)` }); continue; }
+    let achada = porNome.get(chaveTagCrm(nome));
+    if (!achada) {
+      try {
+        const id = await criarTagCrm(backend, token, nome);
+        if (id != null) achada = { id, name: nome, kanban: false };
+      } catch (err) {
+        // Pode ter sido criada em outra chamada no mesmo instante: procura de novo.
+        const again = (await listarTagsCrm(backend, token).catch(() => [])).find(t => chaveTagCrm(t.name) === chaveTagCrm(nome));
+        if (again) achada = again;
+        else { falhas.push({ tag: nome, motivo: traduzErro(err, `Criar tag "${nome}"`).message }); continue; }
+      }
+    }
+    if (!achada) { falhas.push({ tag: nome, motivo: 'CRM não devolveu o id da tag' }); continue; }
+    if (achada.kanban) { falhas.push({ tag: nome, motivo: 'é raia do Kanban — vincular moveria o card' }); continue; }
+    ids.push({ id: achada.id, name: nome });
+  }
+  return { ids, falhas };
+}
+
+// Vincula ao ticket as tags de nome `nomes` (cria as que faltarem). Idempotente:
+// a doc diz que adicionar tag que o atendimento já tem não altera nada.
+async function aplicarTagsNoTicket(backend, token, ticketId, nomes) {
+  const limpos = [...new Set((nomes || []).map(n => String(n).trim()).filter(Boolean))];
+  if (!limpos.length || ticketId == null) return { aplicadas: [], falhas: [] };
+  const { ids, falhas } = await garantirTagsCrm(backend, token, limpos);
+  if (!ids.length) return { aplicadas: [], falhas };
+  try {
+    await comAuth(backend, token, (c) => c.post(`/api/tickets/${ticketId}/tags`, { tags: ids.map(x => x.id) }),
+      ['bearer', 'raw']);
+  } catch (err) { throw traduzErro(err, `Pôr tags no ticket ${ticketId}`); }
+  return { aplicadas: ids.map(x => x.name), falhas };
+}
+
 const LIMITE_CAMPO = 250;
 function cortar(txt, max) { return txt.length > max ? txt.slice(0, max - 1) + '…' : txt; }
 
@@ -555,4 +618,5 @@ function montarContato(empresa, lead, extras = {}) {
 }
 
 module.exports = { listarEmpresas, listarFilas, listarConexoes, comConexao, upsertContato, criarContato, buscarContato, mesclarContato, contatoJaExistente, ticketsDoContato,
+  aplicarTagsNoTicket,
   abrirTicket, montarContato, montarBriefing, enviarNotaInterna, checarRotaContato, normalizarNumero, EP_CONTATO, EP_CONTATO_ALT };
