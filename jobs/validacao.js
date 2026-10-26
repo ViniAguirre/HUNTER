@@ -173,6 +173,10 @@ module.exports = async function validacao(job, pool, queues) {
   // lead que o usuário só queria atualizar (a regra de apagar vale só na
   // primeira passagem, quando o lead ainda nem "existia" pro usuário).
   const preservarLead = !!job.data.preservar;
+  // Reanálise pedida pelo usuário (Re-enriquecer / Buscar contato de novo): a
+  // marca segue até a análise, que então não envia sozinha ao CRM.
+  const reanalise = !!job.data.reanalise;
+  const paraSwot = (d) => seguirParaSwot(queues, reanalise ? { ...d, reanalise: true } : d);
   // Repescagem (repescarSemTelefone): só os mapas — a busca na internet já
   // rodou neste lead e não achou telefone.
   const soMapas = !!job.data.so_mapas;
@@ -397,7 +401,8 @@ module.exports = async function validacao(job, pool, queues) {
     // Incompleto (falta telefone OU e-mail): 1 re-enriquecimento (busca fresca).
     if (!completo && tentativa < MAX_TENT_CONTATO && queues?.validacao) {
       await queues.validacao.add('validacao',
-        { cnpj, busca_id, lead_id, tentativa_contato: tentativa + 1, preservar: preservarLead },
+        { cnpj, busca_id, lead_id, tentativa_contato: tentativa + 1, preservar: preservarLead,
+          ...(reanalise ? { reanalise: true } : {}) },
         { delay: 2 * 60 * 1000, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 2, backoff: { type: 'exponential', delay: 10000 } });
       return { lead_id, retry: tentativa + 1, motivo: 'contato_incompleto' };
     }
@@ -416,7 +421,7 @@ module.exports = async function validacao(job, pool, queues) {
     // 1) Completo (telefone + e-mail) → segue e pode ir ao CRM automático.
     if (completo) {
       await pool.query(`UPDATE leads SET contato_status='completo', contato_pendente=false, ${SAI_DO_INCOMPLETO} WHERE id=$1`, [lead_id]);
-      await seguirParaSwot(queues, { cnpj, busca_id, lead_id, contato_ok: true });
+      await paraSwot({ cnpj, busca_id, lead_id, contato_ok: true });
       return { lead_id, contato: 'completo' };
     }
 
@@ -427,7 +432,7 @@ module.exports = async function validacao(job, pool, queues) {
     if (hasPhone && !hasEmail) {
       await pool.query(`UPDATE leads SET contato_status='decisao', contato_pendente=$2, ${SAI_DO_INCOMPLETO} WHERE id=$1`,
         [lead_id, !opcoes.soWhatsapp]);
-      await seguirParaSwot(queues, { cnpj, busca_id, lead_id, contato_ok: opcoes.soWhatsapp });
+      await paraSwot({ cnpj, busca_id, lead_id, contato_ok: opcoes.soWhatsapp });
       return { lead_id, contato: opcoes.soWhatsapp ? 'so_telefone_envia' : 'decisao_so_telefone' };
     }
 
@@ -460,7 +465,7 @@ module.exports = async function validacao(job, pool, queues) {
   } catch (err) {
     // Erro não trava o pipeline: marca pra decisão manual (não some silenciosamente).
     try { await pool.query(`UPDATE leads SET contato_status='decisao', contato_pendente=true WHERE id=$1`, [lead_id]); } catch (_) {}
-    await seguirParaSwot(queues, { cnpj, busca_id, lead_id, contato_ok: false });
+    await paraSwot({ cnpj, busca_id, lead_id, contato_ok: false });
     return { lead_id, erro: err.message };
   }
 };

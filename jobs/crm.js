@@ -164,11 +164,10 @@ module.exports = async function crm(job, pool, queues) {
 
     const contactId = await gk.upsertContato(backend, auth, contato);
     crmLeadId = contactId != null ? String(contactId) : null;
-    // Lead com tag do radar entra direto em Atendimento (status "open") no CRM;
-    // sem tag, segue o status configurado na integração (padrão: Aguardando).
+    // O ticket abre em Aguardando na fila; as tags vão nele logo abaixo.
     const tk = await gk.abrirTicket(backend, auth,
       { contactId, queueId, status: ig.config?.status || 'pending', number: contato.number,
-        whatsappId: conexao?.id || null, atendimento: tags.length > 0 });
+        whatsappId: conexao?.id || null });
     // Tags do radar e do lead vão para o TICKET no CRM (tags de verdade, não só
     // texto no contato). Idempotente: uma retentativa não duplica nada.
     let tagsCrm = null;
@@ -194,7 +193,7 @@ module.exports = async function crm(job, pool, queues) {
     // que já estava em atendimento entra como tal; sem ticket, não há o que
     // acompanhar.
     if (tk.ticketId) {
-      const emAtendimento = tk.motivo === 'ticket_open' || tk.atendimento === true;
+      const emAtendimento = tk.motivo === 'ticket_open';
       await pool.query(
         `UPDATE leads SET crm_ticket_id=$2, crm_fila_id=$3, crm_numero=$4, crm_atendimento=$5,
                 crm_atendimento_em=now(), crm_checado_em=now() WHERE id=$1`,
