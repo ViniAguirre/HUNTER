@@ -58,4 +58,8 @@ function normalizarListaCrm(entrada) {
 // próprio lead, sem repetir (até 2× o teto de cada lado).
 const juntarTags = (radar, lead) => normalizarTags([...(radar || []), ...(lead || [])], MAX_TAGS * 2);
 
-module.exports = { normalizarTags, juntarTags, normalizarListaCrm, chaveTag, MAX_TAGS, MAX_TAG, MAX_TAGS_CRM };
+// Todo radar leva a tag com o próprio nome, obrigatória e sempre em primeiro.
+// As tags extras do usuário vêm depois, com o mesmo teto de antes.
+const tagsDoRadar = (nome, tags) => normalizarTags([nome, ...(Array.isArray(tags) ? tags : [])], MAX_TAGS + 1);
+
+module.exports = { normalizarTags, juntarTags, tagsDoRadar, normalizarListaCrm, chaveTag, MAX_TAGS, MAX_TAG, MAX_TAGS_CRM };

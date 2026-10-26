@@ -16,7 +16,7 @@
  * gastaria crédito da CNPJá pra aumentar a fila.
  */
 const orcamento = require('./orcamento');
-const { normalizarTags } = require('../tags');
+const { normalizarTags, tagsDoRadar } = require('../tags');
 const { cargaHunter } = require('./atendimento');
 
 // Quantas empresas ainda sem veredito (enriquecimento → filtro → score) seguram
@@ -423,7 +423,7 @@ async function abrirRegiao(db, p, reg) {
                          criador_id, estrategia_pauta_id, tags, ultima_ativ, crm_destino, afiliados_alvo)
      VALUES ($1,$2,'Ativa',120,$3::jsonb,$4,$5,$6,$7,$8,$9,$10::text[],now(),$11,$12::jsonb) RETURNING id, nome`,
     [r.nome, r.tipo, JSON.stringify(r.criterios), r.corte_score, r.crm_auto, r.crm_queue_id, r.lista,
-     p.criado_por || null, p.id, r.tags, r.crm_destino,
+     p.criado_por || null, p.id, tagsDoRadar(r.nome, r.tags), r.crm_destino,
      r.afiliados_alvo ? JSON.stringify(r.afiliados_alvo) : null]);
   await db.query(
     `INSERT INTO estrategia_slots (pauta_id, regiao_chave, regiao_rotulo, busca_id) VALUES ($1,$2,$3,$4)`,

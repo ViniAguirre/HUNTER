@@ -52,8 +52,9 @@ module.exports = async function crm(job, pool, queues) {
      FROM leads l LEFT JOIN buscas b ON b.id=l.busca_id WHERE l.id=$1`, [lead_id]
   );
   if (!lead) return { error: 'lead ausente', lead_id };
-  // Tags que vão pro CRM: as do radar + as postas no próprio lead.
-  lead.busca_tags = juntarTags(lead.busca_tags, lead.lead_tags);
+  // Tags que vão pro CRM: a tag com o nome do radar (sempre, em primeiro), as
+  // demais do radar e as postas no próprio lead. Vale até pra radar antigo.
+  lead.busca_tags = juntarTags([lead.busca_nome, ...(lead.busca_tags || [])], lead.lead_tags);
   // Trava de reenvio: vale pra todo caminho (botão, lote, decisão, automático).
   // Lead descartado (inclui o negativado "fora do perfil") também não vai.
   const { rows: [ja] } = await pool.query(

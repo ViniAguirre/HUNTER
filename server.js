@@ -14,7 +14,7 @@ const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
 const { Pool } = require('pg');
 const { TENANT_ID, TENANT_LEGADO, ligarTenantNoPool, exigirRlsEnforcavel, tenantizarTabela, migrarSingletonParaTenant } = require('./tenant');
-const { normalizarTags, normalizarListaCrm } = require('./tags');
+const { normalizarTags, normalizarListaCrm, tagsDoRadar } = require('./tags');
 const { swotSemOrigem, contatoSemOrigem } = require('./sigilo');
 const { jaNoCrmSql } = require('./jobs/crm');
 const { estadoDoStatus, cargaHunter } = require('./jobs/atendimento');
@@ -812,6 +812,10 @@ async function init() {
     -- Tags do radar: vão em cada lead enviado ao CRM, pra triagem lá. A pauta
     -- da Estratégia carrega as dela e passa pros radares que abrir.
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
+    -- Todo radar tem a tag com o próprio nome (obrigatória). Backfill dos existentes.
+    UPDATE buscas SET tags = array_prepend(left(btrim(nome), 40), tags)
+     WHERE btrim(nome) <> '' AND NOT EXISTS (
+       SELECT 1 FROM unnest(tags) t WHERE lower(t) = lower(left(btrim(nome), 40)));
     -- Tags do próprio lead (postas na tela do lead): vão pro CRM junto com as do radar.
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
     ALTER TABLE estrategia_pautas ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
@@ -1811,7 +1815,8 @@ app.post('/api/buscas', requireAuth, requireEditor, async (req, res) => {
   // Lookalike ligado a uma LISTA salva: o radar re-perfila a partir dela (e
   // acompanha quando ela cresce), em vez de congelar os CNPJs dentro do radar.
   const lista = tipo === 'lookalike' ? (String(req.body.lista || '').trim() || null) : null;
-  const tags = normalizarTags(req.body.tags);
+  // A tag com o nome do radar é obrigatória; as do usuário vão junto.
+  const tags = tagsDoRadar(nome, normalizarTags(req.body.tags));
   try {
     const destino = await destinoCrm(req.body);
     if (destino.erro) return res.status(400).json({ erro: destino.erro });
@@ -2020,8 +2025,11 @@ app.patch('/api/buscas/:id', requireAuth, requireEditor, async (req, res) => {
   }
   // Tags editáveis depois de criado: valem pros leads que forem ao CRM daqui
   // pra frente (o que já foi enviado não é reenviado).
+  // A tag com o nome do radar nunca sai: quem edita só mexe nas extras.
   if ('tags' in req.body) {
-    sets.push(`tags=$${sets.length+1}::text[]`); vals.push(normalizarTags(req.body.tags));
+    const { rows:[atual] } = await pool.query(`SELECT nome FROM buscas WHERE id=$1`, [id]);
+    if (!atual) return res.status(404).json({ erro: 'radar não encontrado' });
+    sets.push(`tags=$${sets.length+1}::text[]`); vals.push(tagsDoRadar(atual.nome, normalizarTags(req.body.tags)));
   }
   if (!sets.length) return res.status(400).json({ erro: 'nada para atualizar' });
   // Mexeu no status à mão = a pessoa assumiu o radar. O piloto da Estratégia só
