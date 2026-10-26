@@ -4913,6 +4913,7 @@ function NovaBusca({ onSalvar, inicial, modoPauta = false, pautaId = null, onCan
   // fila diferente. Vazio = usa a fila padrão das Integrações.
   const [crmFilas, setCrmFilas] = useState([]);
   const [crmFilaPadrao, setCrmFilaPadrao] = useState(null);
+  const [crmFilaPadraoNome, setCrmFilaPadraoNome] = useState('');
   const [crmQueue, setCrmQueue] = useState(inicial?.crm_queue_id ? String(inicial.crm_queue_id) : '');
   // Destino dos leads: CRM principal (GK/webhook) ou CRM dos Afiliados. A
   // escolha só aparece com os dois conectados; com só o dos Afiliados, ele é o
@@ -4956,17 +4957,17 @@ function NovaBusca({ onSalvar, inicial, modoPauta = false, pautaId = null, onCan
   useEffect(() => { carregarListas(); }, []);
 
   // CNPJs válidos (14 dígitos, sem repetição) colados na aba lista/lookalike.
+  // Só as filas das conexões marcadas na aba Estratégia.
   useEffect(() => {
-    fetch('/api/crm/filas', { credentials:'same-origin' })
+    fetch('/api/crm/filas-radar', { credentials:'same-origin' })
       .then(r => r.ok ? r.json() : { filas: [] })
       .then(d => {
         setCrmFilas(Array.isArray(d.filas) ? d.filas : []);
         setCrmFilaPadrao(d.padrao != null ? String(d.padrao) : null);
+        setCrmFilaPadraoNome(d.padraoNome || '');
       })
       .catch(() => {});
   }, []);
-
-  const crmFilaPadraoNome = crmFilas.find(q => String(q.id) === crmFilaPadrao)?.queue || '';
 
   useEffect(() => {
     fetch('/api/crm/destinos', { credentials:'same-origin' })
@@ -5926,9 +5927,12 @@ function NovaBusca({ onSalvar, inicial, modoPauta = false, pautaId = null, onCan
                     fontFamily:'inherit', cursor:'pointer' }}>
                   <option value="">Usar a fila padrão das Integrações{crmFilaPadraoNome ? ` (${crmFilaPadraoNome})` : ''}</option>
                   {crmFilas.map(q => <option key={q.id} value={String(q.id)}>{q.queue}</option>)}
+                  {crmQueue && !crmFilas.some(q => String(q.id) === String(crmQueue)) && (
+                    <option value={crmQueue}>Fila {crmQueue} (não está mais na Estratégia)</option>
+                  )}
                 </select>
                 <div style={{ fontSize:11, color:'var(--faint)', marginTop:7, lineHeight:1.4 }}>
-                  Cada radar pode cair numa fila diferente do CRM. Deixe no padrão se não quiser separar.
+                  Só aparecem as filas das conexões marcadas na aba Estratégia. Deixe no padrão se não quiser separar.
                 </div>
               </div>
             )}
