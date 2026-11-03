@@ -20,6 +20,13 @@
  *
  * O lead guarda a conexão escolhida: retentativa e reenvio reusam a mesma, sem
  * gastar a vez de outra conexão no rodízio.
+ *
+ * Teto por conexão (distrib_max, com volta em distrib_reabre): em qualquer
+ * modo, a conexão que chega a `max` leads aguardando atendimento para de
+ * receber e só volta quando cai para `reabre` ou menos — enche até 10, espera
+ * baixar pra 3, enche de novo. Cada conexão anda sozinha. Com todas cheias, o
+ * lead espera vaga (jobs/crm.js). O envio manual não espera: vai pra a menos
+ * carregada.
  */
 const crypto = require('crypto');
 
@@ -66,19 +73,21 @@ function escolherPonderada(lista, r = crypto.randomInt(0, 1e9) / 1e9) {
 // Lê a configuração da distribuição. null = desligada ou sem conexão marcada.
 async function config(pool) {
   const { rows: [e] } = await pool.query(
-    `SELECT distrib_ativo, distrib_modo, distrib_conexoes, distrib_token FROM estrategia`);
+    `SELECT distrib_ativo, distrib_modo, distrib_conexoes, distrib_token, distrib_max, distrib_reabre FROM estrategia`);
   if (!e || !e.distrib_ativo) return null;
   const lista = elegiveis(e.distrib_conexoes);
   if (!lista.length) return { ativo: true, lista, motivo: 'nenhuma_conexao_marcada' };
   if (!e.distrib_token) return { ativo: true, lista, motivo: 'sem_token_empresa' };
-  return { ativo: true, modo: MODOS.includes(e.distrib_modo) ? e.distrib_modo : 'rodizio', lista, token: e.distrib_token };
+  const max = Number.isInteger(e.distrib_max) ? e.distrib_max : 0;
+  const reabre = Number.isInteger(e.distrib_reabre) ? Math.min(e.distrib_reabre, Math.max(0, max - 1)) : 0;
+  return { ativo: true, modo: MODOS.includes(e.distrib_modo) ? e.distrib_modo : 'rodizio', lista, token: e.distrib_token, max, reabre };
 }
 
 // Escolhe a conexão do lead. Reusa a que ele já tem se ela continua marcada.
-async function escolher(pool, cfg, lead) {
+async function escolher(pool, cfg, lead, { manual = false } = {}) {
   const ja = lead?.crm_conexao_id != null ? cfg.lista.find(c => c.id === String(lead.crm_conexao_id)) : null;
   if (ja) return { conexao: ja, reuso: true };
-  if (cfg.modo === 'demanda') return escolherPorDemanda(pool, cfg, lead);
+  if (cfg.modo === 'demanda' || cfg.max > 0) return escolherComCarga(pool, cfg, lead, { manual });
   let conexao;
   if (cfg.modo === 'ponderada') {
     conexao = escolherPonderada(cfg.lista);
@@ -94,23 +103,59 @@ async function escolher(pool, cfg, lead) {
 // Carga de cada conexão: os leads aguardando atendimento mais os que acabaram
 // de ser atribuídos e ainda estão a caminho do CRM (o worker manda vários em
 // paralelo — sem contar esses, uma rajada inteira cairia na mesma conexão).
-// A trava serializa a escolha: a contagem e a gravação valem juntas.
+// A trava serializa a escolha: a contagem, o teto e a gravação valem juntos.
 const A_CAMINHO_MIN = 15;
-async function escolherPorDemanda(pool, cfg, lead) {
+async function cargas(db, ids) {
+  const { rows } = await db.query(
+    `SELECT crm_conexao_id AS id,
+            COUNT(*) FILTER (WHERE crm_atendimento = 'aguardando'
+               OR (crm_atendimento IS NULL AND enviado_crm_em IS NULL
+                   AND crm_conexao_em > now() - make_interval(mins => $2)))::int AS carga,
+            max(crm_conexao_em) AS ultimo
+       FROM leads WHERE crm_conexao_id = ANY($1::text[]) GROUP BY crm_conexao_id`, [ids, A_CAMINHO_MIN]);
+  return new Map(rows.map(r => [String(r.id), r]));
+}
+
+// Quais conexões estão cheias agora, com a volta em `reabre`: chegou a `max`
+// → cheia; caiu pra `reabre` ou menos → volta a receber; entre os dois, fica
+// como estava (quem está enchendo continua até `max`).
+function atualizarCheias(lista, porId, anteriores, { max, reabre }) {
+  const cheias = new Set();
+  for (const c of lista) {
+    const n = porId.get(c.id)?.carga || 0;
+    if (max > 0 && n >= max) cheias.add(c.id);
+    else if (max > 0 && n > reabre && anteriores.has(c.id)) cheias.add(c.id);
+  }
+  return cheias;
+}
+
+async function escolherComCarga(pool, cfg, lead, { manual = false } = {}) {
   const db = await pool.connect();
   try {
     await db.query('BEGIN');
     await db.query(`SELECT pg_advisory_xact_lock(hashtext('hunter:distrib-demanda'))`);
-    const ids = cfg.lista.map(c => c.id);
-    const { rows } = await db.query(
-      `SELECT crm_conexao_id AS id,
-              COUNT(*) FILTER (WHERE crm_atendimento = 'aguardando'
-                 OR (crm_atendimento IS NULL AND enviado_crm_em IS NULL
-                     AND crm_conexao_em > now() - make_interval(mins => $2)))::int AS carga,
-              max(crm_conexao_em) AS ultimo
-         FROM leads WHERE crm_conexao_id = ANY($1::text[]) GROUP BY crm_conexao_id`, [ids, A_CAMINHO_MIN]);
-    const porId = new Map(rows.map(r => [String(r.id), r]));
-    const conexao = escolherMenorCarga(cfg.lista, porId);
+    const porId = await cargas(db, cfg.lista.map(c => c.id));
+    const { rows: [e] } = await db.query(`SELECT distrib_cheias FROM estrategia`);
+    const cheias = atualizarCheias(cfg.lista, porId, new Set(e?.distrib_cheias || []), cfg);
+    await db.query(`UPDATE estrategia SET distrib_cheias=$1::text[]`, [[...cheias]]);
+    let abertas = cfg.lista.filter(c => !cheias.has(c.id));
+    if (!abertas.length) {
+      // Todas no teto: o automático espera vaga; o manual (alguém clicou em
+      // enviar) vai pra a menos carregada.
+      if (!manual) {
+        await db.query('COMMIT');
+        return { semVaga: true, cargas: cfg.lista.map(c => ({ id: c.id, nome: c.nome, carga: porId.get(c.id)?.carga || 0 })) };
+      }
+      abertas = cfg.lista;
+    }
+    let conexao;
+    if (cfg.modo === 'demanda' || manual && abertas === cfg.lista) conexao = escolherMenorCarga(abertas, porId);
+    else if (cfg.modo === 'ponderada') conexao = escolherPonderada(abertas);
+    else {
+      const { rows: [r] } = await db.query(`UPDATE estrategia SET distrib_pos = distrib_pos + 1 RETURNING distrib_pos`);
+      const pos = Number(r?.distrib_pos || 1) - 1;
+      conexao = abertas[((pos % abertas.length) + abertas.length) % abertas.length];
+    }
     if (lead?.id != null) {
       await db.query(`UPDATE leads SET crm_conexao_id=$2, crm_conexao_nome=$3, crm_conexao_em=now() WHERE id=$1`,
         [lead.id, conexao.id, conexao.nome]);
@@ -132,4 +177,4 @@ function escolherMenorCarga(lista, porId) {
   })[0];
 }
 
-module.exports = { MODOS, PESO_MAX, normalizarConexoes, elegiveis, escolherPonderada, escolherMenorCarga, config, escolher };
+module.exports = { MODOS, PESO_MAX, normalizarConexoes, elegiveis, escolherPonderada, escolherMenorCarga, atualizarCheias, config, escolher };

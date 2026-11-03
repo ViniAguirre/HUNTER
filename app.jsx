@@ -4394,6 +4394,46 @@ function FilasAtendimento() {
   );
 }
 
+function TetoPorConexao({ plano, salvando, onSalvar }) {
+  const [max, setMax] = useState(String(plano.distrib_max ?? 10));
+  const [reabre, setReabre] = useState(String(plano.distrib_reabre ?? 3));
+  useEffect(() => { setMax(String(plano.distrib_max ?? 10)); setReabre(String(plano.distrib_reabre ?? 3)); },
+    [plano.distrib_max, plano.distrib_reabre]);
+  const salvar = () => {
+    const m = parseInt(max, 10), r = parseInt(reabre, 10);
+    if (!(m >= 0) || !(r >= 0)) return;
+    if (m === plano.distrib_max && r === plano.distrib_reabre) return;
+    onSalvar({ distrib_max: m, distrib_reabre: r });
+  };
+  const num = { width:64, height:32, borderRadius:8, border:'1px solid var(--border)', background:'var(--panel2)',
+    color:'var(--text)', padding:'0 8px', fontSize:13, fontFamily:'inherit', textAlign:'center' };
+  const m = parseInt(max, 10) || 0, r = parseInt(reabre, 10) || 0;
+  return (
+    <div style={{ marginTop:16, padding:'12px 14px', borderRadius:10, background:'var(--panel2)', border:'1px solid var(--border)' }}>
+      <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap', fontSize:13 }}>
+        <span>Cada conexão recebe até</span>
+        <input type="number" min={0} value={max} disabled={salvando} aria-label="Máximo de leads aguardando por conexão"
+          onChange={e => setMax(e.target.value)} onBlur={salvar} style={num}/>
+        <span>leads aguardando atendimento e só volta a receber quando cair para</span>
+        <input type="number" min={0} value={reabre} disabled={salvando} aria-label="Volta a receber com"
+          onChange={e => setReabre(e.target.value)} onBlur={salvar} style={num}/>
+        <span>ou menos.</span>
+      </div>
+      <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:6, lineHeight:1.45 }}>
+        {m > 0
+          ? <>Cada conexão anda sozinha: enche até {m}, espera o atendimento baixar para {Math.min(r, m - 1)} e enche de novo.
+              Com todas cheias, os leads aprovados esperam vaga no Hunter (o envio manual não espera). 0 = sem teto.</>
+          : <>Sem teto: os leads vão para as conexões pelo modo escolhido, sem olhar quantos cada uma já tem.</>}
+      </div>
+      {plano.distrib_esperando > 0 && (
+        <div style={{ fontSize:12, color:C.amber, marginTop:6 }}>
+          {plano.distrib_esperando} lead(s) aprovado(s) esperando vaga numa conexão.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DistribuicaoCrm({ plano, user, salvando, onSalvar }) {
   const [dados, setDados] = useState(null);
   const [carregando, setCarregando] = useState(true);
@@ -4475,6 +4515,10 @@ function DistribuicaoCrm({ plano, user, salvando, onSalvar }) {
         })}
       </div>
 
+      {/* Teto por conexão: enche até o máximo, espera baixar até a volta, enche
+          de novo — cada conexão sozinha. Vale pra qualquer modo. */}
+      <TetoPorConexao plano={plano} salvando={salvando} onSalvar={onSalvar}/>
+
       <div style={{ marginTop:16 }}>
         <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:8 }}>
           <span style={{ fontSize:12, color:'var(--dim)', flex:1 }}>
@@ -4505,6 +4549,9 @@ function DistribuicaoCrm({ plano, user, salvando, onSalvar }) {
                   {c.numero && <span>· {c.numero}</span>}
                   <span>· {c.enviados_30d} lead(s) em 30 dias</span>
                   {c.aguardando > 0 && <span style={{ color:C.gold }}>· {c.aguardando} aguardando atendimento</span>}
+                  {c.ativo && plano.distrib_max > 0 && (plano.distrib_cheias || []).includes(String(c.id)) && (
+                    <span style={{ color:C.amber }}>· cheia: volta a receber com {Math.min(plano.distrib_reabre, plano.distrib_max - 1)} ou menos</span>
+                  )}
                 </div>
               </div>
               {c.ativo && filas.length > 0 && (

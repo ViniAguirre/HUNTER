@@ -781,6 +781,14 @@ async function init() {
     ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS distrib_conexoes JSONB NOT NULL DEFAULT '[]';
     ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS distrib_pos      BIGINT NOT NULL DEFAULT 0;
     ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS distrib_token    TEXT;
+    -- Teto por conexão: até distrib_max aguardando; cheia, só volta a receber
+    -- quando cai pra distrib_reabre (0 = sem teto). distrib_cheias: quais
+    -- estão esperando baixar (jobs/distribuicao.js).
+    ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS distrib_max      INTEGER NOT NULL DEFAULT 10;
+    ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS distrib_reabre   INTEGER NOT NULL DEFAULT 3;
+    ALTER TABLE estrategia ADD COLUMN IF NOT EXISTS distrib_cheias   TEXT[] NOT NULL DEFAULT '{}';
+    -- Lead aprovado pro CRM esperando vaga numa conexão (todas no teto).
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS crm_espera_em    TIMESTAMPTZ;
     -- Conexão do CRM que recebeu o lead (distribuição).
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS crm_conexao_id   TEXT;
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS crm_conexao_nome TEXT;
@@ -2088,7 +2096,9 @@ async function planoEstrategia() {
             crm_controle, crm_fila_gatilho, crm_fila_pendentes, crm_fila_em,
             crm_gatilho_modo, crm_fila_minimo, crm_total_maximo, crm_score_minimo, crm_segurar_baixa,
             crm_so_whatsapp,
-            distrib_ativo, distrib_modo, distrib_conexoes,
+            distrib_ativo, distrib_modo, distrib_conexoes, distrib_max, distrib_reabre, distrib_cheias,
+            (SELECT COUNT(*)::int FROM leads WHERE crm_espera_em IS NOT NULL AND enviado_crm_em IS NULL
+                AND status NOT IN ('Descartado', 'Enviado')) AS distrib_esperando,
             (distrib_token IS NOT NULL AND distrib_token <> '') AS distrib_tem_token FROM estrategia`);
   return p;
 }
@@ -2214,6 +2224,12 @@ app.patch('/api/estrategia', requireAuth, requireEditor, async (req, res) => {
     if (b.distrib_modo != null) {
       if (!distribuicao.MODOS.includes(b.distrib_modo)) return res.status(400).json({ erro: 'modo de distribuição inválido' });
       vals.push(b.distrib_modo); sets.push(`distrib_modo=$${vals.length}`);
+    }
+    for (const k of ['distrib_max', 'distrib_reabre']) {
+      if (b[k] == null) continue;
+      const n = parseInt(b[k], 10);
+      if (!(n >= 0 && n <= 1000)) return res.status(400).json({ erro: `${k === 'distrib_max' ? 'máximo por conexão' : 'volta a receber em'}: um número de 0 a 1000` });
+      vals.push(n); sets.push(`${k}=$${vals.length}`);
     }
     if (b.distrib_conexoes != null) {
       const lista = distribuicao.normalizarConexoes(b.distrib_conexoes);
@@ -2667,7 +2683,7 @@ app.post('/api/leads/:id/decisao', requireAuth, requireEditor, async (req, res) 
       // Envia ao CRM mesmo sem e-mail (decisão do usuário).
       await pool.query(`UPDATE leads SET contato_status='completo', contato_pendente=false WHERE id=$1`, [id]);
       if (monitorQueues?.crm) {
-        await monitorQueues.crm.add('crm', { lead_id: id },
+        await monitorQueues.crm.add('crm', { lead_id: id, manual: true },
           { jobId: `crm-dec-${id}-${Date.now()}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 4, backoff: { type: 'exponential', delay: 15000 } });
       }
       return res.json({ ok: true, acao });
@@ -2897,7 +2913,8 @@ app.post('/api/leads/acoes', requireAuth, requireEditor, async (req, res) => {
       const desc = new Set(jaRows.filter(r => !r.ja).map(r => r.id));
       const enviar = idsInt.filter(id => !ja.has(id) && !desc.has(id));
       await Promise.all(enviar.map(id =>
-        monitorQueues.crm.add('crm', { lead_id: id },
+        // manual: alguém pediu o envio — não espera vaga no teto da conexão.
+        monitorQueues.crm.add('crm', { lead_id: id, manual: true },
           // jobId por minuto: clique duplo (ou dois usuários juntos) não
           // enfileira o mesmo lead duas vezes; reenvio depois continua livre.
           { jobId: `crm-manual-${id}-${Math.floor(Date.now() / 60000)}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 }, attempts: 4, backoff: { type: 'exponential', delay: 15000 } })
