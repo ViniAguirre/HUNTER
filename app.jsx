@@ -2005,6 +2005,65 @@ function estadoDescoberta(b) {
   return t ? { texto: t, alerta: ['sem_filtro', 'sem_conversao'].includes(b.descoberta_estado) } : null;
 }
 
+// O que ainda está na esteira e sai sozinho, com ou sem radar ligado: desligar
+// o radar para só a busca de empresas novas. Atualiza a cada 30 s.
+function EsteiraHunter() {
+  const [d, setD] = useState(null);
+  const [aberto, setAberto] = useState(false);
+  useEffect(() => {
+    let vivo = true;
+    const ler = () => fetch('/api/esteira', { credentials:'same-origin' }).then(r => r.ok ? r.json() : null)
+      .then(x => { if (vivo) setD(x); }).catch(() => {});
+    ler();
+    const t = setInterval(ler, 30000);
+    return () => { vivo = false; clearInterval(t); };
+  }, []);
+  if (!d || !d.motor) return null;
+  const etapas = [
+    ['Empresas passando pelos filtros', d.filtrando, 'encontradas pelos radares, ainda no cadastro, filtro e score'],
+    ['Aprovadas esperando o limite de leads', d.aprovadas, d.vagas_hoje != null ? `viram lead conforme o limite libera (hoje ainda cabem ${d.vagas_hoje})` : 'viram lead conforme o limite libera'],
+    ['Leads buscando contato', d.contato, 'internet e mapas'],
+    ['Leads em análise', d.analise, 'análise ou orientação de abordagem'],
+    ['Esperando vaga numa vendedora', d.esperando_vendedora, 'todas no teto; vão quando alguma baixar'],
+    ['Na fila de envio ao CRM', d.envio, ''],
+  ];
+  const vazia = d.total === 0;
+  return (
+    <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:12, padding:'10px 14px', marginBottom:14 }}>
+      <div role="button" onClick={() => setAberto(a => !a)} style={{ display:'flex', alignItems:'center', gap:10, cursor:'pointer', fontSize:12.5, color:'var(--dim)' }}>
+        <StatusDot color={vazia ? C.green : C.amber} pulse={!vazia}/>
+        <span style={{ minWidth:0, lineHeight:1.45 }}>
+          <b style={{ color:'var(--text)' }}>Esteira do Hunter:</b>{' '}
+          {vazia ? 'vazia — tudo que os radares trouxeram já foi filtrado, buscou contato e foi enviado (ou ficou na triagem).'
+            : <><b style={{ color:'var(--text)' }}>{fmtNum(d.total)}</b> ainda vão andar sozinhos, mesmo com os radares desligados
+                ({fmtNum(d.aprovadas)} aprovadas esperando o limite · {fmtNum(d.contato)} buscando contato · {fmtNum(d.esperando_vendedora + d.envio)} para enviar).</>}
+        </span>
+        <span style={{ marginLeft:'auto', color:'var(--faint)', whiteSpace:'nowrap' }}>{aberto ? 'fechar' : 'detalhes'}</span>
+      </div>
+      {aberto && (
+        <div style={{ marginTop:10, borderTop:'1px solid var(--border)', paddingTop:8 }}>
+          {etapas.map(([rot, n, sub]) => (
+            <div key={rot} style={{ display:'flex', alignItems:'baseline', gap:10, padding:'5px 0', fontSize:12.5 }}>
+              <span style={{ flex:1, minWidth:0 }}>{rot}{sub && <span style={{ color:'var(--faint)', fontSize:11.5 }}> · {sub}</span>}</span>
+              <b style={{ color: n ? 'var(--text)' : 'var(--faint)' }}>{fmtNum(n)}</b>
+            </div>
+          ))}
+          {(d.retidos > 0 || d.aguardando_decisao > 0) && (
+            <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:6, lineHeight:1.45 }}>
+              Não vão sozinhos (estão na lista de Leads para triagem): {fmtNum(d.retidos)} com telefone segurados pela qualidade mínima
+              {d.aguardando_decisao ? ` · ${fmtNum(d.aguardando_decisao)} aguardando decisão` : ''}.
+            </div>
+          )}
+          <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:6, lineHeight:1.45 }}>
+            Radar desligado só para de buscar empresas novas. Quando "aprovadas esperando o limite" e "buscando contato" estiverem
+            perto de zero, a esteira está acabando: é a hora de religar os radares.
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Buscas({ onOpen, onEstrategia }) {
   const [buscas, setBuscas] = useState(null);
   const [piloto, setPiloto] = useState(null);
@@ -2050,6 +2109,7 @@ function Buscas({ onOpen, onEstrategia }) {
           <span style={{ marginLeft:'auto', color:'var(--faint)', whiteSpace:'nowrap' }}>Estratégia →</span>
         </div>
       )}
+      <EsteiraHunter/>
       <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:16 }}>
         <div style={{ position:'relative', flex:1, maxWidth:300 }}>
           <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="var(--faint)" strokeWidth={1.8} strokeLinecap="round"
