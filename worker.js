@@ -74,7 +74,7 @@ function iniciarWorkers() {
     validacao: new Worker('hunter-validacao', job => validacaoFn(job, pool, queues),
       { connection: REDIS_OPTS, ...LONGA, concurrency: Math.max(1, parseInt(process.env.VALIDACAO_CONCORRENCIA, 10) || 8) }),
     swot: new Worker('hunter-swot', job => swotFn(job, pool, queues), { connection: REDIS_OPTS, ...LONGA, concurrency: 3 }),
-    crm: new Worker('hunter-crm', job => crmFn(job, pool, queues), { connection: REDIS_OPTS, concurrency: 5 }),
+    crm: new Worker('hunter-crm', (job, token) => crmFn(job, pool, queues, token), { connection: REDIS_OPTS, concurrency: 5 }),
     tracking: new Worker('hunter-tracking', job => trackingFn(job, pool), { connection: REDIS_OPTS, concurrency: 4 }),
     // Nota de segurança da lista (Jev). Uma por vez: pode consultar a CNPJá.
     avaliacaoLista: new Worker('hunter-avaliacao_lista', job => avaliacaoListaFn(job, pool), { connection: REDIS_OPTS, concurrency: 1 }),

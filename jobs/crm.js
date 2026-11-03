@@ -7,6 +7,7 @@
  * SWOT). Roda em fila com retry — falha vai pra DLQ com mensagem clara.
  */
 const crypto = require('crypto');
+const { DelayedError } = require('bullmq');
 const { juntarTags } = require('../tags');
 const webhook = require('../providers/webhook');
 const gk = require('../providers/gk');
@@ -21,7 +22,11 @@ const jaNoCrmSql = (a) => `(${a}.enviado_crm_em IS NOT NULL OR (COALESCE(${a}.cn
   SELECT 1 FROM leads o WHERE o.id <> ${a}.id AND o.enviado_crm_em IS NOT NULL
      AND regexp_replace(o.cnpj, '\\D', '', 'g') = regexp_replace(${a}.cnpj, '\\D', '', 'g'))))`;
 
-module.exports = async function crm(job, pool, queues) {
+// Todas as conexões no teto (jobs/distribuicao.js): o lead espera e confere de
+// novo a cada ESPERA_VAGA_MS, sem gastar tentativa do job.
+const ESPERA_VAGA_MS = 3 * 60_000;
+
+module.exports = async function crm(job, pool, queues, jobToken = null) {
   const { lead_id } = job.data;
 
   // O CRM dos Afiliados é um destino À PARTE: convive com o CRM principal e só
@@ -144,7 +149,15 @@ module.exports = async function crm(job, pool, queues) {
     let auth = token, conexao = null, distribMotivo = null;
     const dcfg = await distribuicao.config(pool);
     if (dcfg?.token) {
-      const esc = await distribuicao.escolher(pool, dcfg, lead);
+      const esc = await distribuicao.escolher(pool, dcfg, lead, { manual: !!job.data.manual });
+      if (esc.semVaga) {
+        await pool.query(`UPDATE leads SET crm_espera_em=COALESCE(crm_espera_em, now()) WHERE id=$1`, [lead_id]);
+        if (!jobToken) return { lead_id, esperando_vaga: true, cargas: esc.cargas };
+        const resumo = esc.cargas.map(c => `${c.nome} ${c.carga}`).join(', ');
+        console.log(`[crm] lead ${lead_id}: todas as conexões no teto de ${dcfg.max} aguardando (${resumo}) — espera vaga.`);
+        await job.moveToDelayed(Date.now() + ESPERA_VAGA_MS, jobToken);
+        throw new DelayedError();
+      }
       conexao = esc.conexao;
       auth = gk.comConexao(dcfg.token, conexao.id);
       // Fila escolhida pra esta conexão na Estratégia. Sem ela, fica a do
@@ -220,7 +233,7 @@ module.exports = async function crm(job, pool, queues) {
     // fica registrado, mas o lead continua descartado — senão voltava pra lista
     // como "Enviado · CRM" com a marcação vermelha.
     `UPDATE leads SET status = CASE WHEN status = 'Descartado' THEN status ELSE 'Enviado' END,
-            enviado_crm_em=now(), atualizado_em=now() WHERE id=$1`,
+            enviado_crm_em=now(), crm_espera_em=NULL, atualizado_em=now() WHERE id=$1`,
     [lead_id]
   );
   // Trava definitiva: uma vez no CRM, nenhuma busca (nem outra, nem esta de
