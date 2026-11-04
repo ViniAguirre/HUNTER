@@ -394,6 +394,14 @@ async function portao(pool, queues, { filaLivre } = {}) {
     if (esperandoVaga > 0) {
       return { livre: false, motivo: `${esperandoVaga} empresa(s) aprovada(s) já esperam vaga no limite diário — radar novo só aumentaria a fila` };
     }
+    // Leads prontos esperando vaga numa vendedora (todas no teto): eles vão
+    // primeiro pra quem baixar a 3. Radar novo só aumentaria essa espera.
+    const { rows: [ev] } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM leads WHERE crm_espera_em IS NOT NULL AND enviado_crm_em IS NULL
+          AND status NOT IN ('Descartado', 'Enviado')`).catch(() => ({ rows: [{ n: 0 }] }));
+    if (ev.n > 0) {
+      return { livre: false, motivo: `${ev.n} lead(s) prontos já esperam vaga numa vendedora — vão primeiro para quem baixar` };
+    }
     if (emAnalise >= LIMIAR_FILA) {
       return { livre: false, motivo: `${emAnalise} empresa(s) ainda em análise — o próximo radar abre quando a esteira esvaziar` };
     }
@@ -449,7 +457,12 @@ function portaoCrm(plano) {
   if (!plano.crm_controle) return { livre: true };
   const carga = plano.crm_carga;
   if (plano.crm_gatilho_modo === 'fila' && carga?.unidades?.length) {
-    const max = plano.crm_total_maximo || 0, min = plano.crm_fila_minimo ?? 0;
+    // Com o teto POR CONEXÃO ligado na distribuição (cada vendedora recebe até
+    // distrib_max), o limite do TOTAL somado não vale: ele travava o radar com
+    // uma vendedora em 0 só porque as outras somavam mais que o número —
+    // quem protege cada uma é o teto dela.
+    const tetoPorConexao = carga.por === 'conexao' && plano.distrib_ativo && (plano.distrib_max || 0) > 0;
+    const max = tetoPorConexao ? 0 : (plano.crm_total_maximo || 0), min = plano.crm_fila_minimo ?? 0;
     if (max > 0 && carga.total > max) {
       return { livre: false, motivo: `${carga.total} lead(s) do Hunter sem atendimento — acima do limite de ${max}` };
     }
