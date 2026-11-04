@@ -1869,6 +1869,49 @@ async function conferenciaIa(b) {
   return { ativa: !!ig && !!prop.origem, decisoes: !!ig, proposta: prop.origem };
 }
 
+// ── Esteira: o que ainda sai sozinho, com ou sem radar ligado ──────────────
+// Desligar um radar para a busca de empresas NOVAS; o que ele já trouxe segue
+// pela esteira (filtros → limite diário → contato → análise → CRM) e continua
+// chegando ao CRM. Esta conta mostra quanto falta em cada etapa — é o que diz
+// quando vale religar os radares.
+const contarJobs = async (q, estados) => {
+  if (!q) return 0;
+  const c = await q.getJobCounts(...estados).catch(() => ({}));
+  return estados.reduce((t, e) => t + (c[e] || 0), 0);
+};
+app.get('/api/esteira', requireAuth, async (req, res) => {
+  try {
+    const q = monitorQueues || {};
+    const [filtrando, aprovadas, contato, analise, envio] = await Promise.all([
+      Promise.all([contarJobs(q.enriquecimento, ['waiting', 'active', 'delayed', 'prioritized']),
+                   contarJobs(q.filtroContador, ['waiting', 'active', 'delayed', 'prioritized']),
+                   contarJobs(q.score1, ['waiting', 'active', 'prioritized'])]).then(a => a.reduce((t, n) => t + n, 0)),
+      // Aprovadas nos filtros, esperando vaga no limite diário de leads (Score 1 adiado).
+      contarJobs(q.score1, ['delayed']),
+      contarJobs(q.validacao, ['waiting', 'active', 'delayed', 'prioritized']),
+      contarJobs(q.swot, ['waiting', 'active', 'delayed', 'prioritized']),
+      contarJobs(q.crm, ['waiting', 'active', 'prioritized']),
+    ]);
+    const { rows: [l] } = await pool.query(`
+      SELECT COUNT(*) FILTER (WHERE crm_espera_em IS NOT NULL AND enviado_crm_em IS NULL AND status NOT IN ('Descartado', 'Enviado'))::int AS esperando_vendedora,
+             COUNT(*) FILTER (WHERE enviado_crm_em IS NULL AND status NOT IN ('Descartado', 'Enviado') AND crm_retido IS NOT NULL
+                                AND COALESCE(contato_validado->>'telefone', contato_validado->>'whatsapp', '') <> '')::int AS retidos,
+             COUNT(*) FILTER (WHERE enviado_crm_em IS NULL AND status NOT IN ('Descartado', 'Enviado') AND contato_status = 'decisao'
+                                AND contato_pendente)::int AS aguardando_decisao
+        FROM leads`);
+    const v = await require('./jobs/orcamento').disponivel(pool).catch(() => null);
+    const vagasHoje = v ? (v.dia >= Number.MAX_SAFE_INTEGER ? null : v.dia) : null;
+    res.json({
+      motor: !!monitorQueues,
+      filtrando, aprovadas, contato, analise, envio,
+      esperando_vendedora: l.esperando_vendedora, retidos: l.retidos, aguardando_decisao: l.aguardando_decisao,
+      vagas_hoje: vagasHoje, fora_da_janela: !!v?.foraDaJanela,
+      // Ainda vai andar sozinho (vira lead, ganha contato, análise e envio).
+      total: filtrando + aprovadas + contato + analise + envio + l.esperando_vendedora,
+    });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
 app.get('/api/buscas/:id', requireAuth, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
