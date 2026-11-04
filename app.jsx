@@ -2068,11 +2068,13 @@ function Buscas({ onOpen, onEstrategia }) {
   const [buscas, setBuscas] = useState(null);
   const [piloto, setPiloto] = useState(null);
 
-  const carregar = () => {
+  // silencioso: a atualização de fundo (a cada minuto) não apaga a lista se
+  // uma leitura falhar — fica a anterior até a próxima.
+  const carregar = ({ silencioso = false } = {}) => {
     fetch('/api/buscas', { credentials:'same-origin' })
-      .then(r => r.json())
+      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
       .then(d => setBuscas(Array.isArray(d) ? d : (d.buscas || [])))
-      .catch(() => setBuscas([]));
+      .catch(() => { if (!silencioso) setBuscas([]); });
     // O que o piloto da Estratégia está fazendo — é ele quem cria os radares
     // sozinho; sem isto a lista só mostra o que já existe.
     fetch('/api/estrategia', { credentials:'same-origin' })
@@ -2080,7 +2082,13 @@ function Buscas({ onOpen, onEstrategia }) {
       .then(d => setPiloto(d?.plano || null))
       .catch(() => setPiloto(null));
   };
-  useEffect(carregar, []);
+  useEffect(() => {
+    carregar();
+    // Os números (leads, qualificados, CRM) andam mesmo com o radar esgotado:
+    // a lista se atualiza sozinha pra mostrar.
+    const t = setInterval(() => carregar({ silencioso: true }), 60000);
+    return () => clearInterval(t);
+  }, []);
 
   const excluir = async (e, b) => {
     e.stopPropagation();
@@ -2175,7 +2183,15 @@ function Buscas({ onOpen, onEstrategia }) {
             </div>
             <div data-rot="Qualif." style={{ fontSize:13, color:'var(--dim)' }}>{fmtNum(b.qualificados ?? b.qual)}</div>
             <div data-rot="CRM" style={{ fontSize:13, color:C.cyan }}>{fmtNum(b.enviados ?? b.crm)}</div>
-            <div data-rot="Atividade" style={{ fontSize:12, color:'var(--faint)' }}>{timeAgo(b.ultima_ativ)}</div>
+            <div data-rot="Atividade" style={{ fontSize:12, color:'var(--faint)' }}
+              title={{ busca:'Última busca de empresas', lead:'Último lead criado', contato:'Última busca de contato de um lead', crm:'Último envio ao CRM' }[b.atividade_o_que] || ''}>
+              {timeAgo(b.atividade_em || b.ultima_ativ)}
+              {b.atividade_o_que && b.atividade_o_que !== 'busca' && (
+                <div style={{ fontSize:10.5, color:'var(--faint)' }}>
+                  {{ lead:'lead novo', contato:'buscou contato', crm:'enviou ao CRM' }[b.atividade_o_que]}
+                </div>
+              )}
+            </div>
             <div data-rot="Ações">
               <button onClick={(e) => excluir(e, b)} title="Excluir radar"
                 style={{ width:30, height:30, borderRadius:8, border:'1px solid var(--border)', background:'transparent',
@@ -2815,7 +2831,10 @@ function BuscaDetail({ buscaId, onBack, onOpenLead, onDuplicar, onVerLeads }) {
           </div>
           <ProgressBar pct={b.universo_est ? Math.min(100, Math.round(parseInt(b.enc)/b.universo_est*100)) : 0} color={C.gold}/>
           <div style={{ fontSize:12, color:'var(--faint)', marginTop:12, lineHeight:1.5 }}>
-            Última atividade: {timeAgo(b.ultima_ativ)}.
+            Última atividade: {timeAgo(b.atividade_em || b.ultima_ativ)}
+            {b.atividade_o_que && b.atividade_o_que !== 'busca'
+              ? <> ({{ lead:'lead novo', contato:'busca de contato de um lead', crm:'envio ao CRM' }[b.atividade_o_que]}; última busca de empresas {timeAgo(b.ultima_ativ)})</>
+              : null}.
           </div>
         </div>
       </div>
