@@ -90,6 +90,14 @@ function semErroDescoberta(b, req) {
   return resto;
 }
 
+// Último movimento do radar e o que foi: busca de empresas, lead criado,
+// busca de contato ou envio ao CRM (a lista mostra na coluna "Atividade").
+function atividadeDoRadar(b) {
+  const op = [['busca', b.ultima_ativ], ['lead', b.ultimo_lead_em], ['contato', b.ultimo_contato_em], ['crm', b.ultimo_envio_em]]
+    .filter(([, d]) => d).map(([o, d]) => [o, new Date(d).getTime()]).sort((x, y) => y[1] - x[1]);
+  return op.length ? { atividade_em: new Date(op[0][1]).toISOString(), atividade_o_que: op[0][0] } : { atividade_em: null, atividade_o_que: null };
+}
+
 function computeHealth(b) {
   if (b.status === 'Encerrada') return 'gray';
   if (b.status === 'Pausada') return 'red';
@@ -923,6 +931,7 @@ async function init() {
       ms          INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_busca_contato_log_data ON busca_contato_log(criado_em DESC);
+    CREATE INDEX IF NOT EXISTS idx_busca_contato_log_busca ON busca_contato_log(busca_id, criado_em DESC);
     -- Consulta paga (Glasser/Google Maps) nesta tentativa e quanto custou (USD).
     ALTER TABLE busca_contato_log ADD COLUMN IF NOT EXISTS pago_fonte TEXT;
     ALTER TABLE busca_contato_log ADD COLUMN IF NOT EXISTS custo_usd  NUMERIC(12,6);
@@ -1798,13 +1807,18 @@ app.get('/api/buscas', requireAuth, async (req, res) => {
         COUNT(l.id) FILTER (WHERE ${estagioContato('l')} = 'decisao')::int AS so_telefone,
         COUNT(l.id) FILTER (WHERE ${estagioContato('l')} = 'sem_contato')::int AS sem_contato,
         b.fora_perfil,
-        COUNT(l.id) FILTER (WHERE l.status='Enviado')::int AS enviados
+        COUNT(l.id) FILTER (WHERE l.status='Enviado')::int AS enviados,
+        -- Último movimento REAL do radar, não só da busca de empresas: lead
+        -- criado, contato buscado, envio ao CRM. Radar esgotado cujo lead foi
+        -- ao CRM hoje mostra "hoje", e não a data da última busca.
+        MAX(l.criado_em) AS ultimo_lead_em, MAX(l.enviado_crm_em) AS ultimo_envio_em,
+        (SELECT MAX(g.criado_em) FROM busca_contato_log g WHERE g.busca_id = b.id) AS ultimo_contato_em
       FROM buscas b
       LEFT JOIN usuarios u ON u.id = b.criador_id
       LEFT JOIN estrategia_pautas ep ON ep.id = b.estrategia_pauta_id
       LEFT JOIN leads l ON l.busca_id = b.id
       ${where} GROUP BY b.id, u.nome, ep.nome ORDER BY b.criado_em DESC`, vals);
-    res.json(rows.map(b => ({ ...semErroDescoberta(b, req), health: computeHealth(b) })));
+    res.json(rows.map(b => ({ ...semErroDescoberta(b, req), health: computeHealth(b), ...atividadeDoRadar(b) })));
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
@@ -1929,7 +1943,9 @@ app.get('/api/buscas/:id', requireAuth, async (req, res) => {
           COUNT(l.id) FILTER (WHERE ${estagioContato('l')} = 'sem_contato')::int AS sem_contato_n,
           COUNT(l.id) FILTER (WHERE l.status='Incompleto')::int AS incompletos,
           COUNT(l.id) FILTER (WHERE l.status='Descartado')::int AS descartados,
-          COUNT(l.id) FILTER (WHERE l.status='Enviado')::int AS enviados
+          COUNT(l.id) FILTER (WHERE l.status='Enviado')::int AS enviados,
+          MAX(l.criado_em) AS ultimo_lead_em, MAX(l.enviado_crm_em) AS ultimo_envio_em,
+          (SELECT MAX(g.criado_em) FROM busca_contato_log g WHERE g.busca_id = b.id) AS ultimo_contato_em
         FROM buscas b LEFT JOIN usuarios u ON u.id=b.criador_id
         LEFT JOIN leads l ON l.busca_id=b.id
         WHERE b.id=$1 GROUP BY b.id, u.nome`, [id]),
@@ -1946,6 +1962,7 @@ app.get('/api/buscas/:id', requireAuth, async (req, res) => {
     res.json({
       ...semErroDescoberta(b, req),
       health: computeHealth(b),
+      ...atividadeDoRadar(b),
       // aliases que o front do detalhe consome
       enc: b.encontrados, qual: b.qualificados, crm: b.enviados, fora: b.fora_perfil,
       seg: b.segmentadas || 0, so_telefone: b.so_telefone || 0,
