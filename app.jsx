@@ -4283,9 +4283,12 @@ function ControleCrm({ plano, crm, salvando, onSalvar }) {
         )}
         {contaHunter && (
           <div style={{ display:'flex', flexDirection:'column', gap:10 }}>
-            {opcao('fila', <>Abrir radar novo quando alguma {unidadeTxt} tiver {campoNum(minimo, 'crm_fila_minimo', 'Mínimo por fila')}
-              ou menos aguardando — desde que o total não passe de {campoNum(maximo, 'crm_total_maximo', 'Limite do total')}
-              <span style={{ color:'var(--faint)' }}>(0 = sem limite)</span></>)}
+            {opcao('fila', plano.distrib_ativo && (plano.distrib_max || 0) > 0
+              ? <>Abrir radar novo quando alguma {unidadeTxt} tiver {campoNum(minimo, 'crm_fila_minimo', 'Mínimo por fila')}
+                  ou menos aguardando <span style={{ color:'var(--faint)' }}>— cada uma recebe até {plano.distrib_max} (teto da distribuição, mais abaixo)</span></>
+              : <>Abrir radar novo quando alguma {unidadeTxt} tiver {campoNum(minimo, 'crm_fila_minimo', 'Mínimo por fila')}
+                  ou menos aguardando — desde que o total não passe de {campoNum(maximo, 'crm_total_maximo', 'Limite do total')}
+                  <span style={{ color:'var(--faint)' }}>(0 = sem limite)</span></>)}
             {opcao('total', <>Abrir radar novo quando o total cair para {campoNum(g, 'crm_fila_gatilho', 'Gatilho do total')} ou menos aguardando</>)}
           </div>
         )}
