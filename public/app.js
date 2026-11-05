@@ -133,103 +133,177 @@ function escHtml(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp
   <div class="rod">Gerado pelo Hunter em ${esc(new Date().toLocaleString('pt-BR'))}</div>
 </section>`;}// Relatório da operação para imprimir / salvar em PDF / enviar. Página
 // própria, clara, sem o tema do app. Sem nome de fornecedor nenhum.
-function relatorioHtml(d,rotuloPeriodo){const e=escHtml;const n=v=>Number(v||0).toLocaleString('pt-BR');const p=(a,b)=>b?Math.round(a/b*100):0;const data=v=>v?new Date(v).toLocaleDateString('pt-BR'):'—';const f=d.funil||{};const etapas=[['Empresas encontradas',f.encontradas],['Segmentadas (perfil)',f.segmentadas],['Leads qualificados',f.qualificados],['Enviados ao CRM',f.enviados]];const topo=f.encontradas||0;const funilHtml=etapas.map(([rot,v],i)=>{const w=topo?Math.max(1.5,(v||0)/topo*100):0;const conv=i===0?'100% do topo':`${p(v,etapas[i-1][1])}% da etapa anterior`;return`<div class="fl"><div class="fr"><b>${e(rot)}</b><span>${n(v)}</span></div>
-      <div class="fb"><i style="width:${w}%"></i></div><div class="fc">${conv}</div></div>`;}).join('');const c=d.contato||{},crm=d.crm||{},est=d.esteira||null;const cor={bom:'#0f9d58',atencao:'#d97706',acao:'#2563eb',info:'#6b7280'};const rotRec={bom:'Ponto forte',atencao:'Atenção',acao:'Ação sugerida',info:'Informação'};const recs=(d.recomendacoes||[]).map(r=>`<li><span class="tag" style="border-color:${cor[r.tipo]};color:${cor[r.tipo]}">${rotRec[r.tipo]||''}</span> ${e(r.texto)}</li>`).join('');const linhaRadar=r=>`<tr><td><b>${e(r.nome)}</b><div class="mut">${e(r.tipo)} · ${e(r.status)}${r.pauta?' · Estratégia: '+e(r.pauta):''}</div></td>
-      <td class="num">${n(r.periodo.encontradas)}</td><td class="num">${n(r.periodo.segmentadas)}</td>
-      <td class="num">${n(r.periodo.qualificados)}</td><td class="num">${n(r.periodo.enviados)}</td>
-      <td class="num">${p(r.periodo.enviados,r.periodo.encontradas)}%</td></tr>`;const fichaRadar=r=>`<div class="ficha">
-      <h4>${e(r.nome)} <span class="mut">· ${e(r.status)}</span></h4>
-      <div class="mut">${e(r.tipo)}${r.pauta?' · criado pela Estratégia ('+e(r.pauta)+')':''} · criado em ${data(r.criado_em)}
-        · última atividade ${data(r.atividade_em)} · envio ao CRM ${r.envio_automatico?'automático':'manual'}</div>
-      ${r.criterios.length?`<div class="chips">${r.criterios.map(x=>`<span>${e(x)}</span>`).join('')}</div>`:''}
-      ${r.tags.length?`<div class="mut">Tags no atendimento: ${r.tags.map(e).join(', ')}</div>`:''}
-      <div class="mut">Desde a criação: ${n(r.total.encontradas)} empresas encontradas · ${n(r.total.leads)} leads ·
-        ${n(r.total.qualificados)} com contato completo · ${n(r.total.enviados)} enviados ao CRM</div>
-      ${r.descartes.length?`<div class="mut">Principais motivos de descarte: ${r.descartes.map(x=>`${e(x.motivo)} (${n(x.n)})`).join(' · ')}</div>`:''}
-    </div>`;const vend=(crm.por_vendedora||[]).map(v=>`<tr><td>${e(v.nome)}</td><td class="num">${n(v.recebidos)}</td><td class="num">${n(v.aguardando)}</td></tr>`).join('');const dias=crm.por_dia||[];const maxDia=Math.max(1,...dias.map(x=>x.n));const diasHtml=dias.length?`<div class="dias">${dias.map(x=>`<div title="${e(x.dia)}: ${x.n}"><i style="height:${Math.max(4,x.n/maxDia*100)}%"></i><span>${x.dia.slice(8)}/${x.dia.slice(5,7)}</span></div>`).join('')}</div>`:'<p class="mut">Nenhum envio no período.</p>';const desc=(d.descartes||[]).map(x=>`<tr><td>${e(x.motivo)}</td><td class="num">${n(x.n)}</td></tr>`).join('');const radares=d.radares||[];return`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
-<title>Relatório Hunter — ${e(rotuloPeriodo)}</title>
+function relatorioHtml(d,rotuloPeriodo){const e=escHtml;const n=v=>Number(v||0).toLocaleString('pt-BR');const p=(a,b)=>b?Math.round(a/b*100):0;// Conversão pequena com uma casa ("0,4%"), pra não virar "0%" quando houve entrega.
+const pc=(a,b)=>{if(!b)return'0%';const v=a/b*100;return(v>0&&v<10?v.toFixed(1).replace('.',','):Math.round(v))+'%';};const f=d.funil||{},c=d.contato||{},crm=d.crm||{},est=d.esteira||null;const periodoTxt=/^\d+ dias$/.test(rotuloPeriodo)?`nos últimos ${rotuloPeriodo}`:rotuloPeriodo==='Hoje'?'hoje':rotuloPeriodo==='Tudo'?'desde o início da operação':`no período de ${rotuloPeriodo}`;const etapas=[{rot:'Empresas analisadas',v:f.encontradas,txt:'Empresas ativas que o Hunter examinou nas regiões e atividades definidas para a sua operação.'},{rot:'Com o perfil dos seus clientes',v:f.segmentadas,txt:'Passaram na comparação com os seus clientes atuais (atividade, porte e semelhança). É normal ser uma parte pequena: é esse filtro que evita que o vendedor perca tempo com quem não compra.'},{rot:'Prontas para abordagem',v:f.qualificados,txt:'Além do perfil certo, têm um canal de contato encontrado para o vendedor falar com a empresa.'},{rot:'Entregues ao time comercial',v:f.enviados,txt:'Chegaram ao CRM com contato e diagnóstico, distribuídas entre os vendedores.'}];const topo=f.encontradas||0;const funilHtml=etapas.map((x,i)=>{const w=topo?Math.max(1.2,(x.v||0)/topo*100):0;const conv=i===0?'':`<span class="conv">${pc(x.v,etapas[i-1].v)} da etapa anterior</span>`;return`<div class="fl"><div class="fr"><b>${e(x.rot)}</b><span class="fv">${n(x.v)}</span></div>
+      <div class="fb"><i style="width:${w}%"></i></div><div class="fx">${e(x.txt)} ${conv}</div></div>`;}).join('');const cor={bom:'#0f9d58',atencao:'#d97706',acao:'#2563eb',info:'#6b7280'};const recs=(d.recomendacoes||[]).map((r,i)=>`<div class="rec" style="border-left-color:${cor[r.tipo]||'#999'}"><b>${i+1}. ${e(r.titulo||'')}</b><div>${e(r.texto)}</div></div>`).join('');const dias=crm.por_dia||[];const maxDia=Math.max(1,...dias.map(x=>x.n));const diasHtml=dias.length?`<div class="dias">${dias.map(x=>`<div><em>${x.n}</em><i style="height:${Math.max(3,x.n/maxDia*100)}%"></i><span>${x.dia.slice(8)}/${x.dia.slice(5,7)}</span></div>`).join('')}</div>`:'<p class="mut">Nenhuma entrega no período.</p>';// Situação do atendimento: as partes somam o total entregue.
+const sit=[['Aguardando o primeiro contato',crm.aguardando,'#f59e0b'],['Em atendimento',crm.em_atendimento,'#3b6fd8'],['Atendimento concluído',crm.finalizados,'#0f9d58'],['Sem retorno do CRM ainda',crm.sem_retorno,'#cbd5e1']].filter(x=>x[1]>0);const totSit=sit.reduce((t,x)=>t+x[1],0)||1;const sitHtml=sit.length?`<div class="pilha">${sit.map(x=>`<i style="width:${x[1]/totSit*100}%;background:${x[2]}"></i>`).join('')}</div>
+    <div class="leg">${sit.map(x=>`<span><i style="background:${x[2]}"></i>${e(x[0])}: <b>${n(x[1])}</b> (${p(x[1],crm.enviados)}%)</span>`).join('')}</div>`:'';const vend=(crm.por_vendedora||[]).filter(v=>v.recebidos>0);const vendHtml=vend.length?`<table><thead><tr><th>Vendedor</th><th class="num">Recebidos no período</th><th class="num">Na fila agora</th></tr></thead>
+    <tbody>${vend.map(v=>`<tr><td>${e(v.nome)}</td><td class="num">${n(v.recebidos)}</td><td class="num">${n(v.aguardando)}</td></tr>`).join('')}</tbody></table>
+    <p class="nota">O Hunter mantém no máximo 10 leads aguardando por vendedor, para não comprometer a qualidade do atendimento, e reabastece quem chega a 3.</p>`:'';const contHtml=(()=>{const partes=[['Com telefone e e-mail',c.completo,'#0f9d58'],['Só com telefone / WhatsApp',c.so_telefone,'#3b6fd8'],['Ainda sem contato (o Hunter segue procurando)',c.sem_contato,'#f59e0b'],['Descartadas',c.descartados,'#cbd5e1']].filter(x=>x[1]>0);const tot=partes.reduce((t,x)=>t+x[1],0)||1;return partes.length?`<div class="pilha">${partes.map(x=>`<i style="width:${x[1]/tot*100}%;background:${x[2]}"></i>`).join('')}</div>
+      <div class="leg">${partes.map(x=>`<span><i style="background:${x[2]}"></i>${e(x[0])}: <b>${n(x[1])}</b></span>`).join('')}</div>`:'';})();const camp=(d.campanhas||[]).map(g=>`<div class="ficha">
+      <div class="fh"><h4>${e(g.nome)}</h4><span class="mut">${g.ativas?`${g.ativas} busca(s) em andamento`:'ciclo concluído'}</span></div>
+      <div class="mut">${e(g.tipo)}</div>
+      ${g.regioes.length?`<div class="chips">${g.regioes.map(r=>`<span>${e(r)}</span>`).join('')}</div>`:''}
+      ${g.criterios.length?`<ul class="crit">${g.criterios.map(x=>`<li>${e(x)}</li>`).join('')}</ul>`:''}
+      <div class="mini">
+        <div><b>${n(g.periodo.encontradas)}</b><span>analisadas</span></div>
+        <div><b>${n(g.periodo.segmentadas)}</b><span>com o perfil</span></div>
+        <div><b>${n(g.periodo.qualificados)}</b><span>prontas p/ abordagem</span></div>
+        <div><b>${n(g.periodo.enviados)}</b><span>entregues ao time</span></div>
+        <div><b>${pc(g.periodo.enviados,g.periodo.encontradas)}</b><span>aproveitamento</span></div>
+      </div>
+      ${g.descartes.length?`<div class="mut">Principais motivos de exclusão: ${g.descartes.map(x=>`${e(x.motivo)} (${n(x.n)})`).join(' · ')}</div>`:''}
+    </div>`).join('');const fora=(d.fora||[]).map(x=>`<tr><td>${e(x.motivo)}</td><td class="num">${n(x.n)}</td></tr>`).join('');const desc=(d.descartes||[]).map(x=>`<tr><td>${e(x.motivo)}</td><td class="num">${n(x.n)}</td></tr>`).join('');const ex=d.exemplo;const lista=arr=>arr&&arr.length?`<ul>${arr.map(x=>`<li>${e(x)}</li>`).join('')}</ul>`:'<p class="mut">—</p>';const exemploHtml=ex?`<div class="exemplo">
+      <div class="mut">Exemplo real de diagnóstico entregue no período</div>
+      <h4>${e(ex.empresa)}${ex.local?` <span class="mut">· ${e(ex.local)}</span>`:''}</h4>
+      ${ex.setor?`<div class="mut">${e(ex.setor)}${ex.score!=null?` · aderência ao perfil ${n(ex.score)}/100`:''}</div>`:''}
+      ${ex.resumo?`<p>${e(ex.resumo)}</p>`:''}
+      ${ex.gancho?`<p class="gancho"><b>Gancho para a abordagem:</b> ${e(ex.gancho)}</p>`:''}
+      <div class="swot">
+        <div class="q"><h5>Forças</h5>${lista(ex.forcas)}</div><div class="q"><h5>Fraquezas</h5>${lista(ex.fraquezas)}</div>
+        <div class="q"><h5>Oportunidades</h5>${lista(ex.oportunidades)}</div><div class="q"><h5>Ameaças</h5>${lista(ex.ameacas)}</div>
+      </div>
+      ${ex.perguntas.length?`<p><b>Perguntas sugeridas:</b></p>${lista(ex.perguntas)}`:''}
+    </div>`:'';return`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<title>Relatório de prospecção — ${e(rotuloPeriodo)}</title>
 <style>
-  *{box-sizing:border-box} body{font:13.5px/1.5 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#111;margin:32px auto;max-width:860px;padding:0 16px}
-  h1{font-size:22px;margin:0} h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:#555;border-bottom:1px solid #ddd;padding-bottom:5px;margin:28px 0 12px}
-  h4{margin:0 0 3px;font-size:14px} .mut{color:#666;font-size:12px} .num{text-align:right;font-variant-numeric:tabular-nums}
-  .barra{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
+  *{box-sizing:border-box;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  body{font:13.5px/1.55 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#1a1d24;margin:28px auto;max-width:860px;padding:0 18px;background:#fff}
+  h1{font-size:24px;margin:0 0 2px;letter-spacing:-.01em} h2{font-size:16px;margin:30px 0 4px} .sub2{color:#666;font-size:12.5px;margin:0 0 12px}
+  h4{margin:0;font-size:14.5px} h5{margin:0 0 4px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#555}
+  .mut{color:#6b7280;font-size:12px} .num{text-align:right;font-variant-numeric:tabular-nums} .nota{font-size:11.5px;color:#6b7280;margin:8px 0 0}
+  .barra{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;background:#f3f4f6;border-radius:10px;padding:10px 14px;margin-bottom:22px}
   .bt{height:34px;padding:0 14px;border:1px solid #bbb;border-radius:8px;background:#fff;font:inherit;cursor:pointer}
-  .fl{margin:0 0 10px} .fr{display:flex;justify-content:space-between} .fr span{font-size:18px;font-weight:600}
-  .fb{height:12px;background:#eef2f7;border-radius:6px;overflow:hidden} .fb i{display:block;height:100%;background:#3b6fd8}
-  .fc{font-size:11px;color:#777;margin-top:2px}
-  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
-  .kpi{border:1px solid #e3e3e3;border-radius:8px;padding:9px 11px} .kpi b{display:block;font-size:19px} .kpi span{font-size:11.5px;color:#666}
-  table{width:100%;border-collapse:collapse} th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #eee;vertical-align:top}
-  th{font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.04em} th.num{text-align:right}
-  .ficha{border:1px solid #e3e3e3;border-radius:8px;padding:10px 12px;margin-bottom:10px;page-break-inside:avoid}
-  .chips{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0} .chips span{font-size:11.5px;border:1px solid #ddd;border-radius:6px;padding:2px 7px;background:#fafafa}
-  ul.rec{padding-left:0;list-style:none;margin:0} ul.rec li{margin:0 0 8px;padding:8px 10px;border:1px solid #eee;border-radius:8px}
-  .tag{display:inline-block;font-size:10.5px;font-weight:600;border:1px solid;border-radius:5px;padding:0 6px;margin-right:4px}
-  .dias{display:flex;align-items:flex-end;gap:3px;height:110px;border-bottom:1px solid #ddd;padding-bottom:16px;overflow:hidden}
-  .dias div{flex:1;min-width:6px;max-width:34px;height:100%;display:flex;flex-direction:column;justify-content:flex-end;position:relative}
-  .dias i{display:block;background:#3b6fd8;border-radius:2px 2px 0 0} .dias span{position:absolute;bottom:-15px;left:0;font-size:8.5px;color:#888;white-space:nowrap}
-  .nota{font-size:11.5px;color:#777;margin-top:6px}
-  .rod{margin-top:30px;color:#999;font-size:11px;border-top:1px solid #eee;padding-top:8px}
-  @media print{.bt{display:none} body{margin:10mm auto}}
+  .cab{border-bottom:3px solid #1f3a8a;padding-bottom:12px;margin-bottom:6px}
+  .para{outline:none;border-bottom:1px dashed #9ca3af;min-width:180px;display:inline-block;color:#1a1d24}
+  .para:empty:before{content:attr(data-ph);color:#9ca3af}
+  .resumo{font-size:15px;line-height:1.6;background:#f5f8ff;border:1px solid #dbe5fb;border-radius:12px;padding:14px 16px;margin:14px 0}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:10px}
+  .kpi{border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px} .kpi b{display:block;font-size:22px;letter-spacing:-.01em} .kpi span{font-size:11.5px;color:#6b7280}
+  .passos{display:grid;grid-template-columns:repeat(5,1fr);gap:8px} .passo{border:1px solid #e5e7eb;border-radius:10px;padding:10px}
+  .passo b{display:flex;align-items:center;gap:6px;font-size:13px;margin-bottom:3px} .passo b i{font-style:normal;width:20px;height:20px;border-radius:50%;background:#1f3a8a;color:#fff;font-size:11px;display:inline-flex;align-items:center;justify-content:center}
+  .passo span{font-size:11.5px;color:#4b5563}
+  .fl{margin:0 0 14px;page-break-inside:avoid} .fr{display:flex;justify-content:space-between;align-items:baseline} .fv{font-size:20px;font-weight:700}
+  .fb{height:14px;background:#eef2f7;border-radius:7px;overflow:hidden;margin:3px 0} .fb i{display:block;height:100%;background:#1f3a8a;border-radius:7px}
+  .fx{font-size:12px;color:#4b5563} .conv{display:inline-block;margin-left:4px;font-weight:600;color:#1f3a8a}
+  table{width:100%;border-collapse:collapse;margin-top:6px} th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #eee;vertical-align:top}
+  th{font-size:11px;color:#6b7280;text-transform:uppercase;letter-spacing:.04em} th.num{text-align:right}
+  .pilha{display:flex;height:16px;border-radius:8px;overflow:hidden;margin:10px 0 6px;background:#eef2f7} .pilha i{display:block;height:100%}
+  .leg{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;color:#374151} .leg span{display:inline-flex;align-items:center;gap:6px} .leg i{width:10px;height:10px;border-radius:3px;display:inline-block}
+  .dias{display:flex;align-items:flex-end;gap:3px;height:120px;border-bottom:1px solid #ddd;padding:14px 0 16px;margin-top:6px}
+  .dias div{flex:1;min-width:6px;max-width:34px;height:100%;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;position:relative}
+  .dias i{display:block;width:100%;background:#1f3a8a;border-radius:3px 3px 0 0} .dias em{font-style:normal;font-size:9px;color:#374151;margin-bottom:2px}
+  .dias span{position:absolute;bottom:-15px;font-size:8.5px;color:#888;white-space:nowrap}
+  .ficha{border:1px solid #e5e7eb;border-radius:10px;padding:12px 14px;margin-bottom:10px;page-break-inside:avoid}
+  .fh{display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap}
+  .chips{display:flex;flex-wrap:wrap;gap:5px;margin:7px 0} .chips span{font-size:11.5px;border:1px solid #dbe5fb;border-radius:6px;padding:1px 7px;background:#f5f8ff}
+  .crit{margin:4px 0 8px;padding-left:18px;font-size:12px;color:#374151}
+  .mini{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin:8px 0} .mini div{background:#f9fafb;border-radius:8px;padding:6px 8px}
+  .mini b{display:block;font-size:15px} .mini span{font-size:10.5px;color:#6b7280}
+  .rec{border:1px solid #e5e7eb;border-left:4px solid;border-radius:8px;padding:10px 12px;margin-bottom:8px;page-break-inside:avoid} .rec div{margin-top:2px;color:#374151}
+  .guia td:first-child{font-weight:600;white-space:nowrap} .guia td{font-size:12.5px}
+  .dica{background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px 14px;margin-top:10px;font-size:12.5px}
+  .dica ul,.exemplo ul{margin:4px 0;padding-left:18px}
+  .exemplo{border:1px solid #dbe5fb;background:#f8faff;border-radius:12px;padding:14px 16px;margin-top:12px;page-break-inside:avoid}
+  .exemplo p{margin:6px 0} .gancho{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px}
+  .swot{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px} .q{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px;font-size:12.5px}
+  .rod{margin-top:30px;color:#9ca3af;font-size:11px;border-top:1px solid #eee;padding-top:8px}
+  @media (max-width:640px){.passos{grid-template-columns:1fr 1fr}.mini{grid-template-columns:repeat(3,1fr)}.swot{grid-template-columns:1fr}}
+  @media print{.barra{display:none} body{margin:8mm auto} h2{page-break-after:avoid} .para{border-bottom:none} .para:empty{display:none}}
 </style></head><body>
   <div class="barra">
-    <div><h1>Relatório da operação — Hunter</h1>
-      <div class="mut">Período: <b>${e(rotuloPeriodo)}</b> · gerado em ${new Date(d.gerado_em).toLocaleString('pt-BR')}</div></div>
+    <span class="mut">Clique em <b>"Preparado para"</b> e digite o nome do cliente antes de imprimir.</span>
     <button class="bt" onclick="window.print()">Imprimir / salvar PDF</button>
   </div>
 
-  <h2>Resumo e recomendações</h2>
-  <ul class="rec">${recs}</ul>
+  <div class="cab">
+    <h1>Relatório de prospecção</h1>
+    <div class="mut">Período: <b>${e(rotuloPeriodo)}</b> · gerado em ${new Date(d.gerado_em).toLocaleDateString('pt-BR')}</div>
+    <div style="margin-top:6px;font-size:13px">Preparado para: <span class="para" contenteditable="true" data-ph="nome do cliente"></span></div>
+  </div>
 
-  <h2>Funil da operação</h2>
+  <div class="resumo">
+    ${periodoTxt.charAt(0).toUpperCase()+periodoTxt.slice(1)}, o Hunter analisou <b>${n(f.encontradas)} empresas</b>,
+    identificou <b>${n(f.segmentadas)} com o perfil dos seus clientes</b> e entregou <b>${n(f.enviados)} oportunidades</b>
+    ao time comercial — cada uma com contato para abordagem e um diagnóstico da empresa para orientar a conversa.
+    ${crm.enviados?`Contando pela data da entrega, foram <b>${n(crm.enviados)} leads</b> distribuídos entre ${n(vend.length)} vendedor(es).`:''}
+  </div>
+  <div class="kpis">
+    <div class="kpi"><b>${n(f.encontradas)}</b><span>empresas analisadas</span></div>
+    <div class="kpi"><b>${n(f.segmentadas)}</b><span>com o perfil dos seus clientes</span></div>
+    <div class="kpi"><b>${n(f.qualificados)}</b><span>prontas para abordagem</span></div>
+    <div class="kpi"><b>${n(crm.enviados)}</b><span>leads entregues ao time no período</span></div>
+    <div class="kpi"><b>${crm.score_medio!=null?n(crm.score_medio)+'/100':'—'}</b><span>aderência média ao perfil</span></div>
+  </div>
+
+  <h2>Como o Hunter trabalha</h2>
+  <p class="sub2">O trabalho de um hunter é encontrar quem tem mais chance de comprar e entregar ao vendedor uma conversa pronta para começar.</p>
+  <div class="passos">
+    <div class="passo"><b><i>1</i>Procura</b><span>Examina as empresas ativas nas regiões e atividades escolhidas.</span></div>
+    <div class="passo"><b><i>2</i>Seleciona</b><span>Compara cada uma com o perfil dos seus melhores clientes e descarta o que não combina.</span></div>
+    <div class="passo"><b><i>3</i>Encontra o contato</b><span>Busca telefone, WhatsApp e e-mail em fontes públicas.</span></div>
+    <div class="passo"><b><i>4</i>Diagnostica</b><span>Monta uma análise SWOT da empresa e um roteiro de abordagem.</span></div>
+    <div class="passo"><b><i>5</i>Entrega</b><span>Envia ao CRM e distribui entre os vendedores, sem sobrecarregar a fila.</span></div>
+  </div>
+
+  <h2>Funil do período</h2>
+  <p class="sub2">Acompanha as empresas que entraram na análise ${e(periodoTxt)} até onde chegaram.</p>
   ${funilHtml}
-  <p class="nota">O funil acompanha as empresas que ENTRARAM no período até onde chegaram (em qualquer data).
-    "Enviados ao CRM" conta os leads entregues ao CRM pelo Hunter, inclusive os que foram recusados depois${f.manuais?`; outros ${n(f.manuais)} foram marcados à mão como entregues e não entram nesta conta`:''}.</p>
+  ${f.manuais?`<p class="nota">Além disso, ${n(f.manuais)} lead(s) foram marcados manualmente pelo time como entregues.</p>`:''}
 
-  <h2>Contato dos leads</h2>
+  <h2>Próximos passos recomendados</h2>
+  <p class="sub2">O que os números do período sugerem para o próximo ciclo.</p>
+  ${recs}
+
+  <h2>Entregas ao time comercial</h2>
+  <p class="sub2">Contadas pela data da entrega ao CRM. Por isso o total pode ser diferente do funil, que conta pela data em que a empresa foi encontrada.</p>
   <div class="kpis">
-    <div class="kpi"><b>${n(c.leads)}</b><span>leads criados no período (pela data em que viraram lead)</span></div>
-    <div class="kpi"><b>${n(c.completo)}</b><span>com telefone e e-mail (${p(c.completo,c.leads)}%)</span></div>
-    <div class="kpi"><b>${n(c.so_telefone)}</b><span>só com telefone</span></div>
-    <div class="kpi"><b>${n(c.sem_contato)}</b><span>ainda sem contato</span></div>
-    <div class="kpi"><b>${n(c.leads_achados)} de ${n(c.leads_buscados)}</b><span>buscas de contato com sucesso no período</span></div>
+    <div class="kpi"><b>${n(crm.enviados)}</b><span>leads entregues</span></div>
+    <div class="kpi"><b>${n(crm.contato_completo)}</b><span>com telefone e e-mail</span></div>
+    <div class="kpi"><b>${n(crm.com_diagnostico)}</b><span>com diagnóstico completo da empresa</span></div>
+    <div class="kpi"><b>${n(crm.recusados_depois)}</b><span>sinalizados pelo time como fora do perfil</span></div>
   </div>
+  ${diasHtml}
+  ${sitHtml?`<h5 style="margin-top:22px">Situação do atendimento</h5>${sitHtml}`:''}
+  ${vendHtml?`<h5 style="margin-top:18px">Distribuição por vendedor</h5>${vendHtml}`:''}
 
-  <h2>Envios ao CRM no período</h2>
-  <div class="kpis">
-    <div class="kpi"><b>${n(crm.enviados)}</b><span>enviados ao CRM (pela data do envio)</span></div>
-    <div class="kpi"><b>${n(crm.score_medio)}</b><span>score médio dos enviados</span></div>
-    <div class="kpi"><b>${n(crm.aguardando)}</b><span>aguardando atendimento</span></div>
-    <div class="kpi"><b>${n(crm.em_atendimento)}</b><span>em atendimento</span></div>
-    <div class="kpi"><b>${n(crm.recusados_depois)}</b><span>recusados depois do envio (👎)</span></div>
-    ${crm.manuais?`<div class="kpi"><b>${n(crm.manuais)}</b><span>marcados à mão como entregues</span></div>`:''}
-  </div>
-  <p class="nota">Aqui a conta é pela data do envio; no funil, pela data em que a empresa foi encontrada — por isso os dois números podem diferir.</p>
-  <div style="margin-top:12px">${diasHtml}</div>
-  ${vend?`<h2>Distribuição por vendedora</h2>
-  <table><thead><tr><th>Vendedora</th><th class="num">Recebidos no período</th><th class="num">Aguardando agora</th></tr></thead><tbody>${vend}</tbody></table>`:''}
+  <h2>Contato das empresas selecionadas</h2>
+  <p class="sub2">Leads criados ${e(periodoTxt)}: ${n(c.leads)}. Muitas empresas pequenas não publicam e-mail; o telefone ou WhatsApp já permite a abordagem.</p>
+  ${contHtml}
+  ${c.leads_buscados?`<p class="nota">No período, o Hunter fez novas buscas de contato para ${n(c.leads_buscados)} lead(s) e encontrou telefone ou e-mail para ${n(c.leads_achados)} (${p(c.leads_achados,c.leads_buscados)}%).</p>`:''}
 
-  ${est?`<h2>Esteira agora</h2>
-  <div class="kpis">
-    <div class="kpi"><b>${n(est.total)}</b><span>ainda vão andar sozinhos até o CRM</span></div>
-    <div class="kpi"><b>${n(est.filtrando)}</b><span>empresas passando pelos filtros</span></div>
-    <div class="kpi"><b>${n(est.aprovadas)}</b><span>aprovadas esperando o limite</span></div>
-    <div class="kpi"><b>${n(est.contato)}</b><span>leads buscando contato</span></div>
-    <div class="kpi"><b>${n(est.esperando_vendedora)}</b><span>prontos esperando vaga numa vendedora</span></div>
-    <div class="kpi"><b>${n(est.aguardando_decisao)}</b><span>só telefone, aguardando decisão</span></div>
-  </div>`:''}
+  <h2>Onde o Hunter buscou</h2>
+  <p class="sub2">As campanhas de busca com movimento no período, o que cada uma procura e o que rendeu.</p>
+  ${camp||'<p class="mut">Nenhuma campanha com movimento no período.</p>'}
 
-  <h2>Radares no período</h2>
-  ${radares.length?`<table><thead><tr><th>Radar</th><th class="num">Encontradas</th><th class="num">Segmentadas</th>
-    <th class="num">Qualificados</th><th class="num">No CRM</th><th class="num">Conversão</th></tr></thead>
-    <tbody>${radares.map(linhaRadar).join('')}</tbody></table>`:'<p class="mut">Nenhum radar com movimento no período.</p>'}
-
-  ${desc?`<h2>Leads descartados no período</h2>
+  ${fora?`<h2>Por que tantas empresas ficam de fora</h2>
+  <p class="sub2">Excluir é parte do trabalho: cada empresa descartada aqui é uma ligação que o vendedor não precisou fazer.</p>
+  <table><thead><tr><th>Motivo</th><th class="num">Empresas</th></tr></thead><tbody>${fora}</tbody></table>`:''}
+  ${desc?`<h5 style="margin-top:16px">Leads descartados depois da seleção</h5>
   <table><thead><tr><th>Motivo</th><th class="num">Leads</th></tr></thead><tbody>${desc}</tbody></table>`:''}
 
-  ${radares.length?`<h2>Especificação dos radares</h2>${radares.map(fichaRadar).join('')}`:''}
+  <h2>Como usar o diagnóstico SWOT no atendimento</h2>
+  <p class="sub2">Cada lead chega ao CRM com uma análise da empresa. Ela não é um roteiro para ler ao cliente: é a preparação que faz o closer chegar à conversa sabendo com quem está falando.</p>
+  <table class="guia"><thead><tr><th>Parte do diagnóstico</th><th>Como usar na conversa</th><th>Exemplo</th></tr></thead><tbody>
+    <tr><td>Resumo e gancho</td><td>Leia antes de ligar (2 minutos bastam). O gancho é o motivo do contato: comece por ele, não pela sua empresa.</td><td>"Vi que vocês atendem a região toda com entrega própria…"</td></tr>
+    <tr><td>Forças</td><td>Abra a conversa reconhecendo algo real da empresa. Gera confiança e mostra que você se preparou.</td><td>"Vocês têm uma avaliação muito boa dos clientes na cidade."</td></tr>
+    <tr><td>Fraquezas</td><td>Transforme em perguntas, nunca em afirmações. O cliente precisa chegar à dor com as próprias palavras.</td><td>"Hoje, como vocês fazem para… ?"</td></tr>
+    <tr><td>Oportunidades</td><td>Conecte o momento da empresa à sua solução. É aqui que a proposta de valor entra.</td><td>"Empresas que estão crescendo como vocês costumam…"</td></tr>
+    <tr><td>Ameaças</td><td>Use para criar senso de urgência com cuidado: mercado, concorrência, custo de esperar.</td><td>"Com a concorrência aumentando na região, …"</td></tr>
+    <tr><td>Perguntas sugeridas</td><td>Use como guia de descoberta, na ordem que a conversa pedir. Anote as respostas no CRM.</td><td>—</td></tr>
+  </tbody></table>
+  <div class="dica"><b>Boas práticas para o time</b>
+    <ul>
+      <li><b>Aborde rápido:</b> o ideal é o primeiro contato em até 24 horas após a entrega.</li>
+      <li><b>Confirme, não presuma:</b> o diagnóstico vem de informações públicas; valide os pontos principais logo no início.</li>
+      <li><b>Lead com roteiro padrão:</b> quando a empresa tem pouca informação pública, o lead chega com um roteiro de abordagem genérico. Use o primeiro contato para descobrir o que o diagnóstico não trouxe.</li>
+      <li><b>Sinalize o que não serve:</b> marcar um lead como fora do perfil ensina o Hunter a evitar empresas parecidas nas próximas buscas.</li>
+      <li><b>Registre o resultado no CRM:</b> o histórico de atendimento mostra ao Hunter quais perfis viram venda.</li>
+    </ul>
+  </div>
+  ${exemploHtml}
 
-  <div class="rod">Hunter · relatório gerado automaticamente a partir dos dados da operação.</div>
+  <div class="rod">Relatório gerado automaticamente pelo Hunter a partir dos dados da operação.</div>
 </body></html>`;}function abrirImpressaoLeads(leads){const lista=(Array.isArray(leads)?leads:[leads]).filter(Boolean);if(!lista.length)return;const titulo=lista.length===1?escHtml(lista[0].fantasia||lista[0].razao||lista[0].cnpj)+' — Hunter':`${lista.length} empresas — Hunter`;const html=`<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
 <title>${titulo}</title>
 <style>
