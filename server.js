@@ -1854,7 +1854,7 @@ app.get('/api/buscas', requireAuth, async (req, res) => {
         COUNT(l.id) FILTER (WHERE ${estagioContato('l')} = 'decisao')::int AS so_telefone,
         COUNT(l.id) FILTER (WHERE ${estagioContato('l')} = 'sem_contato')::int AS sem_contato,
         b.fora_perfil,
-        COUNT(l.id) FILTER (WHERE l.status='Enviado')::int AS enviados,
+        COUNT(l.id) FILTER (WHERE l.status='Enviado' OR l.enviado_crm_em IS NOT NULL)::int AS enviados,
         -- Último movimento REAL do radar, não só da busca de empresas: lead
         -- criado, contato buscado, envio ao CRM. Radar esgotado cujo lead foi
         -- ao CRM hoje mostra "hoje", e não a data da última busca.
@@ -2160,7 +2160,7 @@ app.get('/api/buscas/:id', requireAuth, async (req, res) => {
           COUNT(l.id) FILTER (WHERE ${estagioContato('l')} = 'sem_contato')::int AS sem_contato_n,
           COUNT(l.id) FILTER (WHERE l.status='Incompleto')::int AS incompletos,
           COUNT(l.id) FILTER (WHERE l.status='Descartado')::int AS descartados,
-          COUNT(l.id) FILTER (WHERE l.status='Enviado')::int AS enviados,
+          COUNT(l.id) FILTER (WHERE l.status='Enviado' OR l.enviado_crm_em IS NOT NULL)::int AS enviados,
           MAX(l.criado_em) AS ultimo_lead_em, MAX(l.enviado_crm_em) AS ultimo_envio_em,
           (SELECT MAX(g.criado_em) FROM busca_contato_log g WHERE g.busca_id = b.id) AS ultimo_contato_em
         FROM buscas b LEFT JOIN usuarios u ON u.id=b.criador_id
@@ -2394,7 +2394,7 @@ app.get('/api/estrategia', requireAuth, async (req, res) => {
                COALESCE(b.universo_varrido, 0) AS encontrados,
                (SELECT COUNT(*) FROM leads l WHERE l.busca_id = b.id)::int AS segmentadas,
                (SELECT COUNT(*) FROM leads l WHERE l.busca_id = b.id AND ${estagioContato('l')} = 'completo')::int AS qualificados,
-               (SELECT COUNT(*) FROM leads l WHERE l.busca_id = b.id AND l.status = 'Enviado')::int AS enviados
+               (SELECT COUNT(*) FROM leads l WHERE l.busca_id = b.id AND (l.status = 'Enviado' OR l.enviado_crm_em IS NOT NULL))::int AS enviados
           FROM estrategia_slots s LEFT JOIN buscas b ON b.id = s.busca_id
          ORDER BY s.criado_em`),
       pool.query(`
