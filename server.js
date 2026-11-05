@@ -145,8 +145,25 @@ const abertoSql = (a) => `(COALESCE(${a}.status,'') NOT IN ('Descartado','Enviad
   AND NOT EXISTS (SELECT 1 FROM leads o WHERE o.enviado_crm_em IS NOT NULL
     AND regexp_replace(o.cnpj, '\\D', '', 'g') = regexp_replace(${a}.cnpj, '\\D', '', 'g')))`;
 
+// Recorte do FUNIL na lista: os mesmos leads que o funil conta para a janela
+// (empresa que ENTROU no funil no período, pela data da descoberta, e o
+// primeiro lead daquele CNPJ), para o número da lista bater com o do funil.
+// $d/$a = índices dos parâmetros de início/fim (instantes; fim exclusivo).
+const coorteFunilSql = (a, d, b) => `(
+  (EXISTS (SELECT 1 FROM empresa_tenant_estado e WHERE e.cnpj = ${a}.cnpj
+            AND ($${d}::timestamptz IS NULL OR e.descoberto_em >= $${d}::timestamptz)
+            AND ($${b}::timestamptz IS NULL OR e.descoberto_em <  $${b}::timestamptz))
+   AND ${a}.id = (SELECT l2.id FROM leads l2 WHERE l2.cnpj = ${a}.cnpj ORDER BY l2.criado_em, l2.id LIMIT 1))
+  OR ((${a}.cnpj IS NULL OR NOT EXISTS (SELECT 1 FROM empresa_tenant_estado e WHERE e.cnpj = ${a}.cnpj))
+   AND ($${d}::timestamptz IS NULL OR ${a}.criado_em >= $${d}::timestamptz)
+   AND ($${b}::timestamptz IS NULL OR ${a}.criado_em <  $${b}::timestamptz)))`;
+// As etapas do funil, iguais em /api/funil, na lista e no relatório.
+const ENVIADO_CRM_SQL = (a) => `${a}.enviado_crm_em IS NOT NULL`;
+const QUALIFICADO_FUNIL_SQL = (a) => `(${estagioContato(a)} = 'completo' OR ${a}.status = 'Enviado' OR ${a}.enviado_crm_em IS NOT NULL)`;
+
 function buildLeadsFilter(query) {
-  const { q, status, uf, busca_id, email_only, local, score_min, contato, analise, abertos, de, ate } = query;
+  const { q, status, uf, busca_id, email_only, local, score_min, contato, analise, abertos, de, ate,
+          funil_de, funil_ate, etapa } = query;
   const conditions = [];
   const vals = [];
   if (q && q.trim()) {
@@ -165,11 +182,25 @@ function buildLeadsFilter(query) {
   }
   // "Enviado" aceita sub-filtro: 'Enviado:crm' (o motor entregou ao CRM) ou
   // 'Enviado:manual' (o usuário marcou à mão). Sem sufixo, traz os dois.
+  // "Pelo CRM" é quem o motor ENTREGOU ao CRM, mesmo que depois alguém tenha
+  // dado 👎 (o lead fica Descartado, mas foi entregue) — é o mesmo número do
+  // funil. Antes exigia também o status Enviado e a lista ficava menor.
   if (status) {
     const [base, origem] = String(status).split(':');
-    vals.push(base); conditions.push(`l.status = $${vals.length}`);
-    if (origem === 'crm') conditions.push('l.enviado_crm_em IS NOT NULL');
-    if (origem === 'manual') conditions.push('l.enviado_crm_em IS NULL AND l.enviado_manual_em IS NOT NULL');
+    if (base === 'Enviado' && origem === 'crm') conditions.push(ENVIADO_CRM_SQL('l'));
+    else if (base === 'Enviado' && origem === 'manual') {
+      conditions.push(`l.status = 'Enviado' AND l.enviado_crm_em IS NULL AND l.enviado_manual_em IS NOT NULL`);
+    } else if (base === 'Enviado') conditions.push(`(l.status = 'Enviado' OR l.enviado_crm_em IS NOT NULL)`);
+    else { vals.push(base); conditions.push(`l.status = $${vals.length}`); }
+  }
+  // Veio de uma etapa do funil do Dashboard: mesmo recorte e mesma regra.
+  const instante = v => { if (!v) return null; const t = new Date(String(v)); return isNaN(t.getTime()) ? null : t.toISOString(); };
+  if (query.funil === '1') {
+    vals.push(instante(funil_de)); const d = vals.length;
+    vals.push(instante(funil_ate)); const b = vals.length;
+    conditions.push(coorteFunilSql('l', d, b));
+    if (etapa === 'qualificados') conditions.push(QUALIFICADO_FUNIL_SQL('l'));
+    if (etapa === 'enviados') conditions.push(ENVIADO_CRM_SQL('l'));
   }
   if (uf) { vals.push(uf); conditions.push(`l.uf = $${vals.length}`); }
   // Local: cidade OU UF (ex.: "Goiânia", "GO", "São Paulo"). Duas letras é UF
@@ -1410,7 +1441,7 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
         (SELECT COUNT(*)::int FROM leads) AS segmentadas,
         -- Verificadas mas fora do perfil = reprovadas na segmentação (nunca viraram lead).
         (SELECT COALESCE(SUM(fora_perfil),0)::int FROM buscas) AS fora_perfil,
-        (SELECT COUNT(*)::int FROM leads WHERE status='Enviado' OR enviado_crm_em IS NOT NULL) AS enviados`),
+        (SELECT COUNT(*)::int FROM leads WHERE enviado_crm_em IS NOT NULL) AS enviados`),
       pool.query(`
         SELECT b.id, b.nome, b.ritmo, b.status, b.ultima_ativ,
           b.universo_varrido AS encontrados
@@ -1448,18 +1479,8 @@ app.get('/api/dashboard', requireAuth, async (req, res) => {
 // tem_email/tem_telefone ficaram parados em bases antigas porque o
 // enriquecimento grava em contato_validado, então olha os dois.
 
-app.get('/api/funil', requireAuth, async (req, res) => {
-  const dataOuNull = (v) => {
-    if (!v) return null;
-    const d = new Date(String(v));
-    return isNaN(d.getTime()) ? null : d.toISOString();
-  };
-  const de = dataOuNull(req.query.de);
-  const ate = dataOuNull(req.query.ate);
-  if (req.query.de && !de) return res.status(400).json({ erro: 'data inicial inválida' });
-  if (req.query.ate && !ate) return res.status(400).json({ erro: 'data final inválida' });
-  if (de && ate && de >= ate) return res.status(400).json({ erro: 'a data inicial tem que ser antes da final' });
-  try {
+// Linhas do funil por radar para a janela [de, ate).
+async function funilPorRadar(de, ate) {
     const { rows } = await pool.query(`
       WITH entradas AS (
         SELECT e.cnpj, e.busca_id
@@ -1472,7 +1493,7 @@ app.get('/api/funil', requireAuth, async (req, res) => {
                l.status, l.tem_email, l.tem_telefone, l.contato_validado, l.contato_status, l.enviado_crm_em
           FROM entradas en
           LEFT JOIN LATERAL (
-            SELECT l.* FROM leads l WHERE l.cnpj = en.cnpj ORDER BY l.criado_em LIMIT 1
+            SELECT l.* FROM leads l WHERE l.cnpj = en.cnpj ORDER BY l.criado_em, l.id LIMIT 1
           ) l ON true
         UNION ALL
         -- Lead sem empresa no cadastro (o manual entra direto, sem passar pelo
@@ -1494,11 +1515,37 @@ app.get('/api/funil', requireAuth, async (req, res) => {
              -- decide "enviar assim mesmo", e aí a operação o tratou como apto.
              -- Sem isso o funil ABRIA no fim (enviados > qualificados), que é
              -- exatamente o desenho que ele existe pra tornar impossível.
-             COUNT(b.lead_id) FILTER (WHERE ${estagioContato('b')} = 'completo'
-               OR b.status='Enviado' OR b.enviado_crm_em IS NOT NULL)::int             AS qualificados,
-             COUNT(b.lead_id) FILTER (WHERE b.status='Enviado' OR b.enviado_crm_em IS NOT NULL)::int AS enviados
+             COUNT(b.lead_id) FILTER (WHERE ${QUALIFICADO_FUNIL_SQL('b')})::int        AS qualificados,
+             -- "Enviados ao CRM" = entregues pelo motor (é o que o CRM recebeu),
+             -- contando também os que depois levaram 👎. Os marcados à mão como
+             -- entregues ficam à parte — antes entravam aqui e o número não
+             -- batia com a lista "Enviado · pelo CRM".
+             COUNT(b.lead_id) FILTER (WHERE ${ENVIADO_CRM_SQL('b')})::int              AS enviados,
+             COUNT(b.lead_id) FILTER (WHERE b.status='Enviado' AND b.enviado_crm_em IS NULL)::int AS manuais
         FROM base b
        GROUP BY 1`, [de, ate]);
+    return rows;
+}
+
+const instanteOuNull = (v) => {
+  if (!v) return null;
+  const d = new Date(String(v));
+  return isNaN(d.getTime()) ? null : d.toISOString();
+};
+// de/ate da query (instantes ISO; fim exclusivo) ou { erro }.
+function janelaDaQuery(q) {
+  const de = instanteOuNull(q.de), ate = instanteOuNull(q.ate);
+  if (q.de && !de) return { erro: 'data inicial inválida' };
+  if (q.ate && !ate) return { erro: 'data final inválida' };
+  if (de && ate && de >= ate) return { erro: 'a data inicial tem que ser antes da final' };
+  return { de, ate };
+}
+
+app.get('/api/funil', requireAuth, async (req, res) => {
+  const { de, ate, erro } = janelaDaQuery(req.query);
+  if (erro) return res.status(400).json({ erro });
+  try {
+    const rows = await funilPorRadar(de, ate);
 
     const { rows: nomes } = await pool.query(`SELECT id, nome, status FROM buscas`);
     const porId = new Map(nomes.map(b => [b.id, b]));
@@ -1513,7 +1560,7 @@ app.get('/api/funil', requireAuth, async (req, res) => {
         nome: porId.get(r.busca_id)?.nome || `Radar #${r.busca_id}`,
         status: porId.get(r.busca_id)?.status || null,
         encontradas: r.encontradas, segmentadas: r.segmentadas,
-        qualificados: r.qualificados, enviados: r.enviados,
+        qualificados: r.qualificados, enviados: r.enviados, manuais: r.manuais,
       }))
       .sort((a, b) => b.encontradas - a.encontradas || b.segmentadas - a.segmentadas);
 
@@ -1525,7 +1572,7 @@ app.get('/api/funil', requireAuth, async (req, res) => {
       { chave:'encontradas',  rotulo:'Empresas encontradas', valor: soma('encontradas') },
       { chave:'segmentadas',  rotulo:'Segmentadas (perfil)', valor: soma('segmentadas') },
       { chave:'qualificados', rotulo:'Leads qualificados',   valor: soma('qualificados') },
-      { chave:'enviados',     rotulo:'Enviados ao CRM',      valor: soma('enviados') },
+      { chave:'enviados',     rotulo:'Enviados ao CRM',      valor: soma('enviados'), manuais: soma('manuais') },
     ];
     res.json({ periodo: { de, ate }, buscaId, etapas, radares });
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
@@ -1894,7 +1941,11 @@ const contarJobs = async (q, estados) => {
   return estados.reduce((t, e) => t + (c[e] || 0), 0);
 };
 app.get('/api/esteira', requireAuth, async (req, res) => {
-  try {
+  try { res.json(await estadoDaEsteira()); }
+  catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+async function estadoDaEsteira() {
     const q = monitorQueues || {};
     const [filtrando, aprovadas, contato, analise, envio] = await Promise.all([
       Promise.all([contarJobs(q.enriquecimento, ['waiting', 'active', 'delayed', 'prioritized']),
@@ -1915,16 +1966,182 @@ app.get('/api/esteira', requireAuth, async (req, res) => {
         FROM leads`);
     const v = await require('./jobs/orcamento').disponivel(pool).catch(() => null);
     const vagasHoje = v ? (v.dia >= Number.MAX_SAFE_INTEGER ? null : v.dia) : null;
-    res.json({
+    return {
       motor: !!monitorQueues,
       filtrando, aprovadas, contato, analise, envio,
       esperando_vendedora: l.esperando_vendedora, retidos: l.retidos, aguardando_decisao: l.aguardando_decisao,
       vagas_hoje: vagasHoje, fora_da_janela: !!v?.foraDaJanela,
       // Ainda vai andar sozinho (vira lead, ganha contato, análise e envio).
       total: filtrando + aprovadas + contato + analise + envio + l.esperando_vendedora,
+    };
+}
+
+// ── Relatório da operação ─────────────────────────────────────────────────────
+// Tudo o que o botão "Criar relatório" do Dashboard precisa numa ida: o funil
+// da janela, os radares (o que buscam e o que renderam), contato, CRM, fila
+// por vendedora, esteira e as recomendações que os números sugerem. Sem nome
+// de fornecedor nenhum: o relatório é feito para ser enviado a terceiros.
+app.get('/api/relatorio', requireAuth, async (req, res) => {
+  const { de, ate, erro } = janelaDaQuery(req.query);
+  if (erro) return res.status(400).json({ erro });
+  try {
+    const janela = [de, ate];
+    const naJanela = (col) => `($1::timestamptz IS NULL OR ${col} >= $1) AND ($2::timestamptz IS NULL OR ${col} < $2)`;
+    const [funil, buscasRes, contatoRes, contatoBusca, crmRes, porDia, porVendedora, descartesRes, esteira] = await Promise.all([
+      funilPorRadar(de, ate),
+      pool.query(`
+        SELECT b.id, b.nome, b.tipo, b.status, b.criado_em, b.ultima_ativ, b.crm_auto, b.tags, b.criterios,
+               b.descartes, b.universo_varrido AS encontradas_total, b.fora_perfil, ep.nome AS pauta,
+               COUNT(l.id)::int AS leads_total,
+               COUNT(l.id) FILTER (WHERE ${estagioContato('l')} = 'completo')::int AS qualificados_total,
+               COUNT(l.id) FILTER (WHERE l.enviado_crm_em IS NOT NULL)::int AS enviados_total,
+               MAX(l.criado_em) AS ultimo_lead_em, MAX(l.enviado_crm_em) AS ultimo_envio_em
+          FROM buscas b
+          LEFT JOIN estrategia_pautas ep ON ep.id = b.estrategia_pauta_id
+          LEFT JOIN leads l ON l.busca_id = b.id
+         GROUP BY b.id, ep.nome
+         ORDER BY b.criado_em DESC`),
+      // Contato dos leads que ENTRARAM no período.
+      pool.query(`
+        SELECT COUNT(*)::int AS leads,
+               COUNT(*) FILTER (WHERE ${estagioContato('l')} = 'completo')::int AS completo,
+               COUNT(*) FILTER (WHERE ${estagioContato('l')} = 'decisao')::int AS so_telefone,
+               COUNT(*) FILTER (WHERE ${estagioContato('l')} = 'sem_contato')::int AS sem_contato,
+               COUNT(*) FILTER (WHERE l.contato_status = 'fora_do_perfil')::int AS recusados
+          FROM leads l WHERE ${naJanela('l.criado_em')}`, janela),
+      // Buscas de contato feitas no período (automáticas e pelo botão).
+      pool.query(`
+        SELECT COUNT(DISTINCT lead_id)::int AS leads_buscados,
+               COUNT(DISTINCT lead_id) FILTER (WHERE COALESCE(telefone,'') <> '' OR COALESCE(email,'') <> '')::int AS leads_achados
+          FROM busca_contato_log WHERE ${naJanela('criado_em')}`, janela).catch(() => ({ rows: [{ leads_buscados: 0, leads_achados: 0 }] })),
+      // CRM pela DATA DO ENVIO (o funil conta pela data da descoberta).
+      pool.query(`
+        SELECT COUNT(*)::int AS enviados,
+               COUNT(*) FILTER (WHERE status = 'Descartado')::int AS recusados_depois,
+               COUNT(*) FILTER (WHERE crm_atendimento = 'aguardando')::int AS aguardando,
+               COUNT(*) FILTER (WHERE crm_atendimento = 'em_atendimento')::int AS em_atendimento,
+               COUNT(*) FILTER (WHERE crm_atendimento = 'finalizado')::int AS finalizados,
+               COUNT(*) FILTER (WHERE COALESCE(contato_validado->>'email','') = '' )::int AS so_whatsapp_ou_tel,
+               ROUND(AVG(score))::int AS score_medio,
+               (SELECT COUNT(*)::int FROM leads m WHERE m.status = 'Enviado' AND m.enviado_crm_em IS NULL
+                   AND ${naJanela('m.enviado_manual_em')}) AS manuais
+          FROM leads WHERE enviado_crm_em IS NOT NULL AND ${naJanela('enviado_crm_em')}`, janela),
+      pool.query(`
+        SELECT to_char(date(enviado_crm_em AT TIME ZONE 'America/Sao_Paulo'), 'YYYY-MM-DD') AS dia, COUNT(*)::int AS n
+          FROM leads WHERE enviado_crm_em IS NOT NULL AND ${naJanela('enviado_crm_em')}
+         GROUP BY 1 ORDER BY 1`, janela),
+      pool.query(`
+        SELECT COALESCE(NULLIF(crm_conexao_nome,''), 'Sem vendedora definida') AS nome,
+               COUNT(*) FILTER (WHERE ${naJanela('enviado_crm_em')})::int AS recebidos,
+               COUNT(*) FILTER (WHERE crm_atendimento = 'aguardando')::int AS aguardando
+          FROM leads WHERE enviado_crm_em IS NOT NULL
+         GROUP BY 1
+        HAVING COUNT(*) FILTER (WHERE ${naJanela('enviado_crm_em')}) > 0 OR COUNT(*) FILTER (WHERE crm_atendimento = 'aguardando') > 0
+         ORDER BY 2 DESC, 1`, janela),
+      pool.query(`
+        SELECT COALESCE(NULLIF(motivo_descarte,''), CASE WHEN contato_status = 'fora_do_perfil' THEN 'fora_do_perfil' ELSE 'outro' END) AS motivo,
+               COUNT(*)::int AS n
+          FROM leads WHERE status = 'Descartado' AND ${naJanela('criado_em')}
+         GROUP BY 1 ORDER BY 2 DESC LIMIT 8`, janela),
+      estadoDaEsteira().catch(() => null),
+    ]);
+
+    const somaF = (c) => funil.reduce((t, r) => t + (r[c] || 0), 0);
+    const etapas = {
+      encontradas: somaF('encontradas'), segmentadas: somaF('segmentadas'),
+      qualificados: somaF('qualificados'), enviados: somaF('enviados'), manuais: somaF('manuais'),
+    };
+    const funilPorId = new Map(funil.filter(r => r.busca_id != null).map(r => [r.busca_id, r]));
+    const ROTULO_TIPO = { icp: 'Perfil de cliente', lookalike: 'Semelhantes a clientes', cnpj: 'Lista de CNPJs' };
+    const resumoCriterios = (c) => {
+      c = c || {};
+      if (Array.isArray(c.chips) && c.chips.length) return c.chips.map(String).slice(0, 12);
+      return Object.entries(c)
+        .filter(([k]) => !['params', 'cnaes_rotulos', 'texto', 'query', 'proposta_valor', 'palavras_excluidas'].includes(k))
+        .flatMap(([k, v]) => Array.isArray(v) ? v.map(x => `${k}: ${x}`) : (v && typeof v === 'object' ? [] : [`${k}: ${v}`]))
+        .slice(0, 12);
+    };
+    const MOTIVO_TXT = Object.fromEntries([
+      ['ja_vista', 'Já vistas por outro radar'], ['cliente_da_lista', 'Já são clientes'], ['inativa', 'Inativas na Receita'],
+      ['atividade_fora_do_perfil', 'Atividade que nenhum cliente tem'], ['atividade_rara', 'Atividade rara entre os clientes'],
+      ['atividade_recusada', 'Atividade de leads recusados'], ['atividade_desconhecida', 'Atividade desconhecida'],
+      ['entidade_nao_empresarial', 'Igreja, órgão público, condomínio…'], ['abaixo_do_corte', 'Nota abaixo do corte'],
+      ['nao_e_comprador', 'Não é o tipo de empresa que compra'], ['radar_sem_perfil', 'Radar sem perfil'],
+      ['desistiu_de_esperar', 'Desistiram de esperar vaga'], ['fora_do_perfil', 'Recusados (👎 fora do perfil)'], ['outro', 'Outros motivos'],
+    ]);
+    const radares = buscasRes.rows.map(b => {
+      const f = funilPorId.get(b.id) || {};
+      const d = b.descartes || {};
+      const topDesc = Object.entries(d).filter(([, n]) => Number(n) > 0).sort((x, y) => y[1] - x[1]).slice(0, 3)
+        .map(([k, n]) => ({ motivo: MOTIVO_TXT[k] || k, n: Number(n) }));
+      const atv = atividadeDoRadar({ ultima_ativ: b.ultima_ativ, ultimo_lead_em: b.ultimo_lead_em, ultimo_envio_em: b.ultimo_envio_em });
+      return {
+        id: b.id, nome: b.nome, tipo: ROTULO_TIPO[b.tipo] || b.tipo, status: b.status, pauta: b.pauta || null,
+        criado_em: b.criado_em, atividade_em: atv.atividade_em, envio_automatico: !!b.crm_auto,
+        tags: Array.isArray(b.tags) ? b.tags : [], criterios: resumoCriterios(b.criterios),
+        periodo: { encontradas: f.encontradas || 0, segmentadas: f.segmentadas || 0, qualificados: f.qualificados || 0, enviados: f.enviados || 0 },
+        total: { encontradas: b.encontradas_total || 0, leads: b.leads_total, qualificados: b.qualificados_total, enviados: b.enviados_total },
+        descartes: topDesc,
+      };
+    }).filter(r => r.status === 'Ativa' || r.periodo.encontradas > 0 || r.periodo.segmentadas > 0
+      || (r.atividade_em && (!de || r.atividade_em >= de)));
+
+    const contato = { ...contatoRes.rows[0], ...contatoBusca.rows[0] };
+    const crm = crmRes.rows[0];
+    const descartes = descartesRes.rows.map(r => ({ motivo: MOTIVO_TXT[r.motivo] || r.motivo, n: r.n }));
+
+    // Recomendações: o que os números do período pedem. Cada uma diz o número
+    // que a motivou, pra quem lê poder conferir.
+    const pctN = (a, b) => (b ? Math.round(a / b * 100) : 0);
+    const rec = [];
+    const ativos = radares.filter(r => r.status === 'Ativa');
+    const comVolume = radares.filter(r => r.periodo.encontradas >= 50);
+    const melhor = comVolume.slice().sort((a, b) => pctN(b.periodo.enviados, b.periodo.encontradas) - pctN(a.periodo.enviados, a.periodo.encontradas))[0];
+    if (melhor && melhor.periodo.enviados > 0) {
+      rec.push({ tipo: 'bom', texto: `O radar "${melhor.nome}" teve a melhor conversão do período: ${pctN(melhor.periodo.enviados, melhor.periodo.encontradas)}% das empresas encontradas chegaram ao CRM. Vale duplicá-lo para outras regiões ou portes.` });
+    }
+    for (const r of comVolume.filter(r => r.periodo.encontradas >= 300 && r.periodo.segmentadas === 0).slice(0, 3)) {
+      rec.push({ tipo: 'atencao', texto: `O radar "${r.nome}" encontrou ${fmtBR(r.periodo.encontradas)} empresas e nenhuma passou no perfil. Revise a atividade, a região ou o porte desse radar.` });
+    }
+    if (etapas.encontradas >= 200 && pctN(etapas.segmentadas, etapas.encontradas) < 3) {
+      rec.push({ tipo: 'atencao', texto: `Só ${pctN(etapas.segmentadas, etapas.encontradas)}% das empresas encontradas passaram no perfil. Os radares estão buscando muito fora do alvo: vale apertar a atividade e a região na origem.` });
+    }
+    if (etapas.segmentadas >= 20 && pctN(etapas.qualificados, etapas.segmentadas) < 30) {
+      rec.push({ tipo: 'atencao', texto: `Dos leads que passaram no perfil, ${pctN(etapas.qualificados, etapas.segmentadas)}% ficaram com contato completo. A busca de contato segue tentando nos que faltam; leads só com WhatsApp podem ir ao CRM com o diagnóstico padrão (Estratégia).` });
+    }
+    if (contato.sem_contato > 0) {
+      rec.push({ tipo: 'info', texto: `${fmtBR(contato.sem_contato)} lead(s) do período ainda estão sem telefone nem e-mail. O Hunter volta a procurar sozinho; para acelerar, use "Buscar contato" no lead.` });
+    }
+    if (esteira?.aguardando_decisao > 0) {
+      rec.push({ tipo: 'acao', texto: `${fmtBR(esteira.aguardando_decisao)} lead(s) têm só telefone e esperam a sua decisão para ir ao CRM.` });
+    }
+    if (crm.enviados >= 10 && pctN(crm.recusados_depois, crm.enviados) >= 10) {
+      rec.push({ tipo: 'atencao', texto: `${pctN(crm.recusados_depois, crm.enviados)}% dos leads enviados ao CRM no período foram recusados depois (👎). Cada recusa ensina o Hunter, mas um índice alto pede revisar os radares de origem.` });
+    }
+    const filaCheia = porVendedora.rows.filter(v => v.aguardando >= 10);
+    const filaBaixa = porVendedora.rows.filter(v => v.nome !== 'Sem vendedora definida' && v.aguardando <= 3);
+    const nomes = l => l.length > 1 ? `${l.slice(0, -1).map(v => v.nome).join(', ')} e ${l[l.length - 1].nome}` : l[0].nome;
+    if (filaCheia.length) rec.push({ tipo: 'info', texto: filaCheia.length > 1
+      ? `${nomes(filaCheia)} já têm 10 ou mais leads aguardando atendimento — o Hunter segura novos envios para elas até a fila baixar.`
+      : `${nomes(filaCheia)} já tem 10 ou mais leads aguardando atendimento — o Hunter segura novos envios para ela até a fila baixar.` });
+    if (filaBaixa.length) rec.push({ tipo: 'acao', texto: filaBaixa.length > 1
+      ? `${nomes(filaBaixa)} estão com 3 ou menos leads aguardando — é quando o Hunter abre radar novo para reabastecer.`
+      : `${nomes(filaBaixa)} está com 3 ou menos leads aguardando — é quando o Hunter abre radar novo para reabastecer.` });
+    if (!ativos.length && esteira && esteira.total === 0) {
+      rec.push({ tipo: 'acao', texto: 'Nenhum radar ativo e a esteira está vazia: sem radar novo, não chegam leads novos ao CRM.' });
+    } else if (!ativos.length && esteira?.total > 0) {
+      rec.push({ tipo: 'info', texto: `Nenhum radar ativo, mas ${fmtBR(esteira.total)} empresa(s)/lead(s) ainda estão na esteira e devem chegar ao CRM.` });
+    }
+    if (!rec.length) rec.push({ tipo: 'bom', texto: 'Operação sem pontos de atenção no período.' });
+
+    res.json({
+      gerado_em: new Date().toISOString(), periodo: { de, ate },
+      funil: etapas, contato, crm: { ...crm, por_dia: porDia.rows, por_vendedora: porVendedora.rows },
+      descartes, esteira, radares, recomendacoes: rec,
     });
-  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+  } catch (e) { console.error('[relatorio]', e); res.status(500).json({ erro: 'erro interno' }); }
 });
+const fmtBR = n => Number(n || 0).toLocaleString('pt-BR');
 
 app.get('/api/buscas/:id', requireAuth, async (req, res) => {
   const id = parseInt(req.params.id, 10);

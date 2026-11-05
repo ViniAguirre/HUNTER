@@ -813,7 +813,7 @@ function FiltroPeriodo({ periodo, setPeriodo, custom, setCustom }) {
 // 300. Cada faixa é um trapézio que vai da própria largura até a largura da
 // etapa seguinte, então as duas bordas são números reais; a última fica reta,
 // de propósito, pra não inventar uma ponta que não corresponde a nada.
-function Funil({ etapas, carregando }) {
+function Funil({ etapas, carregando, onAbrirEtapa }) {
   const [hover, setHover] = useState(null);
   const topo = etapas[0]?.valor || 0;
   const larg = (v) => {
@@ -828,7 +828,7 @@ function Funil({ etapas, carregando }) {
     <div className="h-funil" style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:'16px 18px 18px' }}>
       <div style={{ display:'flex', alignItems:'baseline', justifyContent:'space-between', gap:10, marginBottom:14 }}>
         <h3 style={{ fontSize:14, fontWeight:600, margin:0 }}>Funil da operação</h3>
-        <span style={{ fontSize:11, color:'var(--faint)' }}>por data de entrada no funil</span>
+        <span style={{ fontSize:11, color:'var(--faint)' }}>por data de entrada no funil{onAbrirEtapa ? ' · clique numa etapa para ver os leads' : ''}</span>
       </div>
       {carregando && <div style={{ padding:'30px 0', textAlign:'center', fontSize:13, color:'var(--faint)' }}>Carregando…</div>}
       {!carregando && topo === 0 && (
@@ -842,11 +842,16 @@ function Funil({ etapas, carregando }) {
         const wb = prox ? larg(prox.valor) : wt;
         const anterior = i > 0 ? etapas[i - 1] : null;
         const conv = anterior ? pct(e.valor, anterior.valor) : 100;
+        // A partir de "Segmentadas" a etapa é lista de leads: o clique abre a
+        // aba Leads com o MESMO recorte, e o número da lista bate com este.
+        const clicavel = !!onAbrirEtapa && i > 0 && e.valor > 0;
         return (
           <div key={e.chave} className="h-funil-linha"
             onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}
+            onClick={clicavel ? () => onAbrirEtapa(e) : undefined}
+            role={clicavel ? 'button' : undefined}
             style={{ display:'grid', gridTemplateColumns:'148px 1fr 74px', alignItems:'center',
-              gap:12, padding:'4px 0', position:'relative' }}>
+              gap:12, padding:'4px 0', position:'relative', cursor: clicavel ? 'pointer' : 'default' }}>
             <div style={{ minWidth:0 }}>
               <div style={{ fontSize:11.5, color:'var(--dim)', whiteSpace:'nowrap',
                 overflow:'hidden', textOverflow:'ellipsis' }}>{e.rotulo}</div>
@@ -869,6 +874,8 @@ function Funil({ etapas, carregando }) {
                 <b>{e.rotulo}</b><br/>
                 {fmtNum(e.valor)} de {fmtNum(topo)} · {pct(e.valor, topo)}% do topo
                 {anterior && <><br/>{conv}% de “{anterior.rotulo}”</>}
+                {e.chave === 'enviados' && e.manuais > 0 && <><br/>+ {fmtNum(e.manuais)} marcado(s) à mão como entregue(s) (fora desta conta)</>}
+                {clicavel && <><br/><span style={{ color:'var(--accent)' }}>Clique para ver esses leads</span></>}
               </div>
             )}
           </div>
@@ -960,7 +967,7 @@ function RadaresFunil({ radares, selecionado, onSelecionar, onAbrir, carregando 
   );
 }
 
-function Dashboard({ onOpenBusca }) {
+function Dashboard({ onOpenBusca, onVerLeads }) {
   const [alertas, setAlertas] = useState([]);
   const [atividade, setAtividade] = useState([]);
   const [funil, setFunil] = useState(null);
@@ -1004,13 +1011,52 @@ function Dashboard({ onOpenBusca }) {
   const etapas = funil?.etapas || [];
   const radares = funil?.radares || [];
   const corAlerta = t => t === 'erro' ? C.red : t === 'aviso' ? C.amber : C.blue;
+  const rotuloPeriodo = periodo === 'custom'
+    ? `${custom.de ? new Date(custom.de + 'T12:00').toLocaleDateString('pt-BR') : 'início'} a ${custom.ate ? new Date(custom.ate + 'T12:00').toLocaleDateString('pt-BR') : 'hoje'}`
+    : (PERIODOS.find(p => p.chave === periodo)?.rotulo || 'Tudo');
+
+  const abrirEtapa = (e) => onVerLeads && onVerLeads({
+    status:'', periodo:'', busca: radarSel != null ? String(radarSel) : '',
+    funil: { etapa: e.chave, rotulo: e.rotulo, valor: e.valor, periodo: rotuloPeriodo,
+      de: janela.de ? janela.de.toISOString() : '', ate: janela.ate ? janela.ate.toISOString() : '' },
+  });
+
+  const [gerando, setGerando] = useState(false);
+  const criarRelatorio = async () => {
+    // A janela abre já no clique: aberta depois do await, o navegador a trata
+    // como pop-up e bloqueia.
+    const w = window.open('', '_blank');
+    if (!w) { window.alert('Permita pop-ups para gerar o relatório.'); return; }
+    w.document.write('<p style="font:14px sans-serif;margin:40px">Montando o relatório…</p>');
+    setGerando(true);
+    try {
+      const q = [];
+      if (janela.de) q.push('de=' + encodeURIComponent(janela.de.toISOString()));
+      if (janela.ate) q.push('ate=' + encodeURIComponent(janela.ate.toISOString()));
+      const r = await fetch('/api/relatorio' + (q.length ? '?' + q.join('&') : ''), { credentials:'same-origin' });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.erro || 'erro');
+      w.document.open(); w.document.write(relatorioHtml(d, rotuloPeriodo)); w.document.close();
+    } catch (err) {
+      w.document.open(); w.document.write('<p style="font:14px sans-serif;margin:40px">Não consegui montar o relatório agora. Tente de novo.</p>'); w.document.close();
+    } finally { setGerando(false); }
+  };
 
   return (
     <div style={{ maxWidth:1180 }}>
-      <FiltroPeriodo periodo={periodo} setPeriodo={setPeriodo} custom={custom} setCustom={setCustom}/>
+      <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', gap:10, flexWrap:'wrap' }}>
+        <FiltroPeriodo periodo={periodo} setPeriodo={setPeriodo} custom={custom} setCustom={setCustom}/>
+        <button onClick={criarRelatorio} disabled={gerando} title={`Relatório da operação · ${rotuloPeriodo}`}
+          style={{ height:32, padding:'0 14px', borderRadius:8, border:'1px solid var(--border)', background:'var(--panel)',
+            color:'var(--text)', fontSize:12.5, fontFamily:'inherit', cursor:'pointer', display:'flex', alignItems:'center',
+            gap:7, whiteSpace:'nowrap', marginBottom:16, opacity: gerando ? .6 : 1 }}>
+          <Svg d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M8 13h8M8 17h5" w={14} h={14} sw={1.8}/>
+          {gerando ? 'Gerando…' : 'Criar relatório'}
+        </button>
+      </div>
 
       <div className="h-split" style={{ '--split':'1.25fr 1fr', gap:16, marginBottom:16 }}>
-        <Funil etapas={etapas} carregando={carregando}/>
+        <Funil etapas={etapas} carregando={carregando} onAbrirEtapa={onVerLeads ? abrirEtapa : null}/>
         <RadaresFunil radares={radares} selecionado={radarSel} carregando={carregando}
           onSelecionar={setRadarSel} onAbrir={onOpenBusca}/>
       </div>
@@ -1160,6 +1206,138 @@ function secaoLeadHtml(l) {
   <div class="rod">Gerado pelo Hunter em ${esc(new Date().toLocaleString('pt-BR'))}</div>
 </section>`;
 }
+// Relatório da operação para imprimir / salvar em PDF / enviar. Página
+// própria, clara, sem o tema do app. Sem nome de fornecedor nenhum.
+function relatorioHtml(d, rotuloPeriodo) {
+  const e = escHtml;
+  const n = v => Number(v || 0).toLocaleString('pt-BR');
+  const p = (a, b) => (b ? Math.round(a / b * 100) : 0);
+  const data = v => v ? new Date(v).toLocaleDateString('pt-BR') : '—';
+  const f = d.funil || {};
+  const etapas = [
+    ['Empresas encontradas', f.encontradas], ['Segmentadas (perfil)', f.segmentadas],
+    ['Leads qualificados', f.qualificados], ['Enviados ao CRM', f.enviados],
+  ];
+  const topo = f.encontradas || 0;
+  const funilHtml = etapas.map(([rot, v], i) => {
+    const w = topo ? Math.max(1.5, (v || 0) / topo * 100) : 0;
+    const conv = i === 0 ? '100% do topo' : `${p(v, etapas[i - 1][1])}% da etapa anterior`;
+    return `<div class="fl"><div class="fr"><b>${e(rot)}</b><span>${n(v)}</span></div>
+      <div class="fb"><i style="width:${w}%"></i></div><div class="fc">${conv}</div></div>`;
+  }).join('');
+  const c = d.contato || {}, crm = d.crm || {}, est = d.esteira || null;
+  const cor = { bom:'#0f9d58', atencao:'#d97706', acao:'#2563eb', info:'#6b7280' };
+  const rotRec = { bom:'Ponto forte', atencao:'Atenção', acao:'Ação sugerida', info:'Informação' };
+  const recs = (d.recomendacoes || []).map(r =>
+    `<li><span class="tag" style="border-color:${cor[r.tipo]};color:${cor[r.tipo]}">${rotRec[r.tipo] || ''}</span> ${e(r.texto)}</li>`).join('');
+  const linhaRadar = r => `<tr><td><b>${e(r.nome)}</b><div class="mut">${e(r.tipo)} · ${e(r.status)}${r.pauta ? ' · Estratégia: ' + e(r.pauta) : ''}</div></td>
+      <td class="num">${n(r.periodo.encontradas)}</td><td class="num">${n(r.periodo.segmentadas)}</td>
+      <td class="num">${n(r.periodo.qualificados)}</td><td class="num">${n(r.periodo.enviados)}</td>
+      <td class="num">${p(r.periodo.enviados, r.periodo.encontradas)}%</td></tr>`;
+  const fichaRadar = r => `<div class="ficha">
+      <h4>${e(r.nome)} <span class="mut">· ${e(r.status)}</span></h4>
+      <div class="mut">${e(r.tipo)}${r.pauta ? ' · criado pela Estratégia (' + e(r.pauta) + ')' : ''} · criado em ${data(r.criado_em)}
+        · última atividade ${data(r.atividade_em)} · envio ao CRM ${r.envio_automatico ? 'automático' : 'manual'}</div>
+      ${r.criterios.length ? `<div class="chips">${r.criterios.map(x => `<span>${e(x)}</span>`).join('')}</div>` : ''}
+      ${r.tags.length ? `<div class="mut">Tags no atendimento: ${r.tags.map(e).join(', ')}</div>` : ''}
+      <div class="mut">Desde a criação: ${n(r.total.encontradas)} empresas encontradas · ${n(r.total.leads)} leads ·
+        ${n(r.total.qualificados)} com contato completo · ${n(r.total.enviados)} enviados ao CRM</div>
+      ${r.descartes.length ? `<div class="mut">Principais motivos de descarte: ${r.descartes.map(x => `${e(x.motivo)} (${n(x.n)})`).join(' · ')}</div>` : ''}
+    </div>`;
+  const vend = (crm.por_vendedora || []).map(v => `<tr><td>${e(v.nome)}</td><td class="num">${n(v.recebidos)}</td><td class="num">${n(v.aguardando)}</td></tr>`).join('');
+  const dias = crm.por_dia || [];
+  const maxDia = Math.max(1, ...dias.map(x => x.n));
+  const diasHtml = dias.length ? `<div class="dias">${dias.map(x =>
+    `<div title="${e(x.dia)}: ${x.n}"><i style="height:${Math.max(4, x.n / maxDia * 100)}%"></i><span>${x.dia.slice(8)}/${x.dia.slice(5, 7)}</span></div>`).join('')}</div>` : '<p class="mut">Nenhum envio no período.</p>';
+  const desc = (d.descartes || []).map(x => `<tr><td>${e(x.motivo)}</td><td class="num">${n(x.n)}</td></tr>`).join('');
+  const radares = d.radares || [];
+  return `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<title>Relatório Hunter — ${e(rotuloPeriodo)}</title>
+<style>
+  *{box-sizing:border-box} body{font:13.5px/1.5 -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#111;margin:32px auto;max-width:860px;padding:0 16px}
+  h1{font-size:22px;margin:0} h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:#555;border-bottom:1px solid #ddd;padding-bottom:5px;margin:28px 0 12px}
+  h4{margin:0 0 3px;font-size:14px} .mut{color:#666;font-size:12px} .num{text-align:right;font-variant-numeric:tabular-nums}
+  .barra{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap}
+  .bt{height:34px;padding:0 14px;border:1px solid #bbb;border-radius:8px;background:#fff;font:inherit;cursor:pointer}
+  .fl{margin:0 0 10px} .fr{display:flex;justify-content:space-between} .fr span{font-size:18px;font-weight:600}
+  .fb{height:12px;background:#eef2f7;border-radius:6px;overflow:hidden} .fb i{display:block;height:100%;background:#3b6fd8}
+  .fc{font-size:11px;color:#777;margin-top:2px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+  .kpi{border:1px solid #e3e3e3;border-radius:8px;padding:9px 11px} .kpi b{display:block;font-size:19px} .kpi span{font-size:11.5px;color:#666}
+  table{width:100%;border-collapse:collapse} th,td{text-align:left;padding:6px 8px;border-bottom:1px solid #eee;vertical-align:top}
+  th{font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.04em} th.num{text-align:right}
+  .ficha{border:1px solid #e3e3e3;border-radius:8px;padding:10px 12px;margin-bottom:10px;page-break-inside:avoid}
+  .chips{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0} .chips span{font-size:11.5px;border:1px solid #ddd;border-radius:6px;padding:2px 7px;background:#fafafa}
+  ul.rec{padding-left:0;list-style:none;margin:0} ul.rec li{margin:0 0 8px;padding:8px 10px;border:1px solid #eee;border-radius:8px}
+  .tag{display:inline-block;font-size:10.5px;font-weight:600;border:1px solid;border-radius:5px;padding:0 6px;margin-right:4px}
+  .dias{display:flex;align-items:flex-end;gap:3px;height:110px;border-bottom:1px solid #ddd;padding-bottom:16px;overflow:hidden}
+  .dias div{flex:1;min-width:6px;max-width:34px;height:100%;display:flex;flex-direction:column;justify-content:flex-end;position:relative}
+  .dias i{display:block;background:#3b6fd8;border-radius:2px 2px 0 0} .dias span{position:absolute;bottom:-15px;left:0;font-size:8.5px;color:#888;white-space:nowrap}
+  .nota{font-size:11.5px;color:#777;margin-top:6px}
+  .rod{margin-top:30px;color:#999;font-size:11px;border-top:1px solid #eee;padding-top:8px}
+  @media print{.bt{display:none} body{margin:10mm auto}}
+</style></head><body>
+  <div class="barra">
+    <div><h1>Relatório da operação — Hunter</h1>
+      <div class="mut">Período: <b>${e(rotuloPeriodo)}</b> · gerado em ${new Date(d.gerado_em).toLocaleString('pt-BR')}</div></div>
+    <button class="bt" onclick="window.print()">Imprimir / salvar PDF</button>
+  </div>
+
+  <h2>Resumo e recomendações</h2>
+  <ul class="rec">${recs}</ul>
+
+  <h2>Funil da operação</h2>
+  ${funilHtml}
+  <p class="nota">O funil acompanha as empresas que ENTRARAM no período até onde chegaram (em qualquer data).
+    "Enviados ao CRM" conta os leads entregues ao CRM pelo Hunter, inclusive os que foram recusados depois${f.manuais ? `; outros ${n(f.manuais)} foram marcados à mão como entregues e não entram nesta conta` : ''}.</p>
+
+  <h2>Contato dos leads</h2>
+  <div class="kpis">
+    <div class="kpi"><b>${n(c.leads)}</b><span>leads criados no período (pela data em que viraram lead)</span></div>
+    <div class="kpi"><b>${n(c.completo)}</b><span>com telefone e e-mail (${p(c.completo, c.leads)}%)</span></div>
+    <div class="kpi"><b>${n(c.so_telefone)}</b><span>só com telefone</span></div>
+    <div class="kpi"><b>${n(c.sem_contato)}</b><span>ainda sem contato</span></div>
+    <div class="kpi"><b>${n(c.leads_achados)} de ${n(c.leads_buscados)}</b><span>buscas de contato com sucesso no período</span></div>
+  </div>
+
+  <h2>Envios ao CRM no período</h2>
+  <div class="kpis">
+    <div class="kpi"><b>${n(crm.enviados)}</b><span>enviados ao CRM (pela data do envio)</span></div>
+    <div class="kpi"><b>${n(crm.score_medio)}</b><span>score médio dos enviados</span></div>
+    <div class="kpi"><b>${n(crm.aguardando)}</b><span>aguardando atendimento</span></div>
+    <div class="kpi"><b>${n(crm.em_atendimento)}</b><span>em atendimento</span></div>
+    <div class="kpi"><b>${n(crm.recusados_depois)}</b><span>recusados depois do envio (👎)</span></div>
+    ${crm.manuais ? `<div class="kpi"><b>${n(crm.manuais)}</b><span>marcados à mão como entregues</span></div>` : ''}
+  </div>
+  <p class="nota">Aqui a conta é pela data do envio; no funil, pela data em que a empresa foi encontrada — por isso os dois números podem diferir.</p>
+  <div style="margin-top:12px">${diasHtml}</div>
+  ${vend ? `<h2>Distribuição por vendedora</h2>
+  <table><thead><tr><th>Vendedora</th><th class="num">Recebidos no período</th><th class="num">Aguardando agora</th></tr></thead><tbody>${vend}</tbody></table>` : ''}
+
+  ${est ? `<h2>Esteira agora</h2>
+  <div class="kpis">
+    <div class="kpi"><b>${n(est.total)}</b><span>ainda vão andar sozinhos até o CRM</span></div>
+    <div class="kpi"><b>${n(est.filtrando)}</b><span>empresas passando pelos filtros</span></div>
+    <div class="kpi"><b>${n(est.aprovadas)}</b><span>aprovadas esperando o limite</span></div>
+    <div class="kpi"><b>${n(est.contato)}</b><span>leads buscando contato</span></div>
+    <div class="kpi"><b>${n(est.esperando_vendedora)}</b><span>prontos esperando vaga numa vendedora</span></div>
+    <div class="kpi"><b>${n(est.aguardando_decisao)}</b><span>só telefone, aguardando decisão</span></div>
+  </div>` : ''}
+
+  <h2>Radares no período</h2>
+  ${radares.length ? `<table><thead><tr><th>Radar</th><th class="num">Encontradas</th><th class="num">Segmentadas</th>
+    <th class="num">Qualificados</th><th class="num">No CRM</th><th class="num">Conversão</th></tr></thead>
+    <tbody>${radares.map(linhaRadar).join('')}</tbody></table>` : '<p class="mut">Nenhum radar com movimento no período.</p>'}
+
+  ${desc ? `<h2>Leads descartados no período</h2>
+  <table><thead><tr><th>Motivo</th><th class="num">Leads</th></tr></thead><tbody>${desc}</tbody></table>` : ''}
+
+  ${radares.length ? `<h2>Especificação dos radares</h2>${radares.map(fichaRadar).join('')}` : ''}
+
+  <div class="rod">Hunter · relatório gerado automaticamente a partir dos dados da operação.</div>
+</body></html>`;
+}
+
 function abrirImpressaoLeads(leads) {
   const lista = (Array.isArray(leads) ? leads : [leads]).filter(Boolean);
   if (!lista.length) return;
@@ -1342,6 +1520,9 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
   const [filterDe, setFilterDe] = useState(inicial.de);
   const [filterAte, setFilterAte] = useState(inicial.ate);
   const [ordem, setOrdem] = useState(inicial.ordem);   // 'score' | 'recentes'
+  // Veio de uma etapa do funil do Dashboard: mesmo recorte do funil (empresas
+  // que entraram no período), pra lista mostrar exatamente aquele número.
+  const [funilRec, setFunilRec] = useState(inicial.funil || null);
   const datas = datasDoPeriodo(filterPeriodo, filterDe, filterAte);
   const [buscasOpts, setBuscasOpts] = useState([]);
   const [selected, setSelected] = useState([]);
@@ -1447,7 +1628,19 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
     setFilterStatus(p.status); setFilterBusca(p.busca); setFilterLocal(p.local); setDebouncedLocal(p.local);
     setFilterScore(p.score); setFilterAnalise(p.analise); setEmailOnly(p.email); setFilterPeriodo(p.periodo);
     setFilterDe(p.de); setFilterAte(p.ate); setOrdem(p.ordem); setQ(''); setDebouncedQ(''); setPage(1);
+    setFunilRec(null);
   };
+  // Os filtros do painel "Filtros" ficam guardados no navegador: sem isto, um
+  // "Score 75 ou mais" de dias atrás cortava a lista sem aparecer na tela.
+  const chipsExtras = [
+    filterLocal.trim() && { rot:`Local: ${filterLocal.trim()}`, limpar: () => { setFilterLocal(''); setDebouncedLocal(''); } },
+    filterScore && { rot:`Score ${filterScore} ou mais`, limpar: () => setFilterScore('') },
+    filterAnalise && { rot: filterAnalise === 'sem' ? 'Sem análise SWOT' : 'Com análise SWOT', limpar: () => setFilterAnalise('') },
+    emailOnly && { rot:'Só com e-mail', limpar: () => setEmailOnly(false) },
+    ordem !== 'score' && { rot:'Mais recentes primeiro', limpar: () => setOrdem('score') },
+    filterPeriodo === 'custom' && (filterDe || filterAte) && { rot:`Período: ${filterDe || '…'} a ${filterAte || '…'}`,
+      limpar: () => { setFilterPeriodo(''); setFilterDe(''); setFilterAte(''); } },
+  ].filter(Boolean);
 
   // Lista de buscas pra o filtro (mantém todas, aprovadas ou não).
   useEffect(() => {
@@ -1501,6 +1694,12 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
     if (usaPeriodo && datas.de) params.set('de', datas.de);
     if (usaPeriodo && datas.ate) params.set('ate', datas.ate);
     if (ordem === 'recentes') params.set('ordem', 'recentes');
+    if (funilRec) {
+      params.set('funil', '1');
+      if (funilRec.de) params.set('funil_de', funilRec.de);
+      if (funilRec.ate) params.set('funil_ate', funilRec.ate);
+      if (funilRec.etapa) params.set('etapa', funilRec.etapa);
+    }
     params.set('page', page);
     params.set('per_page', PER_PAGE);
     // Digitando rápido, uma resposta antiga podia chegar depois da nova e
@@ -1515,7 +1714,7 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
       .catch(() => {})
       .finally(() => { if (meu === reqRef.current) setLoading(false); });
   }, [debouncedQ, filterStatus, emailOnly, filterBusca, debouncedLocal, filterScore, filterAnalise,
-      datas.de, datas.ate, ordem, page, refreshKey, tick]);
+      datas.de, datas.ate, ordem, page, refreshKey, tick, funilRec]);
 
   const allSel = leads.length > 0 && leads.every(l => selected.includes(l.id));
   const toggleSel = (id) => setSelected(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id]);
@@ -1767,6 +1966,33 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
         )}
       </div>
 
+      {funilRec && (
+        <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap', background:'var(--panel2)',
+          border:'1px solid var(--border)', borderRadius:10, padding:'9px 13px', marginTop:-6, marginBottom:14, fontSize:12.5 }}>
+          <span style={{ color:'var(--dim)' }}>
+            Do funil do Dashboard: <b style={{ color:'var(--text)' }}>{funilRec.rotulo}</b>
+            {' '}· empresas que entraram no funil em <b style={{ color:'var(--text)' }}>{funilRec.periodo || 'todo o período'}</b>
+            {funilRec.valor != null && <> · o funil mostra {fmtNum(funilRec.valor)}</>}
+          </span>
+          <button onClick={() => { setFunilRec(null); setPage(1); }}
+            style={{ marginLeft:'auto', background:'none', border:'none', padding:0, color:'var(--accent)', fontSize:12.5,
+              fontFamily:'inherit', cursor:'pointer', textDecoration:'underline' }}>sair do recorte do funil</button>
+        </div>
+      )}
+
+      {chipsExtras.length > 0 && (
+        <div style={{ display:'flex', alignItems:'center', gap:7, flexWrap:'wrap', marginTop:-6, marginBottom:14 }}>
+          <span style={{ fontSize:11.5, color:'var(--faint)' }}>Filtros ligados:</span>
+          {chipsExtras.map(c => (
+            <button key={c.rot} onClick={() => { c.limpar(); setPage(1); }} title="Tirar este filtro"
+              style={{ display:'inline-flex', alignItems:'center', gap:6, height:26, padding:'0 9px', borderRadius:7,
+                border:`1px solid ${C.gold}`, background:'transparent', color:'var(--text)', fontSize:12, fontFamily:'inherit', cursor:'pointer' }}>
+              {c.rot}<Svg d="M18 6L6 18M6 6l12 12" w={11} h={11} sw={2.2}/>
+            </button>
+          ))}
+        </div>
+      )}
+
       {varredura && (
         <div style={{ display:'flex', alignItems:'center', gap:14, background:'var(--panel2)',
           border:`1px solid ${C.red}`, borderRadius:11, padding:'12px 15px', marginBottom:14,
@@ -1938,6 +2164,7 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
         <span>
           Mostrando {leads.length} de {fmtNum(total)} leads
           {filterPeriodo === 'mes' && !debouncedQ && <> que entraram este mês</>}
+          {chipsExtras.length > 0 && <> · com {chipsExtras.length} filtro{chipsExtras.length > 1 ? 's' : ''} ligado{chipsExtras.length > 1 ? 's' : ''} (acima)</>}
           {finalizados > 0 && (
             <> · {fmtNum(finalizados)} já com definição (enviados ou descartados) fora da lista —{' '}
               <button onClick={() => { setFilterStatus(''); setPage(1); setSelected([]); }}
@@ -8931,7 +9158,8 @@ function App() {
     if (TELAS_MASTER.has(screen) && !user?.master) return <Dashboard onOpenBusca={openBusca}/>;
     if (screen === 'usuarios' && !(user?.master || user?.papel === 'Admin')) return <Dashboard onOpenBusca={openBusca}/>;
     switch(screen) {
-      case 'dashboard': return <Dashboard onOpenBusca={openBusca}/>;
+      case 'dashboard': return <Dashboard onOpenBusca={openBusca}
+        onVerLeads={preset => { setLeadsPreset(preset); setScreen('leads'); setOpenLeadId(null); }}/>;
       case 'leads': return (
         <Leads key={leadsPreset ? JSON.stringify(leadsPreset) : 'leads'} refreshKey={leadsRefreshKey}
           onOpenLead={setOpenLeadId} onCrm={setCrmIds} user={user} preset={leadsPreset}/>
