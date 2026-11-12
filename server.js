@@ -975,11 +975,26 @@ async function init() {
     CREATE INDEX IF NOT EXISTS idx_busca_contato_log_glasser ON busca_contato_log(lead_id) WHERE pago_fonte = 'glasser';
   `);
 
+  // Palavras negativadas pelo usuário (providers/negativas.js): empresa com uma
+  // delas no nome não vira lead em radar nenhum do cliente. `raiz` é a forma de
+  // comparar (sem acento, singular); `palavra` é como o usuário escreveu.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS palavras_negativas (
+      id         SERIAL PRIMARY KEY,
+      palavra    TEXT NOT NULL,
+      raiz       TEXT NOT NULL,
+      lead_id    INTEGER,
+      criado_por TEXT,
+      criado_em  TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+  `);
+
   for (const t of ['usuarios', 'buscas', 'leads', 'integracoes', 'sementes', 'contadores', 'contadores_hora', 'propostas_valor', 'listas_semelhantes', 'chaves_api',
                    'estrategia', 'estrategia_pautas', 'estrategia_slots', 'estrategia_eventos', 'decisoes_jev',
-                   'avaliacoes_lista', 'busca_contato_log']) {
+                   'avaliacoes_lista', 'busca_contato_log', 'palavras_negativas']) {
     await tenantizarTabela(pool, t);
   }
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_palavras_negativas_raiz ON palavras_negativas(tenant_id, raiz)`);
 
   // usuarios.email era UNIQUE global — dois clientes não podiam ter o mesmo
   // e-mail cadastrado. Agora só precisa ser único DENTRO do tenant.
@@ -2068,6 +2083,8 @@ app.get('/api/relatorio', requireAuth, async (req, res) => {
       nao_e_comprador: 'Mesmo ramo, mas não é o tipo de empresa que compra', radar_sem_perfil: 'Busca ainda sem perfil definido',
       desistiu_de_esperar: 'Aprovadas, mas ficaram tempo demais na fila', esperou_vaga: 'Aprovadas, mas ficaram tempo demais na fila',
       score_recalculado: 'Reavaliadas e ficaram abaixo do perfil', fora_do_perfil: 'Recusadas pelo time comercial (fora do perfil)',
+      palavra_negativada: 'Nome com palavra que o time marcou como fora do perfil',
+      sem_palavra_do_ramo: 'Sem nenhuma palavra do ramo no nome', filtro_perfil: 'Reavaliadas e fora do perfil',
       outro: 'Outros motivos',
     };
     const descCnae = new Map(catalogoCnae().map(x => [x.c, x.d]));
@@ -2242,6 +2259,7 @@ app.get('/api/buscas/:id', requireAuth, async (req, res) => {
       producao: prodRow.rows.map(r => r.n),
       leads: leadsRow.rows,
       conferencia_ia: b.tipo === 'lookalike' ? await conferenciaIa(b) : null,
+      foco_palavras: b.tipo === 'lookalike' ? require('./providers/perfil').focoPalavras(b.criterios) : null,
     });
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
@@ -2359,6 +2377,25 @@ app.patch('/api/buscas/:id', requireAuth, requireEditor, async (req, res) => {
   // Modo de envio ao CRM. Só dava pra escolher na CRIAÇÃO do radar: depois de
   // criado, um radar marcado como manual ficava manual pra sempre — a única
   // saída era duplicar e apagar o original.
+  // Foco nas palavras do ramo: true/false = escolha do usuário; null = volta
+  // ao automático (liga quando as palavras cobrem boa parte dos clientes).
+  // Vale também pra pauta da Estratégia, pros próximos radares dela.
+  if ('foco_palavras' in req.body) {
+    const v = req.body.foco_palavras;
+    if (v !== null && typeof v !== 'boolean') return res.status(400).json({ erro: 'foco_palavras deve ser true, false ou null' });
+    const { rows: [b] } = await pool.query(`SELECT criterios, estrategia_pauta_id FROM buscas WHERE id=$1`, [id]);
+    if (!b) return res.status(404).json({ erro: 'radar não encontrado' });
+    const crit = { ...(b.criterios || {}) };
+    if (v === null) delete crit.foco_palavras; else crit.foco_palavras = v;
+    sets.push(`criterios=$${sets.length+1}::jsonb`); vals.push(JSON.stringify(crit));
+    if (b.estrategia_pauta_id) {
+      await pool.query(
+        `UPDATE estrategia_pautas SET criterios = CASE WHEN $2::jsonb IS NULL THEN criterios - 'foco_palavras'
+                                                       ELSE criterios || jsonb_build_object('foco_palavras', $2::jsonb) END,
+                atualizado_em=now() WHERE id=$1`,
+        [b.estrategia_pauta_id, v === null ? null : JSON.stringify(v)]).catch(e => console.error('[foco] pauta:', e.message));
+    }
+  }
   if (typeof req.body.crm_auto === 'boolean') {
     sets.push(`crm_auto=$${sets.length+1}`); vals.push(req.body.crm_auto);
   }
@@ -3087,6 +3124,112 @@ app.post('/api/leads/:id/fora-do-perfil', requireAuth, requireEditor, async (req
       `SELECT COUNT(*)::int n FROM sementes WHERE lista=$1 AND tipo='negativa'`, [l.lista]);
     res.json({ ok: true, aprendeu: true, lista: l.lista, negativos: n, radares: buscas.length });
   } catch (e) { console.error('[fora-do-perfil]', e.message); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// ── Palavras negativadas ─────────────────────────────────────────────────────
+// Leads em aberto (não enviados, não descartados) com a palavra no nome.
+async function leadsAbertosComPalavra(raiz) {
+  const neg = require('./providers/negativas');
+  const mapa = new Map([[raiz, raiz]]);
+  const { rows } = await pool.query(
+    `SELECT id, fantasia, razao FROM leads
+      WHERE enviado_crm_em IS NULL AND COALESCE(status,'') NOT IN ('Enviado','Descartado')
+        AND translate(lower(coalesce(fantasia,'') || ' ' || coalesce(razao,'')),
+                      'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc') LIKE $1`, [`%${raiz}%`]);
+  return rows.filter(l => neg.noNome(l, mapa));
+}
+
+app.get('/api/palavras-negativas', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, palavra, raiz, criado_por, criado_em FROM palavras_negativas ORDER BY palavra`);
+    res.json({ palavras: rows });
+  } catch (e) { console.error('[negativas]', e.message); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// Prévia: quantos leads em aberto saem da lista se a palavra for negativada.
+app.get('/api/palavras-negativas/previa', requireAuth, async (req, res) => {
+  const neg = require('./providers/negativas');
+  const palavra = String(req.query.palavra || '').trim();
+  if (!neg.aceita(palavra)) return res.status(400).json({ erro: 'palavra curta ou genérica demais' });
+  try {
+    const raiz = neg.raiz(palavra);
+    const abertos = await leadsAbertosComPalavra(raiz);
+    res.json({ palavra, raiz, abertos: abertos.length, exemplos: abertos.slice(0, 5).map(l => l.fantasia || l.razao) });
+  } catch (e) { console.error('[negativas]', e.message); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// Negativa uma ou mais palavras. Os leads em aberto com elas no nome saem da
+// lista de trabalho (Descartado, motivo 'palavra_negativada'); os enviados
+// ficam como estão. Não vira contraexemplo do perfil: a regra já é explícita.
+async function negativarPalavras(lista, { leadId = null, usuario = null } = {}) {
+  const neg = require('./providers/negativas');
+  const feitas = [];
+  let descartados = 0;
+  for (const p of [...new Set((lista || []).map(x => String(x || '').trim()).filter(Boolean))].slice(0, 10)) {
+    if (!neg.aceita(p)) continue;
+    const raiz = neg.raiz(p);
+    await pool.query(
+      `INSERT INTO palavras_negativas (palavra, raiz, lead_id, criado_por) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (tenant_id, raiz) DO NOTHING`, [p.toLowerCase(), raiz, leadId, usuario]);
+    const abertos = await leadsAbertosComPalavra(raiz);
+    if (abertos.length) {
+      const { rowCount } = await pool.query(
+        `UPDATE leads SET status='Descartado', motivo_descarte='palavra_negativada', contato_pendente=false,
+                breakdown = COALESCE(breakdown, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('item', $2::text, 'pts', 0)),
+                atualizado_em=now()
+          WHERE id = ANY($1::int[]) AND enviado_crm_em IS NULL AND COALESCE(status,'') NOT IN ('Enviado','Descartado')`,
+        [abertos.map(l => l.id), `Nome contém "${p.toLowerCase()}" — palavra que você negativou`]);
+      descartados += rowCount;
+    }
+    feitas.push({ palavra: p.toLowerCase(), raiz });
+  }
+  neg.invalidar();
+  return { palavras: feitas, descartados };
+}
+
+app.post('/api/palavras-negativas', requireAuth, requireEditor, async (req, res) => {
+  const lista = Array.isArray(req.body?.palavras) ? req.body.palavras : [req.body?.palavra];
+  try {
+    const r = await negativarPalavras(lista, { leadId: parseInt(req.body?.lead_id, 10) || null, usuario: req.user?.email || null });
+    if (!r.palavras.length) return res.status(400).json({ erro: 'palavra curta ou genérica demais' });
+    res.json({ ok: true, ...r });
+  } catch (e) { console.error('[negativas]', e.message); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// Tirar a palavra: volta a valer daqui pra frente. Os leads descartados por ela
+// não voltam sozinhos (podem ser recuperados no filtro "Descartado").
+app.delete('/api/palavras-negativas/:id', requireAuth, requireEditor, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
+  try {
+    await pool.query(`DELETE FROM palavras_negativas WHERE id=$1`, [id]);
+    require('./providers/negativas').invalidar();
+    res.json({ ok: true });
+  } catch (e) { console.error('[negativas]', e.message); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// Palavras do nome de um lead, pra escolher qual negativar depois do joinha.
+// Marca as que já estão negativadas e as que são palavra do ramo do radar
+// (negativar uma dessas derruba os bons leads junto — a tela avisa).
+app.get('/api/leads/:id/palavras', requireAuth, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
+  try {
+    const { rows: [l] } = await pool.query(
+      `SELECT l.fantasia, l.razao, b.criterios FROM leads l LEFT JOIN buscas b ON b.id = l.busca_id WHERE l.id=$1`, [id]);
+    if (!l) return res.status(404).json({ erro: 'lead não encontrado' });
+    const neg = require('./providers/negativas');
+    const pal = require('./providers/palavras');
+    const mapa = await neg.carregar(pool);
+    const ramo = (l.criterios?.params?.perfil?.palavras || []).filter(pal.valida);
+    const palavras = neg.palavrasDoNome(l).map(p => ({
+      palavra: p.palavra,
+      negativada: mapa.has(p.raiz),
+      do_ramo: ramo.some(r => r.f === pal.familia(p.palavra)),
+    }));
+    res.json({ nome: l.fantasia || l.razao, palavras });
+  } catch (e) { console.error('[lead-palavras]', e.message); res.status(500).json({ erro: 'erro interno' }); }
 });
 
 // Dado um lead marcado como fora do perfil, acha os OUTROS leads com o mesmo

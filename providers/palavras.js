@@ -188,5 +188,5 @@ function palavraDoRamoNoNome(emp, palavras) {
   return (palavras || []).find(p => valida(p) && fams.has(p.f)) || null;
 }
 
-module.exports = { familia, agrupar, palavrasDoRamo, termosDeBusca, palavraDoRamoNoNome, valida,
+module.exports = { familia, singular, agrupar, palavrasDoRamo, termosDeBusca, palavraDoRamoNoNome, valida,
   shareNoCadastro, SHARE_GENERICA, LIFT_GENERICA };
