@@ -635,9 +635,42 @@ function palavraDoRamo(emp, perfil) {
     && (x.freq || 0) >= NOME_FREQ_MIN && !(x.ev != null && x.ev <= 0.35)) || null;
 }
 
+// ── Foco nas palavras do ramo ───────────────────────────────────────────────
+// A atividade principal dos clientes costuma ser um código largo ("comércio de
+// eletrodomésticos" cobre filtro de água e loja de drone). Quando os nomes dos
+// clientes têm um padrão claro — boa parte deles carrega uma palavra do ramo —
+// o radar passa a mirar só quem tem uma dessas palavras no nome: a busca não
+// varre mais a atividade sozinha, e o filtro não aceita quem não tem a palavra.
+// Ligado sozinho quando as palavras cobrem FOCO_COBERTURA_MIN dos clientes; o
+// usuário liga ou desliga no radar (criterios.foco_palavras).
+const FOCO_COBERTURA_MIN = 0.35;
+
+// Fração (aproximada) dos clientes com pelo menos uma palavra válida no nome,
+// a partir da frequência de cada palavra. Serve enquanto a medida exata, feita
+// ao montar o perfil (perfil.palavras_cobertura), não existe ou ficou velha
+// (o usuário tirou ou devolveu uma palavra).
+function coberturaPalavras(palavras) {
+  const { valida } = require('./palavras');
+  const fs = (palavras || []).filter(p => valida(p) && p.origem === 'clientes').map(p => Math.min(1, p.freq || 0));
+  return fs.length ? +(1 - fs.reduce((t, f) => t * (1 - f), 1)).toFixed(3) : 0;
+}
+
+// { ativo, automatico, cobertura, palavras } do radar. `criterios` = buscas.criterios.
+function focoPalavras(criterios) {
+  const perfil = criterios?.params?.perfil;
+  const pal = Array.isArray(perfil?.palavras) ? perfil.palavras : [];
+  const validas = pal.filter(require('./palavras').valida);
+  const cobertura = typeof perfil?.palavras_cobertura === 'number' ? perfil.palavras_cobertura : coberturaPalavras(pal);
+  const escolha = typeof criterios?.foco_palavras === 'boolean' ? criterios.foco_palavras : null;
+  // Sem nenhuma palavra válida não há no que focar, mesmo se pedido.
+  const ativo = validas.length > 0 && (escolha != null ? escolha : cobertura >= FOCO_COBERTURA_MIN);
+  return { ativo, automatico: escolha == null, cobertura, palavras: validas.length };
+}
+
 // Devolve null (passa) ou { motivo, item } (barrada). `perfil` = semelhantes;
 // sem ele, `cnaesRadar` = atividades escolhidas num radar de perfil (ICP).
-function portaoPerfil(emp, { perfil = null, cnaesRadar = [] } = {}) {
+// `foco` (semelhantes): só passa quem tem palavra do ramo no nome.
+function portaoPerfil(emp, { perfil = null, cnaesRadar = [], foco = false } = {}) {
   const c = digitos(emp.cnae);
   const cnaeAlvo = !!c && (perfil
     ? (perfil.cnaes || []).some(x => x.c === c && !x.so_negativo && (x.freq || 0) >= ATIVIDADE_FREQ_MIN)
@@ -670,6 +703,9 @@ function portaoPerfil(emp, { perfil = null, cnaesRadar = [] } = {}) {
   if (!c) return nome ? null : { motivo: 'atividade_desconhecida', item: 'Atividade da empresa desconhecida e nome sem palavra do ramo' };
   const recusada = (perfil.cnaes || []).find(x => x.c === c && x.so_negativo);
   if (recusada) return { motivo: 'atividade_recusada', item: `Atividade ${fmtCnae(c)} — só aparece entre os que você recusou` };
+  if (foco && !nome) {
+    return { motivo: 'sem_palavra_do_ramo', item: 'Nome sem nenhuma palavra do ramo dos seus clientes (radar em foco nas palavras)' };
+  }
   const exato = cnaes.find(x => x.c === c);
   if (exato && (exato.freq >= ATIVIDADE_FREQ_MIN || nome)) return null;
   const grupo = !exato && cnaes.find(x => x.c.slice(0, 4) === c.slice(0, 4));
@@ -683,4 +719,5 @@ function portaoPerfil(emp, { perfil = null, cnaesRadar = [] } = {}) {
 }
 
 module.exports = { MIN_PERFIL, W, parseCnpjs, construirPerfil, pontuarProximidade, poderDimensao, calcularPesos, tokensNome,
-  portaoPerfil, palavraDoRamo, entidadeDe, ATIVIDADE_FREQ_MIN, NOME_FREQ_MIN };
+  portaoPerfil, palavraDoRamo, entidadeDe, ATIVIDADE_FREQ_MIN, NOME_FREQ_MIN,
+  focoPalavras, coberturaPalavras, FOCO_COBERTURA_MIN };

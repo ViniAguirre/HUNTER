@@ -1635,6 +1635,7 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
   const [exportIds, setExportIds] = useState(null);
   const [tick, setTick] = useState(0);   // força recarregar a lista após ações em lote
   const [varredura, setVarredura] = useState(null);   // { criterio, candidatos } achados após um joinha
+  const [negativar, setNegativar] = useState(null);   // { leadId, nome, palavras, sel, previa } após um joinha
   const [novoLead, setNovoLead] = useState(false);    // modal de cadastro manual (só MASTER)
 
   // Atualiza UMA linha no lugar, sem refazer a busca — evita o pisca e a perda
@@ -1663,11 +1664,40 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
   // Depois de marcar um lead, procura os outros com o MESMO perfil (mesma
   // atividade + mesmo porte) e oferece marcar todos de uma vez.
   const varrerIguais = async (id) => {
+    // Palavras do nome: pra o usuário dizer QUAL delas mostra que não serve.
+    fetch('/api/leads/' + id + '/palavras', { credentials:'same-origin' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.palavras?.some(p => !p.negativada)) setNegativar({ leadId: id, nome: d.nome, palavras: d.palavras, sel: [], previa: null }); })
+      .catch(() => {});
     try {
       const r = await fetch('/api/leads/' + id + '/mesmo-perfil', { credentials:'same-origin' });
       const d = await r.json().catch(() => ({}));
       if (r.ok && d.candidatos?.length) setVarredura(d);
     } catch (_) {}
+  };
+
+  // Seleciona/desmarca uma palavra e mostra quantos leads em aberto sairiam.
+  const alternarPalavra = async (palavra) => {
+    const sel = negativar.sel.includes(palavra) ? negativar.sel.filter(x => x !== palavra) : [...negativar.sel, palavra];
+    setNegativar(n => n && { ...n, sel, previa: sel.length ? '…' : null });
+    if (!sel.length) return;
+    const ns = await Promise.all(sel.map(p => fetch('/api/palavras-negativas/previa?palavra=' + encodeURIComponent(p), { credentials:'same-origin' })
+      .then(r => r.ok ? r.json() : { abertos: 0 }).catch(() => ({ abertos: 0 }))));
+    setNegativar(n => n && JSON.stringify(n.sel) === JSON.stringify(sel) ? { ...n, previa: ns.reduce((t, x) => t + (x.abertos || 0), 0) } : n);
+  };
+  const confirmarNegativar = async () => {
+    if (!negativar?.sel.length) return;
+    const r = await fetch('/api/palavras-negativas', { method:'POST', credentials:'same-origin',
+      headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ palavras: negativar.sel, lead_id: negativar.leadId }) }).catch(() => null);
+    const d = r ? await r.json().catch(() => ({})) : {};
+    if (!r || !r.ok) { alert(d.erro || 'Não consegui negativar.'); return; }
+    setNegativar(null);
+    // A faixa "mesmo perfil" listava os leads que a palavra acabou de tirar.
+    setVarredura(null);
+    setTick(t => t + 1);
+    alert(`Palavra${d.palavras.length > 1 ? 's' : ''} negativada${d.palavras.length > 1 ? 's' : ''}: ${d.palavras.map(p => p.palavra).join(', ')}.`
+      + (d.descartados ? ` ${d.descartados} lead(s) em aberto com ${d.palavras.length > 1 ? 'elas' : 'ela'} no nome saíram da lista.` : '')
+      + ' Empresas com essa palavra no nome não viram mais lead em nenhum radar.');
   };
 
   const marcarLote = async () => {
@@ -2095,6 +2125,55 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
               {c.rot}<Svg d="M18 6L6 18M6 6l12 12" w={11} h={11} sw={2.2}/>
             </button>
           ))}
+        </div>
+      )}
+
+      {negativar && (
+        <div style={{ background:'var(--panel2)', border:`1px solid ${C.red}`, borderRadius:11, padding:'12px 15px',
+          marginBottom:14, animation:'hfade .2s ease' }}>
+          <div style={{ fontSize:13, fontWeight:600, marginBottom:2 }}>
+            Alguma palavra do nome mostra que “{negativar.nome}” não serve?
+          </div>
+          <div style={{ fontSize:12, color:'var(--faint)', lineHeight:1.5, marginBottom:8 }}>
+            Negativar uma palavra é mais forte que a mãozinha: empresa com ela no nome não vira mais lead em nenhum radar,
+            e os leads em aberto com ela saem da lista. Escolha só a palavra que indica o ramo errado (ex.: “drone”, “automotivo”).
+          </div>
+          <div style={{ display:'flex', flexWrap:'wrap', gap:6, alignItems:'center' }}>
+            {negativar.palavras.map(p => {
+              const on = negativar.sel.includes(p.palavra);
+              return (
+                <button key={p.palavra} type="button" disabled={p.negativada} onClick={() => alternarPalavra(p.palavra)}
+                  title={p.negativada ? 'Já negativada' : p.do_ramo ? 'Palavra do ramo dos seus clientes: negativar derruba os bons leads junto' : 'Negativar esta palavra'}
+                  style={{ height:28, padding:'0 10px', borderRadius:7, fontSize:12.5, fontFamily:'inherit',
+                    cursor: p.negativada ? 'default' : 'pointer', textDecoration: p.negativada ? 'line-through' : 'none',
+                    border:`1px solid ${on ? C.red : p.do_ramo ? C.amber : 'var(--border)'}`,
+                    background: on ? 'color-mix(in srgb, ' + C.red + ' 16%, transparent)' : 'transparent',
+                    color: p.negativada ? 'var(--faint)' : 'var(--text)' }}>
+                  {p.palavra}{p.do_ramo && !p.negativada ? ' ⚠' : ''}
+                </button>
+              );
+            })}
+          </div>
+          {negativar.sel.some(s => negativar.palavras.find(p => p.palavra === s)?.do_ramo) && (
+            <div style={{ fontSize:12, color:C.amber, marginTop:8 }}>
+              ⚠ Você escolheu uma palavra do ramo dos seus clientes — empresas boas com ela no nome também vão parar de chegar.
+            </div>
+          )}
+          <div style={{ display:'flex', gap:8, alignItems:'center', marginTop:10, flexWrap:'wrap' }}>
+            <button onClick={confirmarNegativar} disabled={!negativar.sel.length}
+              style={{ height:34, padding:'0 14px', borderRadius:9, border:'none', background: negativar.sel.length ? C.red : 'var(--border)',
+                color:'#fff', fontWeight:600, fontSize:12.5, fontFamily:'inherit', cursor: negativar.sel.length ? 'pointer' : 'default' }}>
+              Negativar {negativar.sel.length > 1 ? `${negativar.sel.length} palavras` : 'palavra'}
+            </button>
+            <button onClick={() => setNegativar(null)}
+              style={{ height:34, padding:'0 14px', borderRadius:9, border:'1px solid var(--border)', background:'transparent',
+                color:'var(--dim)', fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>Nenhuma</button>
+            {negativar.previa != null && (
+              <span style={{ fontSize:12, color:'var(--faint)' }}>
+                {negativar.previa === '…' ? 'Contando…' : `${fmtNum(negativar.previa)} lead(s) em aberto com ${negativar.sel.length > 1 ? 'essas palavras' : 'essa palavra'} sairão da lista.`}
+              </span>
+            )}
+          </div>
         </div>
       )}
 
@@ -2553,7 +2632,9 @@ const MOTIVOS_DESCARTE = [
   ['atividade_desconhecida', 'Atividade desconhecida, sem palavra do ramo no nome'],
   ['entidade_nao_empresarial', 'Igreja, órgão público, condomínio, sindicato…'],
   ['abaixo_do_corte', 'Nota abaixo do corte'],
-  ['nao_e_comprador', 'Só a atividade bate, e a segunda verificação diz que não é o tipo de empresa que compra'],
+  ['nao_e_comprador', 'A segunda verificação diz que não é o tipo de empresa que compra'],
+  ['palavra_negativada', 'Nome com uma palavra que você negativou'],
+  ['sem_palavra_do_ramo', 'Sem palavra do ramo no nome (radar em foco nas palavras)'],
   ['radar_sem_perfil', 'Radar ainda sem perfil'],
   ['desistiu_de_esperar', 'Aprovadas que desistiram de esperar vaga (7 dias)'],
 ];
@@ -2591,8 +2672,8 @@ function RaioXRadar({ b }) {
       {b.conferencia_ia && (
         <div style={{ fontSize:12, lineHeight:1.45, margin:'0 0 10px', color: b.conferencia_ia.ativa ? C.green : C.amber }}>
           {b.conferencia_ia.ativa
-            ? <>Segunda verificação ligada: empresa que entra só pela atividade (sem palavra do ramo no nome) só vira lead se for um provável comprador da proposta{b.conferencia_ia.proposta === 'cadastro' ? ' (cadastrada em Propostas)' : ''}.</>
-            : <>Segunda verificação desligada{!b.conferencia_ia.decisoes ? ' — ative "Decisões" em Integrações' : ' — cadastre uma proposta de valor em Propostas'}: empresa que entra só pela atividade vira lead sem essa conferência.</>}
+            ? <>Segunda verificação ligada: antes de virar lead, toda empresa é conferida contra a proposta{b.conferencia_ia.proposta === 'cadastro' ? ' (cadastrada em Propostas)' : ''}. Sem palavra do ramo no nome, precisa ser provável compradora; com a palavra, só cai se não tiver uso para o que você vende.</>
+            : <>Segunda verificação desligada{!b.conferencia_ia.decisoes ? ' — ative "Decisões" em Integrações' : ' — cadastre uma proposta de valor em Propostas'}: as empresas viram lead sem essa conferência.</>}
         </div>
       )}
       {linha('Viraram lead', leads, C.green,
@@ -2611,8 +2692,16 @@ function RaioXRadar({ b }) {
 // Palavras do ramo do radar de semelhantes (providers/palavras.js): as que vêm
 // dos nomes dos clientes, as sugeridas, e as genéricas que ficaram de fora. A
 // que não servir sai com um clique (vale pros próximos radares da pauta).
-function PalavrasDoRamo({ buscaId, palavras, onMudou }) {
+function PalavrasDoRamo({ buscaId, palavras, foco, onMudou }) {
   const [busy, setBusy] = useState(null);
+  const mudarFoco = async (valor) => {
+    setBusy('foco');
+    const r = await fetch('/api/buscas/' + buscaId, { method:'PATCH', credentials:'same-origin',
+      headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ foco_palavras: valor }) }).catch(() => null);
+    setBusy(null);
+    if (!r || !r.ok) { alert('Não consegui salvar.'); return; }
+    onMudou && onMudou();
+  };
   const mudar = async (f, remover) => {
     setBusy(f);
     const r = await fetch(`/api/buscas/${buscaId}/palavras`, { method:'POST', credentials:'same-origin',
@@ -2635,6 +2724,33 @@ function PalavrasDoRamo({ buscaId, palavras, onMudou }) {
         O radar procura empresas com estas palavras no nome — e, nas atividades menos comuns entre os seus clientes, só aceita
         quem tem uma delas. Singular, plural e variações contam como a mesma palavra. Tire a que não servir.
       </div>
+      {foco && (
+        <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap', padding:'10px 12px', borderRadius:10,
+          background:'var(--panel2)', border:`1px solid ${foco.ativo ? C.green : 'var(--border)'}`, margin:'4px 0 6px' }}>
+          <div style={{ flex:'1 1 260px', fontSize:12.5, lineHeight:1.45 }}>
+            <b style={{ color: foco.ativo ? C.green : 'var(--text)' }}>Foco nas palavras: {foco.ativo ? 'ligado' : 'desligado'}</b>
+            {foco.automatico ? ' (automático)' : ' (escolhido por você)'}
+            <div style={{ fontSize:11.5, color:'var(--faint)' }}>
+              {Math.round((foco.cobertura || 0) * 100)}% dos seus clientes têm uma dessas palavras no nome.{' '}
+              {foco.ativo
+                ? 'O radar só busca e só aceita empresas com uma delas no nome — menos volume, muito menos sujeira.'
+                : 'O radar também busca pela atividade sozinha, atrás de volume — e aí entra mais empresa fora do padrão.'}
+            </div>
+          </div>
+          <div style={{ display:'flex', gap:4 }}>
+            {[['Automático', null], ['Ligado', true], ['Desligado', false]].map(([rot, v]) => {
+              const atual = foco.automatico ? null : foco.ativo;
+              const on = atual === v;
+              return (
+                <button key={rot} type="button" disabled={busy === 'foco' || on} onClick={() => mudarFoco(v)}
+                  style={{ height:28, padding:'0 10px', borderRadius:7, fontSize:12, fontFamily:'inherit', cursor: on ? 'default' : 'pointer',
+                    border:`1px solid ${on ? C.green : 'var(--border)'}`, background: on ? 'color-mix(in srgb, ' + C.green + ' 14%, transparent)' : 'transparent',
+                    color: on ? C.green : 'var(--dim)' }}>{rot}</button>
+              );
+            })}
+          </div>
+        </div>
+      )}
       {grupos.map(([titulo, itens, cor, removivel]) => (
         <div key={titulo} style={{ marginTop:10 }}>
           <div style={{ fontSize:11.5, color:'var(--dim)', marginBottom:6 }}>{titulo}</div>
@@ -2658,6 +2774,66 @@ function PalavrasDoRamo({ buscaId, palavras, onMudou }) {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+// Palavras negativadas: valem pra todos os radares do cliente. Empresa com uma
+// delas no nome não entra na esteira nem vira lead.
+function PalavrasNegativas() {
+  const [lista, setLista] = useState(null);
+  const [nova, setNova] = useState('');
+  const [busy, setBusy] = useState(false);
+  const carregar = () => fetch('/api/palavras-negativas', { credentials:'same-origin' })
+    .then(r => r.ok ? r.json() : { palavras: [] }).then(d => setLista(d.palavras || [])).catch(() => setLista([]));
+  useEffect(() => { carregar(); }, []);
+  const adicionar = async () => {
+    const p = nova.trim();
+    if (!p || busy) return;
+    setBusy(true);
+    try {
+      const pv = await fetch('/api/palavras-negativas/previa?palavra=' + encodeURIComponent(p), { credentials:'same-origin' });
+      const d = await pv.json().catch(() => ({}));
+      if (!pv.ok) { alert(d.erro || 'Palavra inválida.'); return; }
+      if (!window.confirm(`Negativar "${p}"? Empresas com essa palavra no nome não viram mais lead em nenhum radar.`
+        + (d.abertos ? `\n\n${d.abertos} lead(s) em aberto com ela saem da lista (ex.: ${d.exemplos.join(', ')}).` : ''))) return;
+      const r = await fetch('/api/palavras-negativas', { method:'POST', credentials:'same-origin',
+        headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ palavra: p }) });
+      if (!r.ok) { alert('Não consegui negativar.'); return; }
+      setNova(''); carregar();
+    } finally { setBusy(false); }
+  };
+  const tirar = async (id) => {
+    await fetch('/api/palavras-negativas/' + id, { method:'DELETE', credentials:'same-origin' }).catch(() => {});
+    carregar();
+  };
+  return (
+    <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:'16px 18px', marginBottom:18 }}>
+      <h3 style={{ fontSize:14, fontWeight:600, margin:0 }}>Palavras negativadas</h3>
+      <div style={{ fontSize:12, color:'var(--faint)', margin:'4px 0 10px', lineHeight:1.45 }}>
+        Empresa com uma destas palavras no nome não vira lead em nenhum radar. Dá pra negativar aqui ou direto na lista de leads,
+        depois da mãozinha para baixo.
+      </div>
+      <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
+        {(lista || []).map(p => (
+          <span key={p.id} style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'4px 9px', borderRadius:8, fontSize:12,
+            border:`1px solid ${C.red}`, color:'var(--text)' }}>
+            {p.palavra}
+            <button type="button" onClick={() => tirar(p.id)} title="Tirar (volta a valer daqui pra frente)"
+              style={{ background:'none', border:'none', padding:0, color:'var(--faint)', cursor:'pointer', fontSize:13, lineHeight:1 }}>×</button>
+          </span>
+        ))}
+        {lista && !lista.length && <span style={{ fontSize:12, color:'var(--faint)' }}>Nenhuma palavra negativada.</span>}
+      </div>
+      <div style={{ display:'flex', gap:8, marginTop:10 }}>
+        <input value={nova} onChange={e => setNova(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') adicionar(); }}
+          placeholder="Ex.: drone, automotivo, piscina" aria-label="Palavra para negativar"
+          style={{ flex:'1 1 200px', height:34, borderRadius:8, border:'1px solid var(--border)', background:'var(--panel2)',
+            color:'var(--text)', padding:'0 10px', fontSize:12.5, fontFamily:'inherit', minWidth:0 }}/>
+        <button type="button" onClick={adicionar} disabled={!nova.trim() || busy}
+          style={{ height:34, padding:'0 14px', borderRadius:8, border:'none', background: nova.trim() ? C.red : 'var(--border)',
+            color:'#fff', fontSize:12.5, fontWeight:600, fontFamily:'inherit', cursor: nova.trim() ? 'pointer' : 'default' }}>Negativar</button>
+      </div>
     </div>
   );
 }
@@ -3173,8 +3349,9 @@ function BuscaDetail({ buscaId, onBack, onOpenLead, onDuplicar, onVerLeads }) {
 
       <RaioXRadar b={b}/>
       {Array.isArray(criterios.params?.perfil?.palavras) && criterios.params.perfil.palavras.length > 0 && (
-        <PalavrasDoRamo buscaId={buscaId} palavras={criterios.params.perfil.palavras} onMudou={carregar}/>
+        <PalavrasDoRamo buscaId={buscaId} palavras={criterios.params.perfil.palavras} foco={b.foco_palavras} onMudou={carregar}/>
       )}
+      <PalavrasNegativas/>
       {criterios.params?.perfil && <PerfilMedio perfil={criterios.params.perfil}/>}
 
       <QualidadeEnvios buscaId={buscaId} onOpenLead={onOpenLead}/>

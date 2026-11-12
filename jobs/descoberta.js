@@ -17,6 +17,7 @@ const orcamento = require('./orcamento');
 const tracking = require('../providers/tracking');
 const { registrar } = require('./tracking');
 const palavras = require('../providers/palavras');
+const negativas = require('../providers/negativas');
 const openai = require('../providers/openai');
 
 // Raio-X do radar: por que as empresas encontradas não viraram lead, contado
@@ -252,8 +253,9 @@ module.exports = async function descoberta(job, pool, queues) {
   // O banco local não depende da cota de leads da hora: a cota limita lead
   // criado, não empresa analisada — e analisar o que já temos é de graça.
   const { rows: [faseAtual] } = await pool.query(`SELECT descoberta_fase FROM buscas WHERE id=$1`, [busca_id]);
+  // Foco nas palavras: do banco local também só vêm as que têm palavra do ramo.
   const locais = await buscarLocal(pool, params, LOCAL_POR_PASSADA,
-    { fase: params.duasFases ? (faseAtual?.descoberta_fase || 1) : 2 });
+    { fase: params.soPalavras ? 1 : params.duasFases ? (faseAtual?.descoberta_fase || 1) : 2 });
   for (const emp of locais) {
     const antes = counters.enfileirados;
     await processarOffice(pool, queues, busca_id, emp, counters);
@@ -290,8 +292,13 @@ module.exports = async function descoberta(job, pool, queues) {
   // sempre, com os filtros que a busca tiver.
   let fase = params.duasFases ? (bTok?.descoberta_fase || 1) : 2;
   let pagina = 0, esgotou = false;
+  // Foco nas palavras: a fase sem palavra não existe. Um radar que já estava
+  // nela quando o foco ligou termina aqui, sem pagar mais nenhuma página (o
+  // cursor guardado é da varredura sem palavra).
+  const semFase2 = params.soPalavras && params.duasFases && fase === 2;
+  if (semFase2) { esgotou = true; token = null; }
 
-  do {
+  if (!semFase2) do {
     // Freios antes de cada página paga (ver LIMIAR_ESTEIRA / AMOSTRA_CONVERSAO).
     // Parar aqui guarda o cursor: a próxima passada continua desta página.
     const freio = await freioDaPagina(pool, queues, busca_id);
@@ -316,7 +323,8 @@ module.exports = async function descoberta(job, pool, queues) {
       // consulta); na fase 2, a varredura deste radar termina aqui.
       if (!(token && /token is invalid or expired|token.*expired|invalid token/i.test(e.message))) throw e;
       console.warn(`[descoberta] busca ${busca_id}: cursor da varredura venceu na fase ${fase} — ${fase === 1 && params.duasFases ? 'segue na fase 2' : 'varredura encerrada'} (sem repagar páginas).`);
-      if (fase === 1 && params.duasFases && !(params.activitiesFase2 && !params.activitiesFase2.length)) { fase = 2; token = null; continue; }
+      if (fase === 1 && params.duasFases && !params.soPalavras
+          && !(params.activitiesFase2 && !params.activitiesFase2.length)) { fase = 2; token = null; continue; }
       esgotou = true; break;
     }
     const { offices, next } = resp;
@@ -340,6 +348,9 @@ module.exports = async function descoberta(job, pool, queues) {
       // Acabou a fase 1: a busca NÃO está esgotada, só terminou a parte
       // precisa. Zera o cursor e segue na fase 2, atrás de volume.
       if (fase === 1) {
+        // Foco nas palavras: o radar termina na fase precisa. (A fase volta a
+        // 1 no UPDATE do fim, pra uma reativação recomeçar por ela.)
+        if (params.soPalavras) { esgotou = true; break; }
         fase = 2; token = null;
         // Sem atividade principal (lista dispersa): a fase sem palavra não teria
         // o que buscar que passasse no filtro.
@@ -581,6 +592,11 @@ async function perfilarComLista(pool, criterios, busca_id, cnpjs, negativos = []
   }).catch(e => { console.warn(`[descoberta] busca ${busca_id}: palavras do ramo falharam (${e.message})`); return null; });
   const { params } = perfilamento.construirPerfil(amostra, base, perfilamento.W,
     { geoManual, negativas: amostraNeg, palavras: pal });
+  // Quantos clientes têm pelo menos uma palavra do ramo no nome (medida exata,
+  // é ela que liga sozinho o foco nas palavras).
+  if (pal && params.perfil) {
+    params.perfil.palavras_cobertura = +(amostra.filter(e => palavras.palavraDoRamoNoNome(e, pal.palavras)).length / amostra.length).toFixed(3);
+  }
   if (ufsManuais.length) params.ufs = ufsManuais;
   if (municipiosManuais.length) {
     params.municipios_cod = municipiosManuais;
@@ -680,6 +696,10 @@ async function processarOffice(pool, queues, busca_id, office, counters) {
       },
     });
   }
+
+  // Palavra negativada no nome: fica registrada como encontrada (não volta na
+  // próxima passada), mas não entra na esteira — o Score 1 a recusaria.
+  if (negativas.noNome(office, await negativas.carregar(pool))) { motivo('palavra_negativada'); return; }
 
   await queues.enriquecimento.add('enriquecimento',
     { cnpj: office.cnpj, busca_id },
@@ -786,6 +806,9 @@ function buildSearchParams(criterios) {
     // só passam no filtro com palavra do ramo no nome, então varrê-las sem
     // palavra só gastaria crédito. Perfil antigo (sem a lista) → como antes.
     out.activitiesFase2 = p.origem === 'lookalike' && Array.isArray(p.cnaes_nucleo) ? p.cnaes_nucleo : null;
+    // Foco nas palavras do ramo (providers/perfil.js → focoPalavras): só a
+    // fase com palavra. A atividade sozinha não é varrida.
+    out.soPalavras = !!out.duasFases && perfilamento.focoPalavras(criterios).ativo;
     // Só pra busca LOCAL: a tabela `empresas` guarda cidade por NOME e o porte
     // como texto — a CNPJá filtra por código de município e não usa porte aqui.
     out.municipiosNomes = (p.municipios_rotulos || []).map(m => m?.n).filter(Boolean);

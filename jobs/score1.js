@@ -17,6 +17,7 @@ const tracking = require('../providers/tracking');
 const { registrar } = require('./tracking');
 const typesafe = require('../providers/typesafe');
 const { propostaDoRadar } = require('./proposta');
+const negativas = require('../providers/negativas');
 
 // Raio-X do radar (buscas.descartes): por que a empresa não virou lead.
 const contarDescarte = (pool, busca_id, motivo) => require('./descoberta').contarDescartes(pool, busca_id, { [motivo]: 1 });
@@ -45,6 +46,10 @@ const ESPALHAR_MS = 5 * 60_000;
 // ficou longe do corte não teria chance nenhuma e não vale a chamada.
 const ZONA_CINZA = 15;          // pontos de cada lado do corte
 const JEV_PASSARIA = 2 / 3;     // "Likely buyer" ou melhor (nível ≥ 2 de 0–3)
+// Com palavra do ramo no nome a empresa já tem um sinal forte a favor: o Jev
+// só derruba quando diz que ela NÃO tem uso pra oferta (abaixo de "Possible
+// buyer") — "Filtros Automotivos" num radar de filtro de água.
+const JEV_MIN_COM_PALAVRA = 1 / 3;
 let _jevCache = { em: 0, ig: null };
 async function integracaoJev(pool) {
   if (Date.now() - _jevCache.em < 60_000) return _jevCache.ig;
@@ -85,32 +90,41 @@ function provaPelaLista(segmento, rx) {
   };
 }
 
-// ── Jev como PORTÃO de quem entra só pela atividade (Semelhantes) ──────────
-// A atividade principal dos clientes (ex.: comércio de artigos de uso
-// doméstico) também é a de loja de presentes, utilidades, variedades… Quem
-// passou no perfil SEM palavra do ramo no nome passou só por ela. Com o Jev
-// ativo e a proposta de valor no radar, ele julga se a empresa é o tipo de
-// cliente que compra: abaixo de "provável" (JEV_PASSARIA), não vira lead.
-// Falha ou sem nota: não bloqueia (fica a regra de sempre).
-async function portaoJev(pool, { empresa, busca_id, criterios, score, corte }) {
+// ── Jev como PORTÃO dos Semelhantes ─────────────────────────────────────────
+// Com o Jev ativo e a proposta de valor no radar, ele julga se a empresa é o
+// tipo de cliente que compra, antes de ela virar lead:
+//  • passou SÓ pela atividade (sem palavra do ramo no nome): a atividade
+//    principal dos clientes (ex.: comércio de artigos de uso doméstico) também
+//    é a de loja de presentes, utilidades, variedades… Precisa ser "provável
+//    comprador" (JEV_PASSARIA) pra passar.
+//  • tem palavra do ramo no nome: a palavra também engana ("filtros" de carro,
+//    "purificador" de ar). Só cai se o Jev disser que a empresa não tem uso pra
+//    oferta (abaixo de JEV_MIN_COM_PALAVRA).
+// Falha ou sem nota: não bloqueia (fica a regra de sempre). Devolve também o
+// segmento/prova da empresa contra a lista (o SWOT usa como prova social).
+async function portaoJev(pool, { empresa, busca_id, criterios, score, corte, lista = null, comPalavra = false }) {
   const icp = (await propostaDoRadar(pool, criterios)).texto;
   if (!icp || !String(icp).trim()) return null;
   const jev = await integracaoJev(pool);
   if (!jev) return null;
+  const rx = await raioXDaLista(pool, lista);
   let r = null, erro = null;
   try {
     r = await typesafe.avaliarEmpresa(jev.apiKey, icp,
       { ...empresa, resumo_site: typesafe.resumoSite(empresa.contatos_verificados) },
-      { modelo: jev.modelo, timeout: 10000, perfil: jev.perfil });
+      { modelo: jev.modelo, timeout: 10000, perfil: jev.perfil, segmentar: !!rx });
   } catch (e) { erro = String(e.message || e).slice(0, 300); }
-  const cortou = r?.norm != null && r.norm < JEV_PASSARIA;
+  const minimo = comPalavra ? JEV_MIN_COM_PALAVRA : JEV_PASSARIA;
+  const cortou = r?.norm != null && r.norm < minimo;
+  const prova = provaPelaLista(r?.segmento, rx);
   await pool.query(
     `INSERT INTO decisoes_jev (tipo, cnpj, alvo, regra, busca_id, regra_score, corte, jev_score, jev_tipo,
-       jev_confianca, jev_probabilidades, modelo, latencia_ms, erro)
-     VALUES ('score1',$1,'so_atividade',$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-    [empresa.cnpj, cortou ? 'cortado_jev' : 'passou', busca_id, score, corte, r?.norm ?? null,
-     r?.norm == null ? null : (cortou ? 'cortaria' : 'passaria'), r?.confianca ?? null,
-     r?.probabilidades ? JSON.stringify(r.probabilidades) : null, r?.modelo ?? null, r?.latencia_ms ?? null, erro])
+       jev_confianca, jev_probabilidades, modelo, latencia_ms, erro, segmento, prova)
+     VALUES ('score1',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+    [empresa.cnpj, comPalavra ? 'com_palavra' : 'so_atividade', cortou ? 'cortado_jev' : 'passou', busca_id, score, corte,
+     r?.norm ?? null, r?.norm == null ? null : (cortou ? 'cortaria' : 'passaria'), r?.confianca ?? null,
+     r?.probabilidades ? JSON.stringify(r.probabilidades) : null, r?.modelo ?? null, r?.latencia_ms ?? null, erro,
+     r?.segmento ?? null, prova ? JSON.stringify(prova) : null])
     .catch(e => console.error('[jev] portão score1:', e.message));
   return { norm: r?.norm ?? null, cortou };
 }
@@ -191,22 +205,33 @@ module.exports = async function score1(job, pool, queues) {
   // Portões de perfil (providers/perfil.js): "é do ramo dos clientes?" vem
   // ANTES da nota — acertar estado, porte e capital não compensa uma atividade
   // que nenhum cliente tem, nem transforma uma paróquia em oportunidade.
-  let barrada = importacao ? null : perfilamento.portaoPerfil(empresa, {
-    perfil: busca.tipo === 'lookalike' ? params?.perfil : null,
-    cnaesRadar: busca.tipo === 'lookalike' ? [] : (params?.cnaes || []),
-  });
+  // Antes de tudo, as palavras que o usuário negativou: empresa com uma delas
+  // no nome não vira lead em radar nenhum (providers/negativas.js).
+  const negada = importacao ? null : negativas.noNome(empresa, await negativas.carregar(pool));
+  let barrada = negada
+    ? { motivo: 'palavra_negativada', item: `Nome contém "${negada}" — palavra que você negativou` }
+    : importacao ? null : perfilamento.portaoPerfil(empresa, {
+      perfil: busca.tipo === 'lookalike' ? params?.perfil : null,
+      cnaesRadar: busca.tipo === 'lookalike' ? [] : (params?.cnaes || []),
+      foco: busca.tipo === 'lookalike' && perfilamento.focoPalavras(busca.criterios).ativo,
+    });
   if (barrada) breakdown = [...breakdown, { item: barrada.item, pts: 0 }];
   let passou = importacao ? true : (!barrada && score >= corte);
 
-  // Semelhantes: passou só pela atividade (sem palavra do ramo no nome)? O Jev,
-  // se ativo, confirma antes de virar lead (portaoJev).
+  // Semelhantes: antes de virar lead, o Jev (se ativo) confirma que é o tipo de
+  // empresa que compra — com régua mais dura pra quem entrou só pela atividade
+  // e mais branda pra quem tem palavra do ramo no nome (portaoJev).
   let julgadoJev = null;
-  if (passou && busca.tipo === 'lookalike' && params?.perfil && !perfilamento.palavraDoRamo(empresa, params.perfil)) {
-    julgadoJev = await portaoJev(pool, { empresa, busca_id, criterios: busca.criterios, score, corte })
+  if (passou && busca.tipo === 'lookalike' && params?.perfil) {
+    const comPalavra = !!perfilamento.palavraDoRamo(empresa, params.perfil);
+    julgadoJev = await portaoJev(pool, { empresa, busca_id, criterios: busca.criterios, score, corte,
+      lista: busca.lista, comPalavra })
       .catch(e => { console.error('[jev] portão score1:', e.message); return null; });
     if (julgadoJev?.cortou) {
       passou = false;
-      barrada = { motivo: 'nao_e_comprador', item: 'Só a atividade bate com a dos clientes, e a segunda verificação diz que não é o tipo de empresa que compra' };
+      barrada = { motivo: 'nao_e_comprador', item: comPalavra
+        ? 'Tem palavra do ramo no nome, mas a segunda verificação diz que a empresa não tem uso para o que você vende'
+        : 'Só a atividade bate com a dos clientes, e a segunda verificação diz que não é o tipo de empresa que compra' };
       breakdown = [...breakdown, { item: barrada.item, pts: 0 }];
     }
   }
