@@ -1574,7 +1574,7 @@ function NovoLeadModal({ buscas, onClose, onCriado }) {
 // e voltar mantém a lista de trabalho como estava. A busca por texto e o
 // período não ficam: a aba sempre abre nos leads que entraram ESTE MÊS — os
 // anteriores aparecem escolhendo o período (ou buscando pelo nome).
-const FILTROS_LEADS_PADRAO = { status:'abertos', busca:'', local:'', score:'', analise:'', email:false,
+const FILTROS_LEADS_PADRAO = { status:'abertos', busca:'', local:'', score:'', analise:'', vendedor:'', email:false,
   periodo:'mes', de:'', ate:'', ordem:'score' };
 const SEM_GUARDAR = ['periodo', 'de', 'ate'];
 function lerFiltrosLeads() {
@@ -1621,6 +1621,12 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
   const [debouncedLocal, setDebouncedLocal] = useState(inicial.local);
   const [filterScore, setFilterScore] = useState(inicial.score);
   const [filterAnalise, setFilterAnalise] = useState(inicial.analise);   // '' | 'sem' | 'com' (briefing SWOT)
+  const [filterVendedor, setFilterVendedor] = useState(inicial.vendedor || '');   // vendedor que recebeu no CRM
+  const [vendedoresOpts, setVendedoresOpts] = useState([]);
+  useEffect(() => {
+    fetch('/api/leads/vendedores', { credentials:'same-origin' }).then(r => r.ok ? r.json() : { vendedores: [] })
+      .then(d => setVendedoresOpts(d.vendedores || [])).catch(() => {});
+  }, []);
   const [filterPeriodo, setFilterPeriodo] = useState(inicial.periodo);   // '' | hoje | 7d | 30d | mes | mes_passado | custom
   const [filterDe, setFilterDe] = useState(inicial.de);
   const [filterAte, setFilterAte] = useState(inicial.ate);
@@ -1728,7 +1734,7 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
   // saiu da lista não pode continuar valendo pras ações em lote (Enviar ao CRM,
   // Descartar, Excluir) sem que se veja.
   const filtrosChave = JSON.stringify({ status:filterStatus, busca:filterBusca, local:debouncedLocal, score:filterScore,
-    analise:filterAnalise, email:emailOnly, periodo:filterPeriodo, de:filterDe, ate:filterAte, ordem });
+    analise:filterAnalise, vendedor:filterVendedor, email:emailOnly, periodo:filterPeriodo, de:filterDe, ate:filterAte, ordem });
   useEffect(() => {
     // Filtro que veio de um número do radar é de passagem: não substitui os
     // filtros que a pessoa deixou guardados.
@@ -1751,7 +1757,7 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
     document.addEventListener('keydown', esc);
     return () => { document.removeEventListener('mousedown', fora); document.removeEventListener('keydown', esc); };
   }, [painelFiltros]);
-  const extrasAtivos = [filterLocal.trim(), filterScore, filterAnalise, emailOnly, ordem !== 'score',
+  const extrasAtivos = [filterLocal.trim(), filterScore, filterAnalise, filterVendedor, emailOnly, ordem !== 'score',
     filterPeriodo === 'custom' && (filterDe || filterAte)].filter(Boolean).length;
   const selFiltro = { height:38, padding:'0 10px', borderRadius:9, border:'1px solid var(--border)',
     background:'var(--panel)', fontSize:12.5, fontFamily:'inherit', cursor:'pointer' };
@@ -1761,7 +1767,7 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
   const limparFiltros = () => {
     const p = FILTROS_LEADS_PADRAO;
     setFilterStatus(p.status); setFilterBusca(p.busca); setFilterLocal(p.local); setDebouncedLocal(p.local);
-    setFilterScore(p.score); setFilterAnalise(p.analise); setEmailOnly(p.email); setFilterPeriodo(p.periodo);
+    setFilterScore(p.score); setFilterAnalise(p.analise); setFilterVendedor(p.vendedor); setEmailOnly(p.email); setFilterPeriodo(p.periodo);
     setFilterDe(p.de); setFilterAte(p.ate); setOrdem(p.ordem); setQ(''); setDebouncedQ(''); setPage(1);
     setFunilRec(null);
   };
@@ -1771,6 +1777,7 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
     filterLocal.trim() && { rot:`Local: ${filterLocal.trim()}`, limpar: () => { setFilterLocal(''); setDebouncedLocal(''); } },
     filterScore && { rot:`Score ${filterScore} ou mais`, limpar: () => setFilterScore('') },
     filterAnalise && { rot: filterAnalise === 'sem' ? 'Sem análise SWOT' : 'Com análise SWOT', limpar: () => setFilterAnalise('') },
+    filterVendedor && { rot: filterVendedor === '__sem__' ? 'Enviados sem vendedor' : `Vendedor: ${filterVendedor}`, limpar: () => setFilterVendedor('') },
     emailOnly && { rot:'Só com e-mail', limpar: () => setEmailOnly(false) },
     ordem !== 'score' && { rot:'Mais recentes primeiro', limpar: () => setOrdem('score') },
     filterPeriodo === 'custom' && (filterDe || filterAte) && { rot:`Período: ${filterDe || '…'} a ${filterAte || '…'}`,
@@ -1823,6 +1830,7 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
     if (debouncedLocal) params.set('local', debouncedLocal);
     if (filterScore) params.set('score_min', filterScore);
     if (filterAnalise) params.set('analise', filterAnalise);
+    if (filterVendedor) params.set('vendedor', filterVendedor);
     // Buscando um lead pelo nome/CNPJ/ID do CRM, o "este mês" padrão não
     // esconde o que entrou antes (um período escolhido continua valendo).
     const usaPeriodo = !(debouncedQ && filterPeriodo === 'mes');
@@ -1849,7 +1857,7 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
       .catch(() => {})
       .finally(() => { if (meu === reqRef.current) setLoading(false); });
   }, [debouncedQ, filterStatus, emailOnly, filterBusca, debouncedLocal, filterScore, filterAnalise,
-      datas.de, datas.ate, ordem, page, refreshKey, tick, funilRec]);
+      datas.de, datas.ate, ordem, page, refreshKey, tick, funilRec, filterVendedor]);
 
   const allSel = leads.length > 0 && leads.every(l => selected.includes(l.id));
   const toggleSel = (id) => setSelected(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id]);
@@ -2060,6 +2068,13 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
                   </select>
                 </label>
               </div>
+              <label style={rotFiltro}>Vendedor (quem recebeu no CRM)
+                <select value={filterVendedor} onChange={e => { setFilterVendedor(e.target.value); setPage(1); }} aria-label="Vendedor" style={campoFiltro}>
+                  <option value="">Todos</option>
+                  {vendedoresOpts.map(v => <option key={v.nome} value={v.nome}>{v.nome} ({v.n})</option>)}
+                  <option value="__sem__">Enviados sem vendedor definido</option>
+                </select>
+              </label>
               <label style={rotFiltro}>Ordenar
                 <select value={ordem} onChange={e => { setOrdem(e.target.value); setPage(1); }} aria-label="Ordenar leads" style={campoFiltro}>
                   <option value="score">Maior score primeiro</option>
@@ -2267,13 +2282,13 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
 
       <div className="h-tabela" style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden' }}>
         <div className="h-scroll">
-        <div className="h-tw" style={{ '--tw':'1000px' }}>
-        <div className="h-thead" style={{ display:'grid', gridTemplateColumns:'40px 2.3fr 1.1fr .8fr 1.4fr 96px 90px 110px',
+        <div className="h-tw" style={{ '--tw':'1120px' }}>
+        <div className="h-thead" style={{ display:'grid', gridTemplateColumns:'40px 2.3fr 1.1fr .8fr 1.3fr 1.1fr 96px 90px 110px',
           alignItems:'center', gap:10, padding:'12px 18px', borderBottom:'1px solid var(--border)',
           fontSize:11, fontWeight:600, letterSpacing:'.04em', color:'var(--faint)', textTransform:'uppercase' }}>
           <div onClick={toggleAll} style={{ cursor:'pointer' }}><Checkbox checked={allSel}/></div>
           <div>Empresa</div><div>Setor · porte</div><div>Local</div><div>Decisor</div>
-          <div>Score</div><div>Contato</div><div>Status</div>
+          <div>Vendedor · fila</div><div>Score</div><div>Contato</div><div>Status</div>
         </div>
         {loading && (
           <div style={{ padding:'28px 18px', fontSize:13, color:'var(--faint)', textAlign:'center' }}>Carregando…</div>
@@ -2285,7 +2300,7 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
           const sel = selected.includes(l.id);
           return (
             <div key={l.id} onClick={() => onOpenLead(l.id)} className="row-hover h-linha"
-              style={{ display:'grid', gridTemplateColumns:'40px 2.3fr 1.1fr .8fr 1.4fr 96px 90px 110px',
+              style={{ display:'grid', gridTemplateColumns:'40px 2.3fr 1.1fr .8fr 1.3fr 1.1fr 96px 90px 110px',
                 alignItems:'center', gap:10, padding:'13px 18px',
                 borderBottom:'1px solid var(--border)', cursor:'pointer',
                 background: sel ? 'var(--panel2)' : 'transparent' }}>
@@ -2306,6 +2321,13 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
               <div data-rot="Decisor" style={{ minWidth:0 }}>
                 <div style={{ fontSize:12.5, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{l.decisor}</div>
                 <div style={{ fontSize:11, color:'var(--faint)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{l.cargo}</div>
+              </div>
+              {/* Para quem o lead foi no CRM: o vendedor da distribuição e a fila. */}
+              <div data-rot="Vendedor" style={{ minWidth:0 }} title={[l.vendedor, l.fila].filter(Boolean).join(' · ') || undefined}>
+                {l.vendedor || l.fila ? (<>
+                  <div style={{ fontSize:12.5, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{l.vendedor || '—'}</div>
+                  {l.fila && <div style={{ fontSize:11, color:'var(--faint)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{l.fila}</div>}
+                </>) : <span style={{ fontSize:12, color:'var(--faint)' }}>—</span>}
               </div>
               {/* ScoreBar e ContactCell trazem o próprio root, então vão
                   embrulhados só pra receber o rótulo do modo cartão. */}

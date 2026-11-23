@@ -163,7 +163,7 @@ const QUALIFICADO_FUNIL_SQL = (a) => `(${estagioContato(a)} = 'completo' OR ${a}
 
 function buildLeadsFilter(query) {
   const { q, status, uf, busca_id, email_only, local, score_min, contato, analise, abertos, de, ate,
-          funil_de, funil_ate, etapa } = query;
+          funil_de, funil_ate, etapa, vendedor } = query;
   const conditions = [];
   const vals = [];
   if (q && q.trim()) {
@@ -203,6 +203,11 @@ function buildLeadsFilter(query) {
     if (etapa === 'enviados') conditions.push(ENVIADO_CRM_SQL('l'));
   }
   if (uf) { vals.push(uf); conditions.push(`l.uf = $${vals.length}`); }
+  // Vendedor (conexão) que recebeu o lead na distribuição do CRM.
+  if (vendedor && String(vendedor).trim()) {
+    if (vendedor === '__sem__') conditions.push(`l.enviado_crm_em IS NOT NULL AND COALESCE(l.crm_conexao_nome,'') = ''`);
+    else { vals.push(String(vendedor).trim()); conditions.push(`l.crm_conexao_nome = $${vals.length}`); }
+  }
   // Local: cidade OU UF (ex.: "Goiânia", "GO", "São Paulo"). Duas letras é UF
   // exata — "GO" casava "Santiago" e "Mogi Guaçu" por ser trecho do nome.
   if (local && String(local).trim()) {
@@ -2794,7 +2799,8 @@ app.get('/api/leads', requireAuth, async (req, res) => {
       pool.query(`SELECT COUNT(*)::int AS total FROM leads l ${where}`, vals),
       pool.query(`SELECT l.id, l.fantasia, l.razao, l.setor, l.porte, l.cidade, l.uf,
         l.decisor, l.cargo, l.score, l.tem_email, l.tem_telefone, l.status, l.busca_id, l.contato_validado, l.contato_pendente, l.contato_status,
-        l.enviado_crm_em, l.enviado_manual_em, l.enviado_por, l.criado_em, ${jaNoCrmSql('l')} AS ja_no_crm
+        l.enviado_crm_em, l.enviado_manual_em, l.enviado_por, l.criado_em, ${jaNoCrmSql('l')} AS ja_no_crm,
+        l.crm_conexao_nome AS vendedor, l.crm_fila_id
         FROM leads l ${where} ORDER BY ${req.query.ordem === 'recentes' ? 'l.criado_em DESC, l.id DESC' : 'l.score DESC NULLS LAST, l.id'}
         LIMIT $${vals.length+1} OFFSET $${vals.length+2}`,
         [...vals, perPage, (page-1)*perPage]),
@@ -2803,6 +2809,7 @@ app.get('/api/leads', requireAuth, async (req, res) => {
     ]);
     const total = countRes.rows[0].total;
     const finalizados = todosRes ? Math.max(0, todosRes.rows[0].total - total) : 0;
+    const filas = dataRes.rows.some(l => l.crm_fila_id) ? await nomesDasFilas() : new Map();
     // Expõe o telefone/e-mail REAIS do enriquecimento (contato_validado) pra a
     // lista pintar os ícones (verde=achou, vermelho=não) e mostrar o valor no
     // clique. Não vaza a fonte/provedor — só o valor comercial.
@@ -2810,14 +2817,44 @@ app.get('/api/leads', requireAuth, async (req, res) => {
       const cv = l.contato_validado || {};
       const email = cv.email || null;
       const telefone = cv.telefone || cv.whatsapp || null;
-      const { contato_validado, ...rest } = l;
+      const { contato_validado, crm_fila_id, ...rest } = l;
       return { ...rest,
+        fila: crm_fila_id ? (filas.get(String(crm_fila_id)) || `Fila ${crm_fila_id}`) : null,
         email_valor: email, telefone_valor: telefone,
         tem_email: !!email || !!l.tem_email,
         tem_telefone: !!telefone || !!l.tem_telefone };
     });
     res.json({ leads, total, finalizados, page, per_page: perPage, pages: Math.ceil(total/perPage) || 1 });
   } catch(e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// Nome de cada fila do CRM (o lead guarda só o id). Em cache por 10 min: a
+// lista de leads pede isto a cada página.
+let _filasCache = { em: 0, mapa: new Map() };
+async function nomesDasFilas() {
+  if (Date.now() - _filasCache.em < 600_000) return _filasCache.mapa;
+  let mapa = new Map();
+  try {
+    const { rows: [ig] } = await pool.query(
+      `SELECT key_cifrada, config FROM integracoes WHERE categoria='crm' AND provedor='gk' AND ativo=true
+         AND key_cifrada IS NOT NULL AND key_cifrada <> '' LIMIT 1`);
+    if (ig?.config?.backend) {
+      const filas = await gk.listarFilas(ig.config.backend, ig.key_cifrada);
+      mapa = new Map(filas.map(f => [String(f.id), f.queue]));
+    }
+  } catch (_) { return _filasCache.mapa; }   // CRM fora do ar: fica o que já sabia
+  _filasCache = { em: Date.now(), mapa };
+  return mapa;
+}
+
+// Vendedores que já receberam lead (opções do filtro da lista).
+app.get('/api/leads/vendedores', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT crm_conexao_nome AS nome, COUNT(*)::int AS n FROM leads
+        WHERE COALESCE(crm_conexao_nome,'') <> '' GROUP BY 1 ORDER BY 1`);
+    res.json({ vendedores: rows });
+  } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
 // export DEVE vir antes de /:id
@@ -2830,7 +2867,7 @@ app.get('/api/leads/export', requireAuth, async (req, res) => {
       if (!ids.length) return res.status(400).json({ erro: 'ids inválidos' });
       const { rows:r } = await pool.query(
         `SELECT fantasia,razao,cnpj,setor,porte,cidade,uf,decisor,cargo,score,status,tem_email,tem_telefone,contato_validado,
-                enviado_crm_em,enviado_manual_em,enviado_por
+                enviado_crm_em,enviado_manual_em,enviado_por,crm_conexao_nome,crm_fila_id
          FROM leads WHERE id = ANY($1::int[]) ORDER BY score DESC`, [ids]);
       rows = r;
     } else {
@@ -2838,7 +2875,7 @@ app.get('/api/leads/export', requireAuth, async (req, res) => {
       const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
       const { rows:r } = await pool.query(
         `SELECT fantasia,razao,cnpj,setor,porte,cidade,uf,decisor,cargo,score,status,tem_email,tem_telefone,contato_validado,
-                enviado_crm_em,enviado_manual_em,enviado_por
+                enviado_crm_em,enviado_manual_em,enviado_por,crm_conexao_nome,crm_fila_id
          FROM leads l ${where} ORDER BY score DESC`, vals);
       rows = r;
     }
@@ -2860,9 +2897,11 @@ app.get('/api/leads/export', requireAuth, async (req, res) => {
       return { via: '', em: null, por: '' };
     };
     const dataBr = d => d ? new Date(d).toLocaleString('pt-BR') : '';
+    const filas = rows.some(r => r.crm_fila_id) ? await nomesDasFilas() : new Map();
+    const filaDe = r => r.crm_fila_id ? (filas.get(String(r.crm_fila_id)) || `Fila ${r.crm_fila_id}`) : '';
     const csv = [
       ['Empresa','Razão Social','CNPJ','Setor','Porte','Cidade','UF','Decisor','Cargo','Score','Status',
-       'Tem E-mail','Tem Telefone','E-mail','Telefone','Enviado via','Enviado em','Enviado por'].join(';'),
+       'Tem E-mail','Tem Telefone','E-mail','Telefone','Enviado via','Enviado em','Enviado por','Vendedor','Fila'].join(';'),
       ...rows.map(r => {
         const c = contatoDe(r);
         const e = envioDe(r);
@@ -2870,7 +2909,7 @@ app.get('/api/leads/export', requireAuth, async (req, res) => {
         return [esc(r.fantasia),esc(r.razao),esc(r.cnpj),esc(r.setor),esc(r.porte),
           esc(r.cidade),esc(r.uf),esc(r.decisor),esc(r.cargo),r.score,esc(r.status),
           temEmail?'Sim':'Não', temTel?'Sim':'Não', esc(c.email), esc(c.telefone),
-          esc(e.via), esc(dataBr(e.em)), esc(e.por)].join(';');
+          esc(e.via), esc(dataBr(e.em)), esc(e.por), esc(r.crm_conexao_nome), esc(filaDe(r))].join(';');
       }),
     ].join('\r\n');
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
