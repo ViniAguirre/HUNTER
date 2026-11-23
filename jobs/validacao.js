@@ -74,6 +74,15 @@ function sqlRepescaveis(alias = 'l') {
     AND NOT EXISTS (SELECT 1 FROM busca_contato_log g WHERE g.lead_id = ${alias}.id AND g.pago_fonte = 'glasser' AND ${rodou}
                       AND g.criado_em > now() - interval '${REPESCA_DIAS} days')`;
 }
+// Antes de gastar busca de contato num lead antigo, confere com as regras de
+// hoje (jobs/score1.js → conferirLead). Quem não passa sai da lista.
+async function aindaVale(pool, leadId) {
+  const score1 = require('./score1');
+  const barrado = await score1.conferirLead(pool, leadId).catch(() => null);
+  if (!barrado) return true;
+  await score1.descartarNaConferencia(pool, leadId, barrado).catch(() => {});
+  return false;
+}
 async function repescarSemTelefone(pool, queues) {
   if (!queues?.validacao) return 0;
   const cota = await cotaGlasser(pool);
@@ -94,7 +103,10 @@ async function repescarSemTelefone(pool, queues) {
                l.score DESC NULLS LAST, l.criado_em DESC
       LIMIT $1`, [Math.min(REPESCA_POR_CICLO, cota.limite - cota.usados)]);
   const dia = new Date().toISOString().slice(0, 10);
+  let mandados = 0;
   for (const l of rows) {
+    if (!await aindaVale(pool, l.id)) continue;
+    mandados++;
     await queues.validacao.add('validacao',
       { cnpj: l.cnpj, busca_id: l.busca_id, lead_id: l.id, tentativa_contato: MAX_TENT_CONTATO, preservar: true, so_mapas: true },
       // Um por lead por dia: se o job não chegar a consultar (limite acabou no
@@ -102,7 +114,7 @@ async function repescarSemTelefone(pool, queues) {
       { jobId: `repesca-mapas-${l.id}-${dia}`, removeOnComplete: { count: 200 }, removeOnFail: { count: 100 },
         attempts: 2, backoff: { type: 'exponential', delay: 10000 } });
   }
-  return rows.length;
+  return mandados;
 }
 
 // Jev como juiz do caso duvidoso da busca nos mapas (glasser.buscarNoMaps):

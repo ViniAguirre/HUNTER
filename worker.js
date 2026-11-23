@@ -134,6 +134,9 @@ async function falhaDescoberta(buscaId, motivo) {
 // tentar de novo: não martela a fonte enquanto ela está fora.
 const esperaAposFalha = n => Math.min(60, 2 ** Math.max(0, n - 1)) * 60_000;
 
+const REVISAO_MS = 30 * 60_000;
+let ultimaRevisao = 0;
+
 // ── scheduler: respeita o ritmo (leads/h) de cada busca Ativa ───────────────
 async function runScheduler() {
   // Piloto automático ANTES do disparo: um radar que ele abrir agora já sai
@@ -154,6 +157,17 @@ async function runScheduler() {
   // do dia acabado) vão aos mapas sozinhos, com a sobra do limite do dia.
   // Com "WhatsApp basta" ligado: quem esperava decisão (telefone sem e-mail)
   // segue pro CRM pelo portão de sempre (modo do radar e qualidade mínima).
+  // Leads em aberto conferidos com as regras de hoje (palavras negativadas,
+  // foco, perfil reaprendido): na subida e a cada 30 min.
+  if (Date.now() - ultimaRevisao > REVISAO_MS) {
+    ultimaRevisao = Date.now();
+    require('./jobs/descoberta').reperfilarPendentes(pool)
+      .then(n => { if (n) console.log(`[revisão] ${n} radar(es) refizeram o perfil com as mãozinhas novas`); })
+      .catch(err => console.error('[revisão] re-perfilar:', err.message))
+      .then(() => require('./jobs/score1').revisarAbertos(pool))
+      .then(r => { if (r.descartados) console.log(`[revisão] ${r.descartados} de ${r.analisados} lead(s) em aberto saíram pelas regras atuais:`, JSON.stringify(r.motivos)); })
+      .catch(err => console.error('[revisão] leads em aberto:', err.message));
+  }
   swotFn.liberarDecisoesWhatsapp(pool, queues)
     .then(n => { if (n) console.log(`[swot] ${n} lead(s) com WhatsApp saíram da fila de decisão`); })
     .catch(err => console.error('[swot] liberar decisões:', err.message));

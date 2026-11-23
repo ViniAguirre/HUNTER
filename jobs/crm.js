@@ -66,6 +66,19 @@ module.exports = async function crm(job, pool, queues, jobToken = null) {
     `SELECT ${jaNoCrmSql('l')} AS sim, l.status = 'Descartado' AS descartado FROM leads l WHERE l.id=$1`, [lead_id]);
   if (ja?.sim) return { skipped: 'ja_no_crm', lead_id };
   if (ja?.descartado) return { skipped: 'descartado', lead_id };
+  // Envio automático: confere o lead com as regras de HOJE (palavras
+  // negativadas, foco nas palavras, perfil reaprendido com as mãozinhas).
+  // O lead pode ter nascido semanas antes e esperado vaga numa vendedora.
+  // Envio manual (botão, lote, decisão) não passa aqui: é escolha do usuário.
+  if (!job.data.manual) {
+    const score1 = require('./score1');
+    const barrado = await score1.conferirLead(pool, lead_id).catch(e => { console.error('[crm] conferência:', e.message); return null; });
+    if (barrado) {
+      await score1.descartarNaConferencia(pool, lead_id, barrado);
+      console.log(`[crm] lead ${lead_id} não foi ao CRM: ${barrado.item}`);
+      return { skipped: 'conferencia', motivo: barrado.motivo, lead_id };
+    }
+  }
   const paraAfiliados = lead.busca_crm_destino === 'afiliados';
   if (!paraAfiliados && !ig) return { skipped: 'sem_crm', lead_id };
 
