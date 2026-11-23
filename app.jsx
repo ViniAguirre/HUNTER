@@ -813,7 +813,7 @@ function FiltroPeriodo({ periodo, setPeriodo, custom, setCustom }) {
 // 300. Cada faixa é um trapézio que vai da própria largura até a largura da
 // etapa seguinte, então as duas bordas são números reais; a última fica reta,
 // de propósito, pra não inventar uma ponta que não corresponde a nada.
-function Funil({ etapas, carregando, onAbrirEtapa }) {
+function Funil({ etapas, carregando, onAbrirEtapa, modo = 'atividade', setModo }) {
   const [hover, setHover] = useState(null);
   const topo = etapas[0]?.valor || 0;
   const larg = (v) => {
@@ -828,7 +828,22 @@ function Funil({ etapas, carregando, onAbrirEtapa }) {
     <div className="h-funil" style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:'16px 18px 18px' }}>
       <div style={{ display:'flex', alignItems:'baseline', justifyContent:'space-between', gap:10, marginBottom:14 }}>
         <h3 style={{ fontSize:14, fontWeight:600, margin:0 }}>Funil da operação</h3>
-        <span style={{ fontSize:11, color:'var(--faint)' }}>por data de entrada no funil{onAbrirEtapa ? ' · clique numa etapa para ver os leads' : ''}</span>
+        {setModo && (
+          <div style={{ display:'flex', gap:4 }}>
+            {[['atividade', 'Atividade do período'], ['coorte', 'Conversão']].map(([m, rot]) => (
+              <button key={m} type="button" onClick={() => setModo(m)}
+                style={{ height:26, padding:'0 9px', borderRadius:7, fontSize:11.5, fontFamily:'inherit', cursor:'pointer',
+                  border:`1px solid ${modo === m ? 'var(--accent)' : 'var(--border)'}`, background: modo === m ? 'var(--panel2)' : 'transparent',
+                  color: modo === m ? 'var(--accent)' : 'var(--dim)', fontWeight: modo === m ? 600 : 400 }}>{rot}</button>
+            ))}
+          </div>
+        )}
+      </div>
+      <div style={{ fontSize:11, color:'var(--faint)', margin:'-8px 0 12px', lineHeight:1.45 }}>
+        {modo === 'coorte'
+          ? 'Das empresas encontradas no período, até onde cada uma chegou (em qualquer data).'
+          : 'O que aconteceu no período: empresas encontradas, leads criados e leads enviados ao CRM nessas datas.'}
+        {onAbrirEtapa ? ' Clique numa etapa para ver os leads.' : ''}
       </div>
       {carregando && <div style={{ padding:'30px 0', textAlign:'center', fontSize:13, color:'var(--faint)' }}>Carregando…</div>}
       {!carregando && topo === 0 && (
@@ -975,6 +990,11 @@ function Dashboard({ onOpenBusca, onVerLeads }) {
   const [periodo, setPeriodo] = useState('30d');
   const [custom, setCustom] = useState({ de:'', ate:'' });
   const [radarSel, setRadarSel] = useState(null);
+  // Como o funil conta: pela atividade do período (padrão) ou por coorte.
+  const [modoFunil, setModoFunilEstado] = useState(() => {
+    try { return localStorage.getItem('hunter_funil_modo') === 'coorte' ? 'coorte' : 'atividade'; } catch (_) { return 'atividade'; }
+  });
+  const setModoFunil = m => { setModoFunilEstado(m); try { localStorage.setItem('hunter_funil_modo', m); } catch (_) {} };
 
   const janela = useMemo(() => {
     if (periodo === 'custom') return { de: doInput(custom.de), ate: doInput(custom.ate, true) };
@@ -999,6 +1019,7 @@ function Dashboard({ onOpenBusca, onVerLeads }) {
     if (janela.de) q.push('de=' + encodeURIComponent(janela.de.toISOString()));
     if (janela.ate) q.push('ate=' + encodeURIComponent(janela.ate.toISOString()));
     if (radarSel != null) q.push('busca_id=' + radarSel);
+    q.push('modo=' + modoFunil);
     let vivo = true;
     setCarregando(true);
     fetch('/api/funil' + (q.length ? '?' + q.join('&') : ''), { credentials:'same-origin' })
@@ -1006,7 +1027,7 @@ function Dashboard({ onOpenBusca, onVerLeads }) {
       .then(d => { if (vivo) { setFunil(d); setCarregando(false); } })
       .catch(() => { if (vivo) setCarregando(false); });
     return () => { vivo = false; };
-  }, [janela.de && janela.de.getTime(), janela.ate && janela.ate.getTime(), radarSel]);
+  }, [janela.de && janela.de.getTime(), janela.ate && janela.ate.getTime(), radarSel, modoFunil]);
 
   const etapas = funil?.etapas || [];
   const radares = funil?.radares || [];
@@ -1017,7 +1038,7 @@ function Dashboard({ onOpenBusca, onVerLeads }) {
 
   const abrirEtapa = (e) => onVerLeads && onVerLeads({
     status:'', periodo:'', busca: radarSel != null ? String(radarSel) : '',
-    funil: { etapa: e.chave, rotulo: e.rotulo, valor: e.valor, periodo: rotuloPeriodo,
+    funil: { etapa: e.chave, rotulo: e.rotulo, valor: e.valor, periodo: rotuloPeriodo, modo: modoFunil,
       de: janela.de ? janela.de.toISOString() : '', ate: janela.ate ? janela.ate.toISOString() : '' },
   });
 
@@ -1033,6 +1054,7 @@ function Dashboard({ onOpenBusca, onVerLeads }) {
       const q = [];
       if (janela.de) q.push('de=' + encodeURIComponent(janela.de.toISOString()));
       if (janela.ate) q.push('ate=' + encodeURIComponent(janela.ate.toISOString()));
+      q.push('modo=' + modoFunil);
       const r = await fetch('/api/relatorio' + (q.length ? '?' + q.join('&') : ''), { credentials:'same-origin' });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.erro || 'erro');
@@ -1056,7 +1078,8 @@ function Dashboard({ onOpenBusca, onVerLeads }) {
       </div>
 
       <div className="h-split" style={{ '--split':'1.25fr 1fr', gap:16, marginBottom:16 }}>
-        <Funil etapas={etapas} carregando={carregando} onAbrirEtapa={onVerLeads ? abrirEtapa : null}/>
+        <Funil etapas={etapas} carregando={carregando} onAbrirEtapa={onVerLeads ? abrirEtapa : null}
+          modo={modoFunil} setModo={setModoFunil}/>
         <RadaresFunil radares={radares} selecionado={radarSel} carregando={carregando}
           onSelecionar={setRadarSel} onAbrir={onOpenBusca}/>
       </div>
@@ -1383,7 +1406,9 @@ function relatorioHtml(d, rotuloPeriodo) {
   </div>
 
   <h2>Funil do período</h2>
-  <p class="sub2">Acompanha as empresas que entraram na análise ${e(periodoTxt)} até onde chegaram.</p>
+  <p class="sub2">${d.modo === 'coorte'
+    ? `Acompanha as empresas que entraram na análise ${e(periodoTxt)} até onde chegaram.`
+    : `O que o Hunter produziu ${e(periodoTxt)}: empresas analisadas, empresas com o perfil, prontas para abordagem e entregues ao time, cada uma contada na data em que aconteceu.`}</p>
   ${funilHtml}
   ${f.manuais ? `<p class="nota">Além disso, ${n(f.manuais)} lead(s) foram marcados manualmente pelo time como entregues.</p>` : ''}
 
@@ -1392,7 +1417,7 @@ function relatorioHtml(d, rotuloPeriodo) {
   ${recs}
 
   <h2>Entregas ao time comercial</h2>
-  <p class="sub2">Contadas pela data da entrega ao CRM. Por isso o total pode ser diferente do funil, que conta pela data em que a empresa foi encontrada.</p>
+  <p class="sub2">Contadas pela data da entrega ao CRM.${d.modo === 'coorte' ? ' Por isso o total pode ser diferente do funil, que conta pela data em que a empresa foi encontrada.' : ''}</p>
   <div class="kpis">
     <div class="kpi"><b>${n(crm.enviados)}</b><span>leads entregues</span></div>
     <div class="kpi"><b>${n(crm.contato_completo)}</b><span>com telefone e e-mail</span></div>
@@ -1842,6 +1867,7 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
       if (funilRec.de) params.set('funil_de', funilRec.de);
       if (funilRec.ate) params.set('funil_ate', funilRec.ate);
       if (funilRec.etapa) params.set('etapa', funilRec.etapa);
+      if (funilRec.modo === 'atividade') params.set('funil_modo', 'atividade');
     }
     params.set('page', page);
     params.set('per_page', PER_PAGE);
@@ -2121,7 +2147,9 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
           border:'1px solid var(--border)', borderRadius:10, padding:'9px 13px', marginTop:-6, marginBottom:14, fontSize:12.5 }}>
           <span style={{ color:'var(--dim)' }}>
             Do funil do Dashboard: <b style={{ color:'var(--text)' }}>{funilRec.rotulo}</b>
-            {' '}· empresas que entraram no funil em <b style={{ color:'var(--text)' }}>{funilRec.periodo || 'todo o período'}</b>
+            {' '}· {funilRec.modo === 'atividade'
+              ? (funilRec.etapa === 'enviados' ? 'leads enviados ao CRM em ' : 'leads criados em ')
+              : 'empresas que entraram no funil em '}<b style={{ color:'var(--text)' }}>{funilRec.periodo || 'todo o período'}</b>
             {funilRec.valor != null && <> · o funil mostra {fmtNum(funilRec.valor)}</>}
           </span>
           <button onClick={() => { setFunilRec(null); setPage(1); }}
