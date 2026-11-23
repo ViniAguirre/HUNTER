@@ -839,3 +839,28 @@ module.exports.TETO_AMOSTRA = TETO_AMOSTRA;
 module.exports.contarDescartes = contarDescartes;
 module.exports.buscarLocal = buscarLocal;
 module.exports.buildSearchParams = buildSearchParams;
+
+// Refaz o perfil dos radares de semelhantes marcados pra re-perfilar (houve
+// mãozinha pra baixo ou semente nova) que ainda têm leads em aberto — mesmo
+// com o radar desligado. Sem isto, o que o perfil aprendeu só valia quando o
+// radar voltasse a rodar, e os leads antigos seguiam ao CRM pela régua velha.
+// Usa o cadastro já guardado (as empresas da lista e os recusados já estão
+// em `empresas`); não mexe no status do radar.
+async function reperfilarPendentes(pool, { max = 5 } = {}) {
+  const { rows } = await pool.query(
+    `SELECT b.id, b.status, b.criterios, b.lista FROM buscas b
+      WHERE b.tipo='lookalike' AND b.criterios ? 'reperfilar' AND b.criterios->'params' ? 'perfil'
+        AND EXISTS (SELECT 1 FROM leads l WHERE l.busca_id=b.id AND l.enviado_crm_em IS NULL
+                      AND COALESCE(l.status,'') NOT IN ('Enviado','Descartado'))
+      ORDER BY b.id LIMIT $1`, [max]);
+  let feitos = 0;
+  for (const b of rows) {
+    try {
+      const r = await perfilar(pool, b.criterios, b.id, b.lista, null);
+      if (r?.erro) await pool.query(`UPDATE buscas SET status=$2 WHERE id=$1`, [b.id, b.status]);
+      else feitos++;
+    } catch (e) { console.warn(`[descoberta] re-perfilar radar ${b.id}: ${e.message}`); }
+  }
+  return feitos;
+}
+module.exports.reperfilarPendentes = reperfilarPendentes;

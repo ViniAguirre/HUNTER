@@ -515,4 +515,81 @@ async function revisarPeloPortao(pool) {
   return r;
 }
 module.exports.revisarPeloPortao = revisarPeloPortao;
+
+// ── Conferência com as regras ATUAIS ────────────────────────────────────────
+// O lead nasce no Score 1 com as regras daquele dia. Muitos só vão ao CRM
+// semanas depois: esperaram vaga numa vendedora, voltaram da repescagem de
+// contato, saíram da fila de decisão. Nesse meio tempo o usuário negativou
+// palavras, deu a mãozinha (o perfil reaprendeu) ou ligou o foco nas palavras
+// — e esses leads antigos iam ao CRM sem passar por nada disso. Aqui eles são
+// conferidos de novo, com o perfil e as regras de hoje. Devolve null (passa)
+// ou { motivo, item }. Não chama o Jev (custo): só regras e nota.
+async function conferirLead(pool, leadId, { minimo = null, mapaNeg = null } = {}) {
+  const { rows: [l] } = await pool.query(
+    `SELECT l.id AS l_id, l.cnpj AS l_cnpj, l.fantasia AS l_fantasia, l.razao AS l_razao, l.cnae AS l_cnae,
+            l.porte AS l_porte, l.uf AS l_uf, l.capital AS l_capital, l.situacao AS l_situacao,
+            b.tipo, b.criterios, b.corte_score, e.*
+       FROM leads l LEFT JOIN buscas b ON b.id = l.busca_id LEFT JOIN empresas e ON e.cnpj = l.cnpj
+      WHERE l.id=$1`, [leadId]);
+  if (!l) return null;
+  // Importação por CNPJ: o usuário pediu ESTA empresa.
+  if (l.tipo === 'cnpj') return null;
+  const emp = {
+    ...l, cnpj: l.l_cnpj, fantasia: l.fantasia ?? l.l_fantasia, razao: l.razao ?? l.l_razao, cnae: l.cnae ?? l.l_cnae,
+    porte: l.porte ?? l.l_porte, uf: l.uf ?? l.l_uf, capital: l.capital ?? l.l_capital, situacao: l.situacao ?? l.l_situacao,
+  };
+  const negada = negativas.noNome(emp, mapaNeg || await negativas.carregar(pool));
+  if (negada) return { motivo: 'palavra_negativada', item: `Nome contém "${negada}" — palavra que você negativou` };
+  if (!l.tipo) return null;                       // radar excluído: só as palavras valem
+  const params = parseCriterios(l.criterios);
+  if (l.tipo === 'lookalike' && !params?.perfil) return null;
+  const barrada = perfilamento.portaoPerfil(emp, {
+    perfil: l.tipo === 'lookalike' ? params.perfil : null,
+    cnaesRadar: l.tipo === 'lookalike' ? [] : (params?.cnaes || []),
+    foco: l.tipo === 'lookalike' && perfilamento.focoPalavras(l.criterios).ativo,
+  });
+  if (barrada) return barrada;
+  // Semelhantes: a nota de hoje, com o que o perfil aprendeu das mãozinhas.
+  if (l.tipo === 'lookalike') {
+    const { score } = computeScore1(emp, params);
+    const corte = corteEfetivo(l.corte_score, minimo ?? await corteMinimo(pool));
+    if (score < corte) return { motivo: 'score_recalculado', item: `Nota refeita com o perfil atual: ${score} (corte ${corte})`, score };
+  }
+  return null;
+}
+
+// Tira o lead da esteira e da lista de trabalho (Descartado, com o motivo no
+// breakdown). Não vira contraexemplo: não foi o usuário que reprovou. Lead já
+// enviado nunca é mexido.
+async function descartarNaConferencia(pool, leadId, r) {
+  const { rowCount } = await pool.query(
+    `UPDATE leads SET status='Descartado', motivo_descarte=$2, contato_pendente=false, crm_espera_em=NULL,
+            breakdown = COALESCE(breakdown, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('item', $3::text, 'pts', 0)),
+            ${r.score != null ? 'score=$4,' : ''} atualizado_em=now()
+      WHERE id=$1 AND enviado_crm_em IS NULL AND COALESCE(status,'') NOT IN ('Enviado','Descartado')`,
+    r.score != null ? [leadId, r.motivo, r.item, r.score] : [leadId, r.motivo, r.item]);
+  return rowCount > 0;
+}
+
+// Revisão periódica dos leads em aberto (não enviados, não descartados) com
+// as regras atuais. `limite` por passada pra não segurar o worker.
+async function revisarAbertos(pool, { limite = 2000 } = {}) {
+  const { rows } = await pool.query(
+    `SELECT id FROM leads WHERE enviado_crm_em IS NULL AND COALESCE(status,'') NOT IN ('Enviado','Descartado')
+      ORDER BY id LIMIT $1`, [limite]);
+  const r = { analisados: rows.length, descartados: 0, motivos: {} };
+  if (!rows.length) return r;
+  const minimo = await corteMinimo(pool);
+  const mapaNeg = await negativas.carregar(pool);
+  for (const { id } of rows) {
+    const x = await conferirLead(pool, id, { minimo, mapaNeg }).catch(() => null);
+    if (x && await descartarNaConferencia(pool, id, x)) {
+      r.descartados++; r.motivos[x.motivo] = (r.motivos[x.motivo] || 0) + 1;
+    }
+  }
+  return r;
+}
+module.exports.conferirLead = conferirLead;
+module.exports.descartarNaConferencia = descartarNaConferencia;
+module.exports.revisarAbertos = revisarAbertos;
 module.exports.corteEfetivo = corteEfetivo;
