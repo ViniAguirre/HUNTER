@@ -1566,17 +1566,20 @@ async function funilAtividade(de, ate) {
   const jan = col => `($1::timestamptz IS NULL OR ${col} >= $1) AND ($2::timestamptz IS NULL OR ${col} < $2)`;
   const { rows } = await pool.query(`
     SELECT busca_id, SUM(enc)::int AS encontradas, SUM(seg)::int AS segmentadas, SUM(qual)::int AS qualificados,
-           SUM(env)::int AS enviados, SUM(man)::int AS manuais
+           SUM(env)::int AS enviados, SUM(man)::int AS manuais, SUM(ant)::int AS enviados_antes
       FROM (
-        SELECT e.busca_id, 1 AS enc, 0 AS seg, 0 AS qual, 0 AS env, 0 AS man
+        SELECT e.busca_id, 1 AS enc, 0 AS seg, 0 AS qual, 0 AS env, 0 AS man, 0 AS ant
           FROM empresa_tenant_estado e WHERE ${jan('e.descoberto_em')}
         UNION ALL
-        SELECT l.busca_id, 0, 1, CASE WHEN ${QUALIFICADO_FUNIL_SQL('l')} THEN 1 ELSE 0 END, 0, 0
+        SELECT l.busca_id, 0, 1, CASE WHEN ${QUALIFICADO_FUNIL_SQL('l')} THEN 1 ELSE 0 END, 0, 0, 0
           FROM leads l WHERE ${jan('l.criado_em')}
         UNION ALL
-        SELECT l.busca_id, 0, 0, 0, 1, 0 FROM leads l WHERE ${ENVIADO_CRM_SQL('l')} AND ${jan('l.enviado_crm_em')}
+        -- Enviado no período; "ant" marca o lead que já existia antes da janela
+        -- (esperava vaga numa vendedora ou estava na esteira).
+        SELECT l.busca_id, 0, 0, 0, 1, 0, CASE WHEN $1::timestamptz IS NOT NULL AND l.criado_em < $1 THEN 1 ELSE 0 END
+          FROM leads l WHERE ${ENVIADO_CRM_SQL('l')} AND ${jan('l.enviado_crm_em')}
         UNION ALL
-        SELECT l.busca_id, 0, 0, 0, 0, 1 FROM leads l
+        SELECT l.busca_id, 0, 0, 0, 0, 1, 0 FROM leads l
          WHERE l.status = 'Enviado' AND l.enviado_crm_em IS NULL AND ${jan('l.enviado_manual_em')}
       ) x
      GROUP BY busca_id`, [de, ate]);
@@ -1625,12 +1628,14 @@ app.get('/api/funil', requireAuth, async (req, res) => {
     // Linhas sem radar (radar excluído, ou lead avulso) entram no total mas não
     // viram linha da tabela — apareceriam como "Radar #null" sem servir pra nada.
     const alvo = buscaId == null ? rows : rows.filter(r => r.busca_id === buscaId);
-    const soma = (campo) => alvo.reduce((t, r) => t + r[campo], 0);
+    const soma = (campo) => alvo.reduce((t, r) => t + (r[campo] || 0), 0);
+    const ativ = modo === 'atividade';
     const etapas = [
       { chave:'encontradas',  rotulo:'Empresas encontradas', valor: soma('encontradas') },
-      { chave:'segmentadas',  rotulo:'Segmentadas (perfil)', valor: soma('segmentadas') },
-      { chave:'qualificados', rotulo:'Leads qualificados',   valor: soma('qualificados') },
-      { chave:'enviados',     rotulo:'Enviados ao CRM',      valor: soma('enviados'), manuais: soma('manuais') },
+      { chave:'segmentadas',  rotulo: ativ ? 'Leads criados (perfil)' : 'Segmentadas (perfil)', valor: soma('segmentadas') },
+      { chave:'qualificados', rotulo: ativ ? 'Qualificados (dos criados)' : 'Leads qualificados', valor: soma('qualificados') },
+      { chave:'enviados',     rotulo:'Enviados ao CRM',      valor: soma('enviados'), manuais: soma('manuais'),
+        ...(ativ ? { antes: soma('enviados_antes') } : {}) },
     ];
     res.json({ periodo: { de, ate }, modo, buscaId, etapas, radares });
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
@@ -2116,6 +2121,7 @@ app.get('/api/relatorio', requireAuth, async (req, res) => {
     const etapas = {
       encontradas: somaF('encontradas'), segmentadas: somaF('segmentadas'),
       qualificados: somaF('qualificados'), enviados: somaF('enviados'), manuais: somaF('manuais'),
+      enviados_antes: somaF('enviados_antes'),
     };
     const funilPorId = new Map(funil.filter(r => r.busca_id != null).map(r => [r.busca_id, r]));
     const MOTIVO_TXT = {
@@ -2209,10 +2215,15 @@ app.get('/api/relatorio', requireAuth, async (req, res) => {
     const pctN = (a, b) => (b ? Math.round(a / b * 100) : 0);
     const rec = [];
     const comEntrega = campanhas.filter(g => g.periodo.encontradas >= 50 && g.periodo.enviados > 0);
-    const melhor = comEntrega.slice().sort((a, b) => (b.periodo.enviados / b.periodo.encontradas) - (a.periodo.enviados / a.periodo.encontradas))[0];
+    // Na atividade do período os enviados podem vir de empresas de antes, então
+    // a razão enviados/encontradas não é conversão: vale quem mais entregou.
+    const porAtividade = req.query.modo !== 'coorte';
+    const melhor = comEntrega.slice().sort((a, b) => porAtividade
+      ? b.periodo.enviados - a.periodo.enviados
+      : (b.periodo.enviados / b.periodo.encontradas) - (a.periodo.enviados / a.periodo.encontradas))[0];
     if (melhor) {
       rec.push({ tipo: 'bom', titulo: 'Ampliar o que está funcionando',
-        texto: `A campanha "${melhor.nome}"${melhor.regioes.length ? ` (${melhor.regioes.slice(0, 4).join(', ')}${melhor.regioes.length > 4 ? '…' : ''})` : ''} foi a que mais transformou empresas encontradas em oportunidades: ${fmtBR(melhor.periodo.enviados)} entregues ao time. Levar o mesmo perfil para novas cidades ou portes tende a repetir o resultado.` });
+        texto: `A campanha "${melhor.nome}"${melhor.regioes.length ? ` (${melhor.regioes.slice(0, 4).join(', ')}${melhor.regioes.length > 4 ? '…' : ''})` : ''} foi a que ${porAtividade ? 'mais entregou oportunidades ao time' : 'mais transformou empresas encontradas em oportunidades'}: ${fmtBR(melhor.periodo.enviados)} entregues ao time. Levar o mesmo perfil para novas cidades ou portes tende a repetir o resultado.` });
     }
     const semRetorno = campanhas.filter(g => g.periodo.encontradas >= 300 && g.periodo.segmentadas === 0);
     if (semRetorno.length) {

@@ -815,11 +815,16 @@ function FiltroPeriodo({ periodo, setPeriodo, custom, setCustom }) {
 // de propósito, pra não inventar uma ponta que não corresponde a nada.
 function Funil({ etapas, carregando, onAbrirEtapa, modo = 'atividade', setModo }) {
   const [hover, setHover] = useState(null);
-  const topo = etapas[0]?.valor || 0;
+  // Atividade do período: as etapas são contas independentes (o enviado hoje
+  // pode ter virado lead no mês passado), então não é funil — vira barras
+  // na mesma escala, sem "% da anterior".
+  const ativ = modo === 'atividade';
+  const topo = ativ ? Math.max(0, ...etapas.map(e => e.valor || 0)) : (etapas[0]?.valor || 0);
   const larg = (v) => {
     if (!topo || !v) return v > 0 ? 1.5 : 0;   // 1.5%: etapa não-zero nunca some
     return Math.max((v / topo) * 100, 1.5);
   };
+  const enviados = etapas.find(e => e.chave === 'enviados');
   const clip = (wt, wb) => {
     const t = (100 - wt) / 2, b = (100 - wb) / 2;
     return `polygon(${t}% 0, ${100 - t}% 0, ${100 - b}% 100%, ${b}% 100%)`;
@@ -854,7 +859,7 @@ function Funil({ etapas, carregando, onAbrirEtapa, modo = 'atividade', setModo }
       {!carregando && topo > 0 && etapas.map((e, i) => {
         const prox = etapas[i + 1];
         const wt = larg(e.valor);
-        const wb = prox ? larg(prox.valor) : wt;
+        const wb = ativ ? wt : prox ? larg(prox.valor) : wt;
         const anterior = i > 0 ? etapas[i - 1] : null;
         const conv = anterior ? pct(e.valor, anterior.valor) : 100;
         // A partir de "Segmentadas" a etapa é lista de leads: o clique abre a
@@ -873,13 +878,30 @@ function Funil({ etapas, carregando, onAbrirEtapa, modo = 'atividade', setModo }
               <div style={{ fontSize:21, fontWeight:600, letterSpacing:'-.02em', lineHeight:1.15 }}>{fmtNum(e.valor)}</div>
             </div>
             <div style={{ height:46 }}>
-              <div style={{ height:'100%', width:'100%',
-                background:`var(--funil-${i + 1})`, clipPath: clip(wt, wb),
-                opacity: hover === null || hover === i ? 1 : .55, transition:'opacity .12s' }}/>
+              {ativ ? (
+                <div style={{ height:'100%', display:'flex', alignItems:'center' }}>
+                  <div style={{ height:22, width:`${wt}%`, borderRadius:6, background:`var(--funil-${i + 1})`,
+                    opacity: hover === null || hover === i ? 1 : .55, transition:'opacity .12s' }}/>
+                </div>
+              ) : (
+                <div style={{ height:'100%', width:'100%',
+                  background:`var(--funil-${i + 1})`, clipPath: clip(wt, wb),
+                  opacity: hover === null || hover === i ? 1 : .55, transition:'opacity .12s' }}/>
+              )}
             </div>
             <div style={{ textAlign:'right' }}>
-              <div style={{ fontSize:13, fontWeight:600 }}>{conv}%</div>
-              <div style={{ fontSize:10, color:'var(--faint)' }}>{i === 0 ? 'do topo' : 'da anterior'}</div>
+              {ativ ? (
+                e.chave === 'qualificados' && anterior?.valor ? (<>
+                  <div style={{ fontSize:13, fontWeight:600 }}>{conv}%</div>
+                  <div style={{ fontSize:10, color:'var(--faint)' }}>dos criados</div>
+                </>) : e.chave === 'enviados' && e.antes > 0 ? (<>
+                  <div style={{ fontSize:13, fontWeight:600 }}>{fmtNum(e.antes)}</div>
+                  <div style={{ fontSize:10, color:'var(--faint)' }}>de antes</div>
+                </>) : null
+              ) : (<>
+                <div style={{ fontSize:13, fontWeight:600 }}>{conv}%</div>
+                <div style={{ fontSize:10, color:'var(--faint)' }}>{i === 0 ? 'do topo' : 'da anterior'}</div>
+              </>)}
             </div>
             {hover === i && (
               <div className="h-funil-tip" style={{ position:'absolute', top:-4, zIndex:5, pointerEvents:'none',
@@ -887,8 +909,13 @@ function Funil({ etapas, carregando, onAbrirEtapa, modo = 'atividade', setModo }
                 padding:'7px 10px', fontSize:11.5, lineHeight:1.5, color:'var(--text)',
                 boxShadow:'0 6px 18px rgba(0,0,0,.28)', whiteSpace:'nowrap' }}>
                 <b>{e.rotulo}</b><br/>
-                {fmtNum(e.valor)} de {fmtNum(topo)} · {pct(e.valor, topo)}% do topo
-                {anterior && <><br/>{conv}% de “{anterior.rotulo}”</>}
+                {ativ ? (<>
+                  {fmtNum(e.valor)} no período
+                  {e.chave === 'enviados' && e.antes > 0 && <><br/>{fmtNum(e.antes)} deles eram leads criados antes do período</>}
+                </>) : (<>
+                  {fmtNum(e.valor)} de {fmtNum(topo)} · {pct(e.valor, topo)}% do topo
+                  {anterior && <><br/>{conv}% de “{anterior.rotulo}”</>}
+                </>)}
                 {e.chave === 'enviados' && e.manuais > 0 && <><br/>+ {fmtNum(e.manuais)} marcado(s) à mão como entregue(s) (fora desta conta)</>}
                 {clicavel && <><br/><span style={{ color:'var(--accent)' }}>Clique para ver esses leads</span></>}
               </div>
@@ -896,6 +923,14 @@ function Funil({ etapas, carregando, onAbrirEtapa, modo = 'atividade', setModo }
           </div>
         );
       })}
+      {!carregando && ativ && enviados?.antes > 0 && (
+        <div style={{ fontSize:11.5, color:'var(--faint)', marginTop:10, lineHeight:1.5, borderTop:'1px solid var(--border)', paddingTop:9 }}>
+          Dos <b style={{ color:'var(--text)' }}>{fmtNum(enviados.valor)}</b> enviados ao CRM no período,{' '}
+          <b style={{ color:'var(--text)' }}>{fmtNum(enviados.antes)}</b> eram leads que já existiam antes da data inicial:
+          estavam na fila esperando vaga numa vendedora (até 10 por vez) ou ainda na esteira. Por isso o número de enviados
+          pode passar o de leads criados no mesmo período.
+        </div>
+      )}
     </div>
   );
 }
@@ -1251,10 +1286,18 @@ function relatorioHtml(d, rotuloPeriodo) {
     { rot:'Entregues ao time comercial', v:f.enviados,
       txt:'Chegaram ao CRM com contato e diagnóstico, distribuídas entre os vendedores.' },
   ];
-  const topo = f.encontradas || 0;
+  const ativ = d.modo !== 'coorte';
+  if (ativ) {
+    etapas[1].rot = 'Novas empresas com o perfil dos seus clientes';
+    etapas[1].txt = 'Passaram na comparação com os seus clientes atuais (atividade, porte e semelhança) e viraram lead neste período.';
+    etapas[2].txt = 'Das empresas do item acima, as que já têm um canal de contato para o vendedor falar com a empresa.';
+    etapas[3].txt = 'Leads que chegaram ao CRM neste período, distribuídos entre os vendedores'
+      + (f.enviados_antes ? ` — ${n(f.enviados_antes)} deles foram selecionados antes e aguardavam vaga na fila de um vendedor.` : '.');
+  }
+  const topo = ativ ? Math.max(0, ...etapas.map(x => x.v || 0)) : (f.encontradas || 0);
   const funilHtml = etapas.map((x, i) => {
     const w = topo ? Math.max(1.2, (x.v || 0) / topo * 100) : 0;
-    const conv = i === 0 ? '' : `<span class="conv">${pc(x.v, etapas[i - 1].v)} da etapa anterior</span>`;
+    const conv = i === 0 || (ativ && i !== 2) ? '' : `<span class="conv">${pc(x.v, etapas[i - 1].v)} ${ativ ? 'dos novos leads' : 'da etapa anterior'}</span>`;
     return `<div class="fl"><div class="fr"><b>${e(x.rot)}</b><span class="fv">${n(x.v)}</span></div>
       <div class="fb"><i style="width:${w}%"></i></div><div class="fx">${e(x.txt)} ${conv}</div></div>`;
   }).join('');
@@ -1300,7 +1343,7 @@ function relatorioHtml(d, rotuloPeriodo) {
         <div><b>${n(g.periodo.segmentadas)}</b><span>com o perfil</span></div>
         <div><b>${n(g.periodo.qualificados)}</b><span>prontas p/ abordagem</span></div>
         <div><b>${n(g.periodo.enviados)}</b><span>entregues ao time</span></div>
-        <div><b>${pc(g.periodo.enviados, g.periodo.encontradas)}</b><span>aproveitamento</span></div>
+        ${ativ ? '' : `<div><b>${pc(g.periodo.enviados, g.periodo.encontradas)}</b><span>aproveitamento</span></div>`}
       </div>
       ${g.descartes.length ? `<div class="mut">Principais motivos de exclusão: ${g.descartes.map(x => `${e(x.motivo)} (${n(x.n)})`).join(' · ')}</div>` : ''}
     </div>`).join('');
