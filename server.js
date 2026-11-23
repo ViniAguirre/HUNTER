@@ -198,9 +198,17 @@ function buildLeadsFilter(query) {
   if (query.funil === '1') {
     vals.push(instante(funil_de)); const d = vals.length;
     vals.push(instante(funil_ate)); const b = vals.length;
-    conditions.push(coorteFunilSql('l', d, b));
-    if (etapa === 'qualificados') conditions.push(QUALIFICADO_FUNIL_SQL('l'));
-    if (etapa === 'enviados') conditions.push(ENVIADO_CRM_SQL('l'));
+    const naJanela = col => `($${d}::timestamptz IS NULL OR ${col} >= $${d}::timestamptz) AND ($${b}::timestamptz IS NULL OR ${col} < $${b}::timestamptz)`;
+    if (query.funil_modo === 'atividade') {
+      // Atividade do período: cada etapa pela data do próprio acontecimento.
+      if (etapa === 'enviados') conditions.push(`${ENVIADO_CRM_SQL('l')} AND ${naJanela('l.enviado_crm_em')}`);
+      else conditions.push(naJanela('l.criado_em'));
+      if (etapa === 'qualificados') conditions.push(QUALIFICADO_FUNIL_SQL('l'));
+    } else {
+      conditions.push(coorteFunilSql('l', d, b));
+      if (etapa === 'qualificados') conditions.push(QUALIFICADO_FUNIL_SQL('l'));
+      if (etapa === 'enviados') conditions.push(ENVIADO_CRM_SQL('l'));
+    }
   }
   if (uf) { vals.push(uf); conditions.push(`l.uf = $${vals.length}`); }
   // Vendedor (conexão) que recebeu o lead na distribuição do CRM.
@@ -1547,6 +1555,35 @@ async function funilPorRadar(de, ate) {
     return rows;
 }
 
+// Funil pela ATIVIDADE do período: cada etapa conta o que aconteceu dentro da
+// janela, pela data do próprio acontecimento — empresas encontradas no
+// período, leads criados no período, leads enviados ao CRM no período. É o que
+// responde "quanto o Hunter produziu nestas datas". O funil de coorte (acima)
+// responde outra pergunta: "das empresas encontradas nestas datas, quantas
+// chegaram ao fim" — e por isso não mostra o lead enviado hoje cuja empresa
+// foi encontrada no mês passado.
+async function funilAtividade(de, ate) {
+  const jan = col => `($1::timestamptz IS NULL OR ${col} >= $1) AND ($2::timestamptz IS NULL OR ${col} < $2)`;
+  const { rows } = await pool.query(`
+    SELECT busca_id, SUM(enc)::int AS encontradas, SUM(seg)::int AS segmentadas, SUM(qual)::int AS qualificados,
+           SUM(env)::int AS enviados, SUM(man)::int AS manuais
+      FROM (
+        SELECT e.busca_id, 1 AS enc, 0 AS seg, 0 AS qual, 0 AS env, 0 AS man
+          FROM empresa_tenant_estado e WHERE ${jan('e.descoberto_em')}
+        UNION ALL
+        SELECT l.busca_id, 0, 1, CASE WHEN ${QUALIFICADO_FUNIL_SQL('l')} THEN 1 ELSE 0 END, 0, 0
+          FROM leads l WHERE ${jan('l.criado_em')}
+        UNION ALL
+        SELECT l.busca_id, 0, 0, 0, 1, 0 FROM leads l WHERE ${ENVIADO_CRM_SQL('l')} AND ${jan('l.enviado_crm_em')}
+        UNION ALL
+        SELECT l.busca_id, 0, 0, 0, 0, 1 FROM leads l
+         WHERE l.status = 'Enviado' AND l.enviado_crm_em IS NULL AND ${jan('l.enviado_manual_em')}
+      ) x
+     GROUP BY busca_id`, [de, ate]);
+  return rows;
+}
+const funilDoModo = (modo, de, ate) => modo === 'coorte' ? funilPorRadar(de, ate) : funilAtividade(de, ate);
+
 const instanteOuNull = (v) => {
   if (!v) return null;
   const d = new Date(String(v));
@@ -1565,7 +1602,8 @@ app.get('/api/funil', requireAuth, async (req, res) => {
   const { de, ate, erro } = janelaDaQuery(req.query);
   if (erro) return res.status(400).json({ erro });
   try {
-    const rows = await funilPorRadar(de, ate);
+    const modo = req.query.modo === 'coorte' ? 'coorte' : 'atividade';
+    const rows = await funilDoModo(modo, de, ate);
 
     const { rows: nomes } = await pool.query(`SELECT id, nome, status FROM buscas`);
     const porId = new Map(nomes.map(b => [b.id, b]));
@@ -1594,7 +1632,7 @@ app.get('/api/funil', requireAuth, async (req, res) => {
       { chave:'qualificados', rotulo:'Leads qualificados',   valor: soma('qualificados') },
       { chave:'enviados',     rotulo:'Enviados ao CRM',      valor: soma('enviados'), manuais: soma('manuais') },
     ];
-    res.json({ periodo: { de, ate }, buscaId, etapas, radares });
+    res.json({ periodo: { de, ate }, modo, buscaId, etapas, radares });
   } catch (e) { console.error(e); res.status(500).json({ erro: 'erro interno' }); }
 });
 
@@ -2009,7 +2047,7 @@ app.get('/api/relatorio', requireAuth, async (req, res) => {
     const naJanela = (col) => `($1::timestamptz IS NULL OR ${col} >= $1) AND ($2::timestamptz IS NULL OR ${col} < $2)`;
     const analiseReal = `(${temAnaliseSql('l')} AND COALESCE(l.swot->>'generico','false') <> 'true')`;
     const [funil, buscasRes, contatoRes, contatoBusca, crmRes, porDia, porVendedora, descartesRes, exemploRes, esteira] = await Promise.all([
-      funilPorRadar(de, ate),
+      funilDoModo(req.query.modo === 'coorte' ? 'coorte' : 'atividade', de, ate),
       pool.query(`
         SELECT b.id, b.nome, b.tipo, b.status, b.criado_em, b.criterios, b.descartes,
                b.estrategia_pauta_id AS pauta_id, ep.nome AS pauta,
@@ -2210,7 +2248,7 @@ app.get('/api/relatorio', requireAuth, async (req, res) => {
     if (!rec.length) rec.push({ tipo: 'bom', titulo: 'Operação estável', texto: 'Nenhum ponto de atenção no período.' });
 
     res.json({
-      gerado_em: new Date().toISOString(), periodo: { de, ate },
+      gerado_em: new Date().toISOString(), periodo: { de, ate }, modo: req.query.modo === 'coorte' ? 'coorte' : 'atividade',
       funil: etapas, contato, crm: { ...crm, por_dia: porDia.rows, por_vendedora: porVendedora.rows },
       descartes, fora: Object.entries(foraTotal).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([motivo, n]) => ({ motivo, n })),
       esteira, campanhas, exemplo, recomendacoes: rec,
