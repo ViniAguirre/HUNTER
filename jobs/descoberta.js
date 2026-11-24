@@ -726,6 +726,8 @@ async function processarOffice(pool, queues, busca_id, office, counters) {
   // Palavra negativada no nome: fica registrada como encontrada (não volta na
   // próxima passada), mas não entra na esteira — o Score 1 a recusaria.
   if (negativas.noNome(office, await negativas.carregar(pool))) { motivo('palavra_negativada'); return; }
+  const bloq = negativas.bloqueioDe(office, await negativas.carregarBloqueios(pool));
+  if (bloq) { motivo(bloq.motivo); return; }
 
   await queues.enriquecimento.add('enriquecimento',
     { cnpj: office.cnpj, busca_id },

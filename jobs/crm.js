@@ -78,6 +78,14 @@ module.exports = async function crm(job, pool, queues, jobToken = null) {
       console.log(`[crm] lead ${lead_id} não foi ao CRM: ${barrado.item}`);
       return { skipped: 'conferencia', motivo: barrado.motivo, lead_id };
     }
+    // Segunda verificação para quem nunca passou por ela (lead antigo).
+    const jev = await score1.jevNoEnvio(pool, lead_id).catch(e => { console.error('[crm] segunda verificação:', e.message); return null; });
+    if (jev?.cortou) {
+      const r = { motivo: 'nao_e_comprador', item: 'Segunda verificação antes do envio: não é o tipo de empresa que compra o que você vende' };
+      await score1.descartarNaConferencia(pool, lead_id, r);
+      console.log(`[crm] lead ${lead_id} não foi ao CRM: ${r.item}`);
+      return { skipped: 'conferencia', motivo: r.motivo, lead_id };
+    }
   }
   const paraAfiliados = lead.busca_crm_destino === 'afiliados';
   if (!paraAfiliados && !ig) return { skipped: 'sem_crm', lead_id };
