@@ -360,6 +360,7 @@ const NAV_MAIN = [
   { key:'buscas', label:'Radares', icon:'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-4.3-4.3' },
   { key:'estrategia', label:'Estratégia', icon:'M3 4h18v18H3zM3 10h18M8 2v4M16 2v4M7 14h4M7 18h7' },
   { key:'leads', label:'Leads', icon:'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM12 3v3M12 18v3M3 12h3M18 12h3' },
+  { key:'listanegra', label:'Lista negra', icon:'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM4.9 4.9l14.2 14.2' },
   { key:'propostas', label:'Propostas', icon:'M9 12h6M9 16h6M9 8h2M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z' },
   { key:'semelhantes', label:'Semelhantes', icon:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 11l-3 3-1.5-1.5' },
 ];
@@ -650,6 +651,7 @@ const TITLES = {
   pautaForm: ['Pauta da Estratégia', 'O que procurar, onde (em ordem) e quando'],
   nova: ['Criar Radar', 'Configure um novo radar de leads'],
   propostas: ['Propostas', 'Suas propostas de valor (o que você vende)'],
+  listanegra: ['Lista negra', 'O que o Hunter está deixando de fora — e como liberar o que foi engano'],
   semelhantes: ['Semelhantes', 'Listas de clientes que servem de modelo para a busca'],
   agente: ['Agente SWOT', 'Fichamento comercial que personaliza a análise'],
   integracoes: ['Integrações', 'Conexões com APIs e CRM'],
@@ -2896,8 +2898,15 @@ function PalavrasNegativas() {
       setNova(''); carregar();
     } finally { setBusy(false); }
   };
-  const tirar = async (id) => {
-    await fetch('/api/palavras-negativas/' + id, { method:'DELETE', credentials:'same-origin' }).catch(() => {});
+  const tirar = async (p) => {
+    let liberar = false;
+    if (p.leads > 0) {
+      liberar = window.confirm(`Tirar "${p.palavra}" da lista negra.\n\n${p.leads} lead(s) foram descartados por essa palavra. `
+        + 'Clique OK para liberá-los também (voltam para a lista de leads), ou Cancelar para só tirar a palavra.');
+    } else if (!window.confirm(`Tirar "${p.palavra}" da lista negra? Empresas com essa palavra voltam a poder virar lead.`)) return;
+    const r = await fetch('/api/palavras-negativas/' + p.id + (liberar ? '?liberar=1' : ''), { method:'DELETE', credentials:'same-origin' }).catch(() => null);
+    const d = r ? await r.json().catch(() => ({})) : {};
+    if (liberar && d.liberados) window.alert(`${d.liberados} lead(s) voltaram para a lista de leads.`);
     carregar();
   };
   return (
@@ -2911,8 +2920,8 @@ function PalavrasNegativas() {
         {(lista || []).map(p => (
           <span key={p.id} style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'4px 9px', borderRadius:8, fontSize:12,
             border:`1px solid ${C.red}`, color:'var(--text)' }}>
-            {p.palavra}
-            <button type="button" onClick={() => tirar(p.id)} title="Tirar (volta a valer daqui pra frente)"
+            {p.palavra}{p.leads > 0 && <span style={{ color:'var(--faint)' }} title="Leads descartados por esta palavra">{p.leads}</span>}
+            <button type="button" onClick={() => tirar(p)} title="Tirar da lista negra"
               style={{ background:'none', border:'none', padding:0, color:'var(--faint)', cursor:'pointer', fontSize:13, lineHeight:1 }}>×</button>
           </span>
         ))}
@@ -2927,6 +2936,149 @@ function PalavrasNegativas() {
           style={{ height:34, padding:'0 14px', borderRadius:8, border:'none', background: nova.trim() ? C.red : 'var(--border)',
             color:'#fff', fontSize:12.5, fontWeight:600, fontFamily:'inherit', cursor: nova.trim() ? 'pointer' : 'default' }}>Negativar</button>
       </div>
+    </div>
+  );
+}
+
+// Lista negra: o que o Hunter está deixando de fora, com o porquê, e o botão
+// de liberar o que foi engano. Liberar devolve o lead à lista de trabalho e
+// impede as regras automáticas de tirá-lo de novo.
+const ROTULO_MOTIVO_REGRA = {
+  palavra_negativada: 'Palavra negativada no nome', sem_palavra_do_ramo: 'Sem palavra do ramo no nome',
+  score_recalculado: 'Nota abaixo do corte com o perfil atual', filtro_perfil: 'Fora do perfil (revisão)',
+  atividade_fora_do_perfil: 'Atividade que nenhum cliente tem', atividade_rara: 'Atividade rara, sem palavra do ramo',
+  atividade_recusada: 'Atividade dos leads recusados', atividade_desconhecida: 'Atividade desconhecida',
+  entidade_nao_empresarial: 'Igreja, órgão público, condomínio…', nao_e_comprador: 'Segunda verificação: não é comprador',
+};
+function ListaNegra({ onOpenLead }) {
+  const [aba, setAba] = useState('recusadas');
+  const [q, setQ] = useState('');
+  const [busca, setBusca] = useState('');
+  const [page, setPage] = useState(1);
+  const [dados, setDados] = useState(null);
+  const [sel, setSel] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [tick, setTick] = useState(0);
+  useEffect(() => { const t = setTimeout(() => { setBusca(q); setPage(1); }, 400); return () => clearTimeout(t); }, [q]);
+  useEffect(() => {
+    if (aba === 'palavras') return;
+    let vivo = true;
+    setDados(d => d && d.tipo === aba ? d : null);
+    fetch(`/api/lista-negra?tipo=${aba}&page=${page}${busca ? '&q=' + encodeURIComponent(busca) : ''}`, { credentials:'same-origin' })
+      .then(r => r.ok ? r.json() : null).then(d => { if (vivo) { setDados(d); setSel([]); } }).catch(() => {});
+    return () => { vivo = false; };
+  }, [aba, page, busca, tick]);
+  // Contagens das abas mesmo na de palavras.
+  const [contagens, setContagens] = useState(null);
+  useEffect(() => {
+    fetch('/api/lista-negra?tipo=recusadas&page=1', { credentials:'same-origin' }).then(r => r.ok ? r.json() : null)
+      .then(d => d && setContagens(d.contagens)).catch(() => {});
+  }, [tick]);
+
+  const liberar = async (ids) => {
+    if (!ids.length || busy) return;
+    const recusa = aba === 'recusadas';
+    if (!window.confirm(`Liberar ${ids.length} lead(s)?\n\nEles voltam para a lista de leads e as regras automáticas não os tiram de novo.`
+      + (recusa ? ' Também deixam de ser exemplo do que evitar no perfil do radar.' : ''))) return;
+    setBusy(true);
+    const r = await fetch('/api/lista-negra/liberar', { method:'POST', credentials:'same-origin',
+      headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ ids }) }).catch(() => null);
+    const d = r ? await r.json().catch(() => ({})) : {};
+    setBusy(false);
+    if (!r || !r.ok) { alert(d.erro || 'Não consegui liberar.'); return; }
+    setTick(t => t + 1);
+  };
+
+  const leads = dados?.leads || [];
+  const allSel = leads.length > 0 && leads.every(l => sel.includes(l.id));
+  const abas = [
+    ['recusadas', 'Recusadas por você', contagens?.recusadas],
+    ['regras', 'Tiradas pelas regras', contagens?.regras],
+    ['palavras', 'Palavras negativadas', contagens?.palavras],
+  ];
+  const explica = {
+    recusadas: 'Empresas que alguém marcou com a mãozinha para baixo. Além de saírem da lista, elas ensinam o perfil do radar a evitar empresas parecidas.',
+    regras: 'Leads que o Hunter tirou sozinho: palavra negativada no nome, sem palavra do ramo, atividade fora do perfil, nota abaixo do corte ou a segunda verificação. Não ensinam o perfil.',
+    palavras: 'Empresa com uma destas palavras no nome não vira lead em nenhum radar.',
+  }[aba];
+  const cols = '36px 2.2fr 1.5fr 1.1fr 90px 96px';
+  return (
+    <div style={{ maxWidth:1180 }}>
+      <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:12 }}>
+        {abas.map(([k, rot, n]) => (
+          <button key={k} type="button" onClick={() => { setAba(k); setPage(1); setSel([]); }}
+            style={{ height:34, padding:'0 14px', borderRadius:9, fontSize:12.5, fontFamily:'inherit', cursor:'pointer',
+              border:`1px solid ${aba === k ? 'var(--accent)' : 'var(--border)'}`, background: aba === k ? 'var(--panel2)' : 'var(--panel)',
+              color: aba === k ? 'var(--accent)' : 'var(--dim)', fontWeight: aba === k ? 600 : 400 }}>
+            {rot}{n != null && <span style={{ marginLeft:6, color:'var(--faint)', fontWeight:400 }}>{fmtNum(n)}</span>}
+          </button>
+        ))}
+      </div>
+      <div style={{ fontSize:12.5, color:'var(--faint)', marginBottom:14, lineHeight:1.5 }}>{explica}</div>
+      {aba === 'palavras' ? <PalavrasNegativas/> : (<>
+        <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap', marginBottom:12 }}>
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar por empresa ou CNPJ" aria-label="Buscar na lista negra"
+            style={{ flex:'1 1 240px', maxWidth:360, height:38, borderRadius:9, border:'1px solid var(--border)', background:'var(--panel)',
+              color:'var(--text)', padding:'0 12px', fontSize:13, fontFamily:'inherit' }}/>
+          <button type="button" disabled={!sel.length || busy} onClick={() => liberar(sel)}
+            style={{ height:38, padding:'0 14px', borderRadius:9, border:'none', fontSize:12.5, fontWeight:600, fontFamily:'inherit',
+              background: sel.length ? C.green : 'var(--border)', color: sel.length ? '#0E1936' : 'var(--faint)', cursor: sel.length ? 'pointer' : 'default' }}>
+            {busy ? 'Liberando…' : `Liberar ${sel.length ? sel.length + ' ' : ''}selecionado${sel.length === 1 ? '' : 's'}`}
+          </button>
+        </div>
+        <div className="h-tabela" style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, overflow:'hidden' }}>
+          <div className="h-scroll"><div className="h-tw" style={{ '--tw':'860px' }}>
+            <div className="h-thead" style={{ display:'grid', gridTemplateColumns:cols, gap:10, padding:'12px 16px', alignItems:'center',
+              borderBottom:'1px solid var(--border)', fontSize:11, fontWeight:600, letterSpacing:'.04em', color:'var(--faint)', textTransform:'uppercase' }}>
+              <div onClick={() => setSel(allSel ? [] : leads.map(l => l.id))} style={{ cursor:'pointer' }}><Checkbox checked={allSel}/></div>
+              <div>Empresa</div><div>{aba === 'regras' ? 'Motivo' : 'Radar'}</div><div>Local</div><div>Quando</div><div/>
+            </div>
+            {!dados && <div style={{ padding:24, textAlign:'center', fontSize:13, color:'var(--faint)' }}>Carregando…</div>}
+            {dados && !leads.length && <div style={{ padding:24, textAlign:'center', fontSize:13, color:'var(--faint)' }}>
+              {busca ? 'Nada encontrado com essa busca.' : 'Nada aqui por enquanto.'}</div>}
+            {leads.map(l => {
+              const on = sel.includes(l.id);
+              return (
+                <div key={l.id} className="row-hover h-linha" onClick={() => onOpenLead && onOpenLead(l.id)}
+                  style={{ display:'grid', gridTemplateColumns:cols, gap:10, padding:'11px 16px', alignItems:'center',
+                    borderBottom:'1px solid var(--border)', cursor:'pointer', background: on ? 'var(--panel2)' : 'transparent' }}>
+                  <div className="h-sel" onClick={e => { e.stopPropagation(); setSel(s => on ? s.filter(x => x !== l.id) : [...s, l.id]); }}><Checkbox checked={on}/></div>
+                  <div className="h-titulo" style={{ minWidth:0 }}>
+                    <div style={{ fontSize:13.5, fontWeight:500, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{l.fantasia || l.razao}</div>
+                    <div style={{ fontSize:11, color:'var(--faint)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+                      {l.setor || l.razao}{l.enviado_crm_em ? ' · já tinha ido ao CRM' : ''}</div>
+                  </div>
+                  <div data-rot={aba === 'regras' ? 'Motivo' : 'Radar'} style={{ minWidth:0 }} title={l.detalhe || undefined}>
+                    {aba === 'regras' ? (<>
+                      <div style={{ fontSize:12.5 }}>{ROTULO_MOTIVO_REGRA[l.motivo_descarte] || l.motivo_descarte}</div>
+                      {l.detalhe && <div style={{ fontSize:11, color:'var(--faint)', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{l.detalhe}</div>}
+                    </>) : <div style={{ fontSize:12.5, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{l.radar || '—'}</div>}
+                  </div>
+                  <div data-rot="Local" style={{ fontSize:12.5 }}>{l.cidade}{l.uf ? <span style={{ color:'var(--faint)' }}>/{l.uf}</span> : null}</div>
+                  <div data-rot="Quando" style={{ fontSize:12, color:'var(--faint)' }}>{timeAgo(l.atualizado_em)}</div>
+                  <div onClick={e => e.stopPropagation()}>
+                    <button type="button" disabled={busy} onClick={() => liberar([l.id])}
+                      style={{ height:30, padding:'0 12px', borderRadius:8, border:`1px solid ${C.green}`, background:'transparent',
+                        color:C.green, fontSize:12, fontFamily:'inherit', cursor:'pointer' }}>Liberar</button>
+                  </div>
+                </div>
+              );
+            })}
+          </div></div>
+        </div>
+        {dados && dados.paginas > 1 && (
+          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginTop:12, fontSize:12, color:'var(--faint)' }}>
+            <span>{fmtNum(dados.total)} no total</span>
+            <div style={{ display:'flex', gap:6, alignItems:'center' }}>
+              <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
+                style={{ height:30, width:30, borderRadius:7, border:'1px solid var(--border)', background:'var(--panel)', color:'var(--dim)', cursor:'pointer' }}>‹</button>
+              <span>{page}/{dados.paginas}</span>
+              <button onClick={() => setPage(p => Math.min(dados.paginas, p + 1))} disabled={page >= dados.paginas}
+                style={{ height:30, width:30, borderRadius:7, border:'1px solid var(--border)', background:'var(--panel)', color:'var(--dim)', cursor:'pointer' }}>›</button>
+            </div>
+          </div>
+        )}
+      </>)}
     </div>
   );
 }
@@ -9540,6 +9692,7 @@ function App() {
           onOpenLead={setOpenLeadId} onCrm={setCrmIds} user={user} preset={leadsPreset}/>
       );
       case 'buscas': return <Buscas onOpen={openBusca} onEstrategia={() => navTo('estrategia')}/>;
+      case 'listanegra': return <ListaNegra onOpenLead={setOpenLeadId}/>;
       case 'buscaDetail': return <BuscaDetail buscaId={buscaDetailId} onBack={() => setScreen('buscas')} onOpenLead={setOpenLeadId} onDuplicar={duplicarBusca}
         onVerLeads={preset => { setLeadsPreset(preset); setScreen('leads'); setOpenLeadId(null); }}/>;
       case 'nova': return <NovaBusca key={duplicarDe ? 'dup-'+duplicarDe.id : 'nova'} inicial={duplicarDe} onSalvar={() => navTo('buscas')}/>;

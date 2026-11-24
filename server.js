@@ -530,6 +530,8 @@ async function init() {
   await pool.query(`
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS empresa_cnpj    TEXT REFERENCES empresas(cnpj) ON DELETE SET NULL;
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS motivo_descarte TEXT;
+    -- Liberado à mão na Lista negra: as regras automáticas não o descartam mais.
+    ALTER TABLE leads ADD COLUMN IF NOT EXISTS liberado_em TIMESTAMPTZ;
     -- Raio-X do radar: por que as empresas encontradas não viraram lead, por
     -- motivo ({"atividade_rara": 120, "ja_vista": 300, …}).
     ALTER TABLE buscas ADD COLUMN IF NOT EXISTS descartes JSONB NOT NULL DEFAULT '{}';
@@ -1008,6 +1010,13 @@ async function init() {
     await tenantizarTabela(pool, t);
   }
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_palavras_negativas_raiz ON palavras_negativas(tenant_id, raiz)`);
+  // Filtro de contador (jobs/filtro-contador.js): "quantas empresas têm este
+  // telefone/e-mail na Receita" varria o cadastro inteiro a cada empresa.
+  // CONCURRENTLY: o cadastro é grande e é escrito o tempo todo pelo motor.
+  for (const campo of ['telefones', 'emails']) {
+    pool.query(`CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_empresas_receita_${campo} ON empresas USING gin ((contato_receita->'${campo}'))`)
+      .catch(e => console.warn(`[migração] índice de ${campo} da Receita:`, e.message));
+  }
 
   // usuarios.email era UNIQUE global — dois clientes não podiam ter o mesmo
   // e-mail cadastrado. Agora só precisa ser único DENTRO do tenant.
@@ -3231,7 +3240,13 @@ app.get('/api/palavras-negativas', requireAuth, async (req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT id, palavra, raiz, criado_por, criado_em FROM palavras_negativas ORDER BY palavra`);
-    res.json({ palavras: rows });
+    // Quantos leads cada palavra tirou (pra a tela oferecer liberá-los).
+    const neg = require('./providers/negativas');
+    const { rows: desc } = await pool.query(
+      `SELECT fantasia, razao FROM leads WHERE status='Descartado' AND motivo_descarte='palavra_negativada' LIMIT 20000`);
+    const conta = new Map();
+    for (const l of desc) for (const p of neg.palavrasDoNome(l)) conta.set(p.raiz, (conta.get(p.raiz) || 0) + 1);
+    res.json({ palavras: rows.map(p => ({ ...p, leads: conta.get(p.raiz) || 0 })) });
   } catch (e) { console.error('[negativas]', e.message); res.status(500).json({ erro: 'erro interno' }); }
 });
 
@@ -3291,10 +3306,99 @@ app.delete('/api/palavras-negativas/:id', requireAuth, requireEditor, async (req
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
   try {
-    await pool.query(`DELETE FROM palavras_negativas WHERE id=$1`, [id]);
-    require('./providers/negativas').invalidar();
-    res.json({ ok: true });
+    const neg = require('./providers/negativas');
+    const { rows: [p] } = await pool.query(`DELETE FROM palavras_negativas WHERE id=$1 RETURNING raiz`, [id]);
+    neg.invalidar();
+    // ?liberar=1: os leads que esta palavra tirou voltam (se nenhuma outra
+    // palavra negativada também estiver no nome).
+    let liberados = 0;
+    if (p && (req.query.liberar === '1' || req.query.liberar === 'true')) {
+      const so = new Map([[p.raiz, p.raiz]]);
+      const outras = await neg.carregar(pool);
+      const { rows } = await pool.query(
+        `SELECT id, fantasia, razao FROM leads WHERE status='Descartado' AND motivo_descarte='palavra_negativada'`);
+      const ids = rows.filter(l => neg.noNome(l, so) && !neg.noNome(l, outras)).map(l => l.id);
+      if (ids.length) liberados = await liberarLeads(ids);
+    }
+    res.json({ ok: true, liberados });
   } catch (e) { console.error('[negativas]', e.message); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// ── Lista negra ──────────────────────────────────────────────────────────────
+// Tudo o que o Hunter está deixando de fora: empresas recusadas com a mãozinha
+// (viram contraexemplo do perfil), leads tirados pelas regras automáticas e as
+// palavras negativadas. Daqui o cliente confere e libera o que foi engano.
+const MOTIVOS_REGRA = ['palavra_negativada', 'sem_palavra_do_ramo', 'score_recalculado', 'filtro_perfil',
+  'atividade_fora_do_perfil', 'atividade_rara', 'atividade_recusada', 'atividade_desconhecida',
+  'entidade_nao_empresarial', 'nao_e_comprador'];
+
+// Volta o lead pra lista de trabalho. Recusado com a mãozinha também deixa de
+// ser contraexemplo (a lista do radar é re-perfilada). Enviado continua
+// enviado. Marca liberado_em: a conferência automática não o tira de novo.
+async function liberarLeads(ids) {
+  const { rows } = await pool.query(
+    `SELECT l.id, l.cnpj, l.contato_status, b.lista FROM leads l LEFT JOIN buscas b ON b.id = l.busca_id
+      WHERE l.id = ANY($1::int[]) AND l.status='Descartado'`, [ids]);
+  const listas = new Set();
+  for (const l of rows) {
+    if (l.contato_status !== 'fora_do_perfil' || !l.lista) continue;
+    await pool.query(`DELETE FROM sementes WHERE lista=$1 AND cnpj=$2 AND tipo='negativa'`,
+      [l.lista, String(l.cnpj || '').replace(/\D/g, '')]);
+    listas.add(l.lista);
+  }
+  for (const lista of listas) {
+    await pool.query(`UPDATE buscas SET criterios = criterios || '{"reperfilar": true}'::jsonb WHERE lista=$1`, [lista]);
+  }
+  const { rowCount } = await pool.query(
+    `UPDATE leads SET status = CASE WHEN enviado_crm_em IS NOT NULL OR enviado_manual_em IS NOT NULL THEN 'Enviado' ELSE 'Novo' END,
+            contato_status = CASE WHEN contato_status IN ('fora_do_perfil','descartado') THEN NULL ELSE contato_status END,
+            motivo_descarte = NULL, liberado_em = now(), atualizado_em = now()
+      WHERE id = ANY($1::int[]) AND status='Descartado'`, [rows.map(l => l.id)]);
+  return rowCount;
+}
+
+app.get('/api/lista-negra', requireAuth, async (req, res) => {
+  const tipo = req.query.tipo === 'regras' ? 'regras' : 'recusadas';
+  const q = String(req.query.q || '').trim();
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const POR = 50;
+  const filtroTipo = {
+    recusadas: `l.contato_status = 'fora_do_perfil' AND $1::text[] IS NOT NULL`,
+    regras: `l.status = 'Descartado' AND l.motivo_descarte = ANY($1::text[]) AND COALESCE(l.contato_status,'') <> 'fora_do_perfil'`,
+  };
+  try {
+    const vals = [MOTIVOS_REGRA];
+    let where = filtroTipo[tipo];
+    if (q) {
+      vals.push(`%${q}%`);
+      where += ` AND (l.fantasia ILIKE $${vals.length} OR l.razao ILIKE $${vals.length} OR l.cnpj LIKE $${vals.length})`;
+    }
+    const [lista, total, contagens] = await Promise.all([
+      pool.query(`
+        SELECT l.id, l.fantasia, l.razao, l.cnpj, l.setor, l.cidade, l.uf, l.score, l.status, l.motivo_descarte,
+               l.atualizado_em, l.enviado_crm_em, b.nome AS radar,
+               CASE WHEN jsonb_typeof(l.breakdown)='array' AND (l.breakdown->-1->>'pts') = '0' THEN l.breakdown->-1->>'item' END AS detalhe
+          FROM leads l LEFT JOIN buscas b ON b.id = l.busca_id
+         WHERE ${where}
+         ORDER BY l.atualizado_em DESC NULLS LAST, l.id DESC
+         LIMIT ${POR} OFFSET ${(page - 1) * POR}`, vals),
+      pool.query(`SELECT COUNT(*)::int AS n FROM leads l WHERE ${where}`, vals),
+      pool.query(`
+        SELECT COUNT(*) FILTER (WHERE ${filtroTipo.recusadas})::int AS recusadas,
+               COUNT(*) FILTER (WHERE ${filtroTipo.regras})::int AS regras,
+               (SELECT COUNT(*)::int FROM palavras_negativas) AS palavras
+          FROM leads l`, [MOTIVOS_REGRA]),
+    ]);
+    res.json({ tipo, leads: lista.rows, total: total.rows[0].n, page, paginas: Math.max(1, Math.ceil(total.rows[0].n / POR)),
+      contagens: contagens.rows[0] });
+  } catch (e) { console.error('[lista-negra]', e.message); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+app.post('/api/lista-negra/liberar', requireAuth, requireEditor, async (req, res) => {
+  const ids = (Array.isArray(req.body?.ids) ? req.body.ids : []).map(x => parseInt(x, 10)).filter(x => !isNaN(x)).slice(0, 500);
+  if (!ids.length) return res.status(400).json({ erro: 'nenhum lead informado' });
+  try { res.json({ ok: true, liberados: await liberarLeads(ids) }); }
+  catch (e) { console.error('[lista-negra]', e.message); res.status(500).json({ erro: 'erro interno' }); }
 });
 
 // Palavras do nome de um lead, pra escolher qual negativar depois do joinha.

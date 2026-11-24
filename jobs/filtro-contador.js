@@ -34,11 +34,7 @@ module.exports = async function filtroContador(job, pool, queues) {
   for (const tel of telefones) {
     if (!tel) continue;
     const { rows: [{ n }] } = await pool.query(`
-      SELECT COUNT(DISTINCT cnpj)::int AS n FROM empresas
-      WHERE EXISTS (
-        SELECT 1 FROM jsonb_array_elements_text(contato_receita->'telefones') AS t(v)
-        WHERE t.v = $1
-      )`, [tel]);
+      SELECT COUNT(*)::int AS n FROM empresas WHERE contato_receita->'telefones' ? $1`, [tel]);
     if (n >= LIMIAR_CONTADOR) { isContador = true; break; }
   }
 
@@ -46,11 +42,7 @@ module.exports = async function filtroContador(job, pool, queues) {
     for (const email of emails) {
       if (!email) continue;
       const { rows: [{ n }] } = await pool.query(`
-        SELECT COUNT(DISTINCT cnpj)::int AS n FROM empresas
-        WHERE EXISTS (
-          SELECT 1 FROM jsonb_array_elements_text(contato_receita->'emails') AS e(v)
-          WHERE e.v = $1
-        )`, [email]);
+        SELECT COUNT(*)::int AS n FROM empresas WHERE contato_receita->'emails' ? $1`, [email]);
       if (n >= LIMIAR_CONTADOR) { isContador = true; break; }
 
       const dominio = String(email).split('@')[1] || '';

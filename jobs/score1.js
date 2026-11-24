@@ -527,11 +527,13 @@ module.exports.revisarPeloPortao = revisarPeloPortao;
 async function conferirLead(pool, leadId, { minimo = null, mapaNeg = null } = {}) {
   const { rows: [l] } = await pool.query(
     `SELECT l.id AS l_id, l.cnpj AS l_cnpj, l.fantasia AS l_fantasia, l.razao AS l_razao, l.cnae AS l_cnae,
-            l.porte AS l_porte, l.uf AS l_uf, l.capital AS l_capital, l.situacao AS l_situacao,
+            l.porte AS l_porte, l.uf AS l_uf, l.capital AS l_capital, l.situacao AS l_situacao, l.liberado_em,
             b.tipo, b.criterios, b.corte_score, e.*
        FROM leads l LEFT JOIN buscas b ON b.id = l.busca_id LEFT JOIN empresas e ON e.cnpj = l.cnpj
       WHERE l.id=$1`, [leadId]);
   if (!l) return null;
+  // Liberado à mão da lista negra: a escolha do usuário vale mais que a regra.
+  if (l.liberado_em) return null;
   // Importação por CNPJ: o usuário pediu ESTA empresa.
   if (l.tipo === 'cnpj') return null;
   const emp = {
