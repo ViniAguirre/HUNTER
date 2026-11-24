@@ -1004,12 +1004,30 @@ async function init() {
     );
   `);
 
+  // Bloqueios de atividade (CNAE) e porte (providers/negativas.js).
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS bloqueios (
+      id         SERIAL PRIMARY KEY,
+      tipo       TEXT NOT NULL CHECK (tipo IN ('atividade','porte')),
+      valor      TEXT NOT NULL,
+      rotulo     TEXT,
+      lead_id    INTEGER,
+      criado_por TEXT,
+      criado_em  TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+    -- Tags do CRM que marcam o lead como fora do perfil (o CRM chama o mesmo
+    -- webhook da conversão). Conferidas ANTES das de conversão.
+    ALTER TABLE config ADD COLUMN IF NOT EXISTS crm_negativo_tags TEXT[] NOT NULL
+      DEFAULT '{fora do perfil,nao qualificado,não qualificado,desqualificado,lead ruim,sem perfil}';
+  `);
+
   for (const t of ['usuarios', 'buscas', 'leads', 'integracoes', 'sementes', 'contadores', 'contadores_hora', 'propostas_valor', 'listas_semelhantes', 'chaves_api',
                    'estrategia', 'estrategia_pautas', 'estrategia_slots', 'estrategia_eventos', 'decisoes_jev',
-                   'avaliacoes_lista', 'busca_contato_log', 'palavras_negativas']) {
+                   'avaliacoes_lista', 'busca_contato_log', 'palavras_negativas', 'bloqueios']) {
     await tenantizarTabela(pool, t);
   }
   await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_palavras_negativas_raiz ON palavras_negativas(tenant_id, raiz)`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_bloqueios ON bloqueios(tenant_id, tipo, valor)`);
   // Filtro de contador (jobs/filtro-contador.js): "quantas empresas têm este
   // telefone/e-mail na Receita" varria o cadastro inteiro a cada empresa.
   // CONCURRENTLY: o cadastro é grande e é escrito o tempo todo pelo motor.
@@ -2142,6 +2160,7 @@ app.get('/api/relatorio', requireAuth, async (req, res) => {
       desistiu_de_esperar: 'Aprovadas, mas ficaram tempo demais na fila', esperou_vaga: 'Aprovadas, mas ficaram tempo demais na fila',
       score_recalculado: 'Reavaliadas e ficaram abaixo do perfil', fora_do_perfil: 'Recusadas pelo time comercial (fora do perfil)',
       palavra_negativada: 'Nome com palavra que o time marcou como fora do perfil',
+      atividade_bloqueada: 'Atividade que o time bloqueou', porte_bloqueado: 'Porte que o time bloqueou',
       sem_palavra_do_ramo: 'Sem nenhuma palavra do ramo no nome', filtro_perfil: 'Reavaliadas e fora do perfil',
       outro: 'Outros motivos',
     };
@@ -3328,7 +3347,7 @@ app.delete('/api/palavras-negativas/:id', requireAuth, requireEditor, async (req
 // Tudo o que o Hunter está deixando de fora: empresas recusadas com a mãozinha
 // (viram contraexemplo do perfil), leads tirados pelas regras automáticas e as
 // palavras negativadas. Daqui o cliente confere e libera o que foi engano.
-const MOTIVOS_REGRA = ['palavra_negativada', 'sem_palavra_do_ramo', 'score_recalculado', 'filtro_perfil',
+const MOTIVOS_REGRA = ['palavra_negativada', 'atividade_bloqueada', 'porte_bloqueado', 'sem_palavra_do_ramo', 'score_recalculado', 'filtro_perfil',
   'atividade_fora_do_perfil', 'atividade_rara', 'atividade_recusada', 'atividade_desconhecida',
   'entidade_nao_empresarial', 'nao_e_comprador'];
 
@@ -3356,6 +3375,86 @@ async function liberarLeads(ids) {
       WHERE id = ANY($1::int[]) AND status='Descartado'`, [rows.map(l => l.id)]);
   return rowCount;
 }
+
+// ── Bloqueios de atividade e porte ──────────────────────────────────────────
+const normBloqueio = (tipo, valor) => tipo === 'atividade'
+  ? String(valor || '').replace(/\D/g, '') : require('./providers/negativas').portePadrao(valor);
+const motivoBloqueio = tipo => tipo === 'atividade' ? 'atividade_bloqueada' : 'porte_bloqueado';
+// Leads (em aberto ou descartados pelo bloqueio) que caem num bloqueio.
+async function leadsDoBloqueio(tipo, valor, { abertos = true } = {}) {
+  const cond = abertos
+    ? `enviado_crm_em IS NULL AND COALESCE(status,'') NOT IN ('Enviado','Descartado')`
+    : `status='Descartado' AND motivo_descarte=$1`;
+  const { rows } = await pool.query(`SELECT id, cnae, porte FROM leads WHERE ${cond}`, abertos ? [] : [motivoBloqueio(tipo)]);
+  return rows.filter(l => normBloqueio(tipo, tipo === 'atividade' ? l.cnae : l.porte) === valor);
+}
+
+app.get('/api/bloqueios', requireAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(`SELECT id, tipo, valor, rotulo, criado_por, criado_em FROM bloqueios ORDER BY tipo, rotulo`);
+    const out = [];
+    for (const b of rows) out.push({ ...b, leads: (await leadsDoBloqueio(b.tipo, b.valor, { abertos: false })).length });
+    res.json({ bloqueios: out });
+  } catch (e) { console.error('[bloqueios]', e.message); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+app.get('/api/bloqueios/previa', requireAuth, async (req, res) => {
+  const tipo = req.query.tipo === 'porte' ? 'porte' : 'atividade';
+  const valor = normBloqueio(tipo, req.query.valor);
+  if (!valor) return res.status(400).json({ erro: 'valor inválido' });
+  try { res.json({ tipo, valor, abertos: (await leadsDoBloqueio(tipo, valor)).length }); }
+  catch (e) { console.error('[bloqueios]', e.message); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+// Bloqueia uma atividade ou porte. Os leads em aberto que caem nele saem da
+// lista (Descartado, com o motivo); os enviados ficam como estão.
+async function bloquear(tipo, valorBruto, rotulo, { leadId = null, usuario = null } = {}) {
+  const valor = normBloqueio(tipo, valorBruto);
+  if (!valor) return null;
+  await pool.query(
+    `INSERT INTO bloqueios (tipo, valor, rotulo, lead_id, criado_por) VALUES ($1,$2,$3,$4,$5)
+     ON CONFLICT (tenant_id, tipo, valor) DO NOTHING`, [tipo, valor, String(rotulo || valorBruto).slice(0, 200), leadId, usuario]);
+  require('./providers/negativas').invalidar();
+  const abertos = await leadsDoBloqueio(tipo, valor);
+  let descartados = 0;
+  if (abertos.length) {
+    const item = tipo === 'atividade' ? `Atividade bloqueada por você: ${rotulo || valor}` : `Porte bloqueado por você: ${rotulo || valor}`;
+    const { rowCount } = await pool.query(
+      `UPDATE leads SET status='Descartado', motivo_descarte=$2, contato_pendente=false, crm_espera_em=NULL,
+              breakdown = COALESCE(breakdown, '[]'::jsonb) || jsonb_build_array(jsonb_build_object('item', $3::text, 'pts', 0)),
+              atualizado_em=now()
+        WHERE id = ANY($1::int[]) AND enviado_crm_em IS NULL AND COALESCE(status,'') NOT IN ('Enviado','Descartado')
+          AND liberado_em IS NULL`,
+      [abertos.map(l => l.id), motivoBloqueio(tipo), item]);
+    descartados = rowCount;
+  }
+  return { tipo, valor, descartados };
+}
+
+app.post('/api/bloqueios', requireAuth, requireEditor, async (req, res) => {
+  const tipo = req.body?.tipo === 'porte' ? 'porte' : req.body?.tipo === 'atividade' ? 'atividade' : null;
+  if (!tipo) return res.status(400).json({ erro: 'tipo deve ser atividade ou porte' });
+  try {
+    const r = await bloquear(tipo, req.body?.valor, req.body?.rotulo, { leadId: parseInt(req.body?.lead_id, 10) || null, usuario: req.user?.email || null });
+    if (!r) return res.status(400).json({ erro: 'valor inválido' });
+    res.json({ ok: true, ...r });
+  } catch (e) { console.error('[bloqueios]', e.message); res.status(500).json({ erro: 'erro interno' }); }
+});
+
+app.delete('/api/bloqueios/:id', requireAuth, requireEditor, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
+  try {
+    const { rows: [b] } = await pool.query(`DELETE FROM bloqueios WHERE id=$1 RETURNING tipo, valor`, [id]);
+    require('./providers/negativas').invalidar();
+    let liberados = 0;
+    if (b && (req.query.liberar === '1' || req.query.liberar === 'true')) {
+      const ids = (await leadsDoBloqueio(b.tipo, b.valor, { abertos: false })).map(l => l.id);
+      if (ids.length) liberados = await liberarLeads(ids);
+    }
+    res.json({ ok: true, liberados });
+  } catch (e) { console.error('[bloqueios]', e.message); res.status(500).json({ erro: 'erro interno' }); }
+});
 
 app.get('/api/lista-negra', requireAuth, async (req, res) => {
   const tipo = req.query.tipo === 'regras' ? 'regras' : 'recusadas';
@@ -3386,7 +3485,7 @@ app.get('/api/lista-negra', requireAuth, async (req, res) => {
       pool.query(`
         SELECT COUNT(*) FILTER (WHERE ${filtroTipo.recusadas})::int AS recusadas,
                COUNT(*) FILTER (WHERE ${filtroTipo.regras})::int AS regras,
-               (SELECT COUNT(*)::int FROM palavras_negativas) AS palavras
+               (SELECT COUNT(*)::int FROM palavras_negativas) + (SELECT COUNT(*)::int FROM bloqueios) AS palavras
           FROM leads l`, [MOTIVOS_REGRA]),
     ]);
     res.json({ tipo, leads: lista.rows, total: total.rows[0].n, page, paginas: Math.max(1, Math.ceil(total.rows[0].n / POR)),
@@ -3409,7 +3508,7 @@ app.get('/api/leads/:id/palavras', requireAuth, async (req, res) => {
   if (isNaN(id)) return res.status(400).json({ erro: 'id inválido' });
   try {
     const { rows: [l] } = await pool.query(
-      `SELECT l.fantasia, l.razao, b.criterios FROM leads l LEFT JOIN buscas b ON b.id = l.busca_id WHERE l.id=$1`, [id]);
+      `SELECT l.fantasia, l.razao, l.cnae, l.setor, l.porte, b.criterios FROM leads l LEFT JOIN buscas b ON b.id = l.busca_id WHERE l.id=$1`, [id]);
     if (!l) return res.status(404).json({ erro: 'lead não encontrado' });
     const neg = require('./providers/negativas');
     const pal = require('./providers/palavras');
@@ -3420,9 +3519,42 @@ app.get('/api/leads/:id/palavras', requireAuth, async (req, res) => {
       negativada: mapa.has(p.raiz),
       do_ramo: ramo.some(r => r.f === pal.familia(p.palavra)),
     }));
-    res.json({ nome: l.fantasia || l.razao, palavras });
+    // Atividade e porte, pra bloquear quando o nome não mostra o problema.
+    // dos_clientes: os seus clientes também têm (bloquear derruba os bons).
+    const bq = await neg.carregarBloqueios(pool);
+    const perfil = l.criterios?.params?.perfil;
+    const cnae = String(l.cnae || '').replace(/\D/g, '');
+    const porte = neg.portePadrao(l.porte);
+    // freq_clientes: fração dos clientes da lista com essa atividade/porte.
+    const freqDe = (arr, igual) => (arr || []).filter(x => !x.so_negativo && igual(x)).reduce((m, x) => Math.max(m, x.freq || 0), 0);
+    const fAtiv = freqDe(perfil?.cnaes, x => x.c === cnae);
+    const fPorte = freqDe(perfil?.portes, x => neg.portePadrao(x.porte) === porte);
+    const atividade = cnae ? { valor: cnae, rotulo: l.setor || cnae, bloqueada: bq.atividades.has(cnae),
+      dos_clientes: fAtiv >= 0.05, freq_clientes: fAtiv } : null;
+    const porteInfo = porte && porte !== 'nao informado' ? { valor: porte, rotulo: l.porte, bloqueado: bq.portes.has(porte),
+      dos_clientes: fPorte >= 0.1, freq_clientes: fPorte } : null;
+    res.json({ nome: l.fantasia || l.razao, palavras, atividade, porte: porteInfo });
   } catch (e) { console.error('[lead-palavras]', e.message); res.status(500).json({ erro: 'erro interno' }); }
 });
+
+// Mãozinha pra baixo vinda do CRM (tag de fora do perfil): mesmo efeito do
+// botão — o lead sai da lista e vira contraexemplo na lista do radar.
+async function marcarForaDoPerfil(leadId) {
+  const { rows: [l] } = await pool.query(
+    `SELECT l.cnpj, b.lista FROM leads l LEFT JOIN buscas b ON b.id = l.busca_id WHERE l.id=$1`, [leadId]);
+  if (!l) return { aprendeu: false };
+  await pool.query(
+    `UPDATE leads SET status='Descartado', contato_status='fora_do_perfil', contato_pendente=false,
+            liberado_em=NULL, atualizado_em=now() WHERE id=$1`, [leadId]);
+  const cnpj = String(l.cnpj || '').replace(/\D/g, '');
+  if (!l.lista || cnpj.length !== 14) return { aprendeu: false };
+  await pool.query(
+    `INSERT INTO sementes (cnpj, lista, origem, tipo) VALUES ($1,$2,'crm_fora_do_perfil','negativa')
+     ON CONFLICT (tenant_id, lista, cnpj) DO UPDATE SET tipo='negativa', origem='crm_fora_do_perfil'
+     WHERE sementes.tipo <> 'positiva'`, [cnpj, l.lista]);
+  await pool.query(`UPDATE buscas SET criterios = criterios || '{"reperfilar": true}'::jsonb WHERE lista=$1`, [l.lista]);
+  return { aprendeu: true, lista: l.lista };
+}
 
 // Dado um lead marcado como fora do perfil, acha os OUTROS leads com o mesmo
 // perfil firmográfico (mesma atividade + mesmo porte) — pra o usuário limpar de
@@ -4476,6 +4608,11 @@ app.patch('/api/config', requireAuth, requireMaster, async (req, res) => {
   if ('alerta_email'   in b) { sets.push(`alerta_email=$${sets.length+1}`); vals.push(String(b.alerta_email || '').trim() || null); }
   if ('crm_auto_global' in b) { sets.push(`crm_auto_global=$${sets.length+1}`); vals.push(!!b.crm_auto_global); }
   if ('crm_lookalike_auto' in b) { sets.push(`crm_lookalike_auto=$${sets.length+1}`); vals.push(!!b.crm_lookalike_auto); }
+  if ('crm_negativo_tags' in b) {
+    const tags = (Array.isArray(b.crm_negativo_tags) ? b.crm_negativo_tags : String(b.crm_negativo_tags || '').split(','))
+      .map(t => String(t).trim().toLowerCase()).filter(Boolean).slice(0, 40);
+    sets.push(`crm_negativo_tags=$${sets.length+1}`); vals.push(tags);
+  }
   if ('crm_conversao_tags' in b) {
     const tags = (Array.isArray(b.crm_conversao_tags) ? b.crm_conversao_tags : String(b.crm_conversao_tags || '').split(','))
       .map(t => String(t).trim().toLowerCase()).filter(Boolean).slice(0, 40);
@@ -4698,6 +4835,22 @@ app.post('/api/webhooks/crm/conversao', webhookLimiter, async (req, res) => {
     cnpj = String(cnpj || '').replace(/\D/g, '');   // sementes sempre com 14 dígitos limpos
     if (cnpj.length !== 14) return res.status(400).json({ erro: 'não identifiquei o lead: nem hunter_ref conhecido nem CNPJ no payload' });
     const tagsRecebidas = coletarTags(body);
+
+    // Tag de "fora do perfil" (não qualificado, lead ruim…): vira mãozinha
+    // pra baixo, como se o usuário tivesse marcado no Hunter. Vem ANTES da
+    // conversão: "não qualificado" contém "qualificado" e virava venda.
+    const semAc = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+    const { rows: [cn] } = await pool.query(`SELECT crm_negativo_tags FROM config`).catch(() => ({ rows: [] }));
+    const tagsNeg = (cn?.crm_negativo_tags || []).map(semAc).filter(Boolean);
+    const negativa = tagsRecebidas.find(t => tagsNeg.some(n => semAc(t) === n || semAc(t).includes(n)));
+    if (negativa) {
+      const { rows: [lead] } = await pool.query(
+        `SELECT id FROM leads WHERE ${ref && via === 'ref' ? 'crm_ref=$1' : `regexp_replace(cnpj,'\\D','','g')=$1`}
+          ORDER BY enviado_crm_em DESC NULLS LAST, id DESC LIMIT 1`, [ref && via === 'ref' ? ref : cnpj]);
+      if (!lead) return res.status(404).json({ erro: 'lead não encontrado no Hunter' });
+      const r = await marcarForaDoPerfil(lead.id);
+      return res.json({ ok: true, fora_do_perfil: true, tag: negativa, cnpj, via, ...r });
+    }
 
     const tagsConv = (cfg.crm_conversao_tags || []).map(t => String(t).toLowerCase());
     const casou = tagsRecebidas.find(t => tagsConv.some(c => t.includes(c) || c.includes(t)));

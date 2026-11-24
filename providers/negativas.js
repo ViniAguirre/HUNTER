@@ -42,7 +42,37 @@ async function carregar(pool) {
   _cache = { em: Date.now(), mapa: new Map(rows.map(r => [r.raiz, r.palavra])) };
   return _cache.mapa;
 }
-function invalidar() { _cache = { em: 0, mapa: null }; }
+function invalidar() { _cache = { em: 0, mapa: null }; _bloq = { em: 0, b: null }; }
+
+// ── Bloqueios de atividade (CNAE) e de porte ────────────────────────────────
+// Mesma ideia da palavra negativada, para o que o nome não mostra: "lojas de
+// variedades" com a mesma atividade de outro ramo, ou MEI quando o cliente só
+// vende para empresa maior. Regra dura: vale na hora, em todo radar.
+let _bloq = { em: 0, b: null };
+const digitos = c => String(c || '').replace(/\D/g, '');
+const portePadrao = p => semAcento(p).trim();
+async function carregarBloqueios(pool) {
+  if (_bloq.b && Date.now() - _bloq.em < CACHE_MS) return _bloq.b;
+  const { rows } = await pool.query(`SELECT tipo, valor, rotulo FROM bloqueios`).catch(() => ({ rows: [] }));
+  const b = { atividades: new Map(), portes: new Map() };
+  for (const r of rows) {
+    if (r.tipo === 'atividade') b.atividades.set(digitos(r.valor), r.rotulo || r.valor);
+    if (r.tipo === 'porte') b.portes.set(portePadrao(r.valor), r.rotulo || r.valor);
+  }
+  _bloq = { em: Date.now(), b };
+  return b;
+}
+// Devolve { motivo, item } se a empresa cai num bloqueio, ou null.
+function bloqueioDe(emp, b) {
+  if (!b) return null;
+  const c = digitos(emp?.cnae);
+  if (c && b.atividades.has(c)) {
+    return { motivo: 'atividade_bloqueada', item: `Atividade bloqueada por você: ${b.atividades.get(c)}` };
+  }
+  const p = portePadrao(emp?.porte);
+  if (p && b.portes.has(p)) return { motivo: 'porte_bloqueado', item: `Porte bloqueado por você: ${b.portes.get(p)}` };
+  return null;
+}
 
 // Palavras do nome da empresa (fantasia + razão), cada uma com a sua raiz.
 function palavrasDoNome(emp) {
@@ -63,4 +93,4 @@ function noNome(emp, mapa) {
   return null;
 }
 
-module.exports = { raiz, aceita, carregar, invalidar, noNome, palavrasDoNome };
+module.exports = { raiz, aceita, carregar, invalidar, noNome, palavrasDoNome, carregarBloqueios, bloqueioDe, portePadrao };

@@ -1743,7 +1743,11 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
     // Palavras do nome: pra o usuário dizer QUAL delas mostra que não serve.
     fetch('/api/leads/' + id + '/palavras', { credentials:'same-origin' })
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d?.palavras?.some(p => !p.negativada)) setNegativar({ leadId: id, nome: d.nome, palavras: d.palavras, sel: [], previa: null }); })
+      .then(d => {
+        const temOpcao = d && (d.palavras?.some(p => !p.negativada) || (d.atividade && !d.atividade.bloqueada) || (d.porte && !d.porte.bloqueado));
+        if (temOpcao) setNegativar({ leadId: id, nome: d.nome, palavras: d.palavras || [], atividade: d.atividade, porte: d.porte,
+          sel: [], selAtiv: false, selPorte: false, previa: null });
+      })
       .catch(() => {});
     try {
       const r = await fetch('/api/leads/' + id + '/mesmo-perfil', { credentials:'same-origin' });
@@ -1752,28 +1756,53 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
     } catch (_) {}
   };
 
-  // Seleciona/desmarca uma palavra e mostra quantos leads em aberto sairiam.
-  const alternarPalavra = async (palavra) => {
-    const sel = negativar.sel.includes(palavra) ? negativar.sel.filter(x => x !== palavra) : [...negativar.sel, palavra];
-    setNegativar(n => n && { ...n, sel, previa: sel.length ? '…' : null });
-    if (!sel.length) return;
-    const ns = await Promise.all(sel.map(p => fetch('/api/palavras-negativas/previa?palavra=' + encodeURIComponent(p), { credentials:'same-origin' })
-      .then(r => r.ok ? r.json() : { abertos: 0 }).catch(() => ({ abertos: 0 }))));
-    setNegativar(n => n && JSON.stringify(n.sel) === JSON.stringify(sel) ? { ...n, previa: ns.reduce((t, x) => t + (x.abertos || 0), 0) } : n);
+  // Seleciona/desmarca palavras, atividade ou porte e mostra quantos leads em
+  // aberto sairiam (soma: um lead com duas das escolhas conta duas vezes).
+  const recontar = async (n) => {
+    const chave = JSON.stringify([n.sel, n.selAtiv, n.selPorte]);
+    const pedidos = [
+      ...n.sel.map(p => '/api/palavras-negativas/previa?palavra=' + encodeURIComponent(p)),
+      ...(n.selAtiv && n.atividade ? ['/api/bloqueios/previa?tipo=atividade&valor=' + encodeURIComponent(n.atividade.valor)] : []),
+      ...(n.selPorte && n.porte ? ['/api/bloqueios/previa?tipo=porte&valor=' + encodeURIComponent(n.porte.valor)] : []),
+    ];
+    if (!pedidos.length) { setNegativar(x => x && { ...x, previa: null }); return; }
+    setNegativar(x => x && { ...x, previa: '…' });
+    const ns = await Promise.all(pedidos.map(u => fetch(u, { credentials:'same-origin' }).then(r => r.ok ? r.json() : { abertos: 0 }).catch(() => ({ abertos: 0 }))));
+    setNegativar(x => x && JSON.stringify([x.sel, x.selAtiv, x.selPorte]) === chave ? { ...x, previa: ns.reduce((t, y) => t + (y.abertos || 0), 0) } : x);
   };
+  const alternarPalavra = (palavra) => {
+    const n = { ...negativar, sel: negativar.sel.includes(palavra) ? negativar.sel.filter(x => x !== palavra) : [...negativar.sel, palavra] };
+    setNegativar(n); recontar(n);
+  };
+  const alternarBloqueio = (campo) => { const n = { ...negativar, [campo]: !negativar[campo] }; setNegativar(n); recontar(n); };
+  const algoEscolhido = negativar && (negativar.sel.length || negativar.selAtiv || negativar.selPorte);
   const confirmarNegativar = async () => {
-    if (!negativar?.sel.length) return;
-    const r = await fetch('/api/palavras-negativas', { method:'POST', credentials:'same-origin',
-      headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ palavras: negativar.sel, lead_id: negativar.leadId }) }).catch(() => null);
-    const d = r ? await r.json().catch(() => ({})) : {};
-    if (!r || !r.ok) { alert(d.erro || 'Não consegui negativar.'); return; }
+    if (!algoEscolhido) return;
+    let palavrasFeitas = [], descartados = 0, bloqueados = [];
+    if (negativar.sel.length) {
+      const r = await fetch('/api/palavras-negativas', { method:'POST', credentials:'same-origin',
+        headers:{ 'Content-Type':'application/json' }, body: JSON.stringify({ palavras: negativar.sel, lead_id: negativar.leadId }) }).catch(() => null);
+      const d = r ? await r.json().catch(() => ({})) : {};
+      if (!r || !r.ok) { alert(d.erro || 'Não consegui negativar.'); return; }
+      palavrasFeitas = d.palavras.map(p => p.palavra); descartados += d.descartados || 0;
+    }
+    for (const [tipo, info, on] of [['atividade', negativar.atividade, negativar.selAtiv], ['porte', negativar.porte, negativar.selPorte]]) {
+      if (!on || !info) continue;
+      const r = await fetch('/api/bloqueios', { method:'POST', credentials:'same-origin', headers:{ 'Content-Type':'application/json' },
+        body: JSON.stringify({ tipo, valor: info.valor, rotulo: info.rotulo, lead_id: negativar.leadId }) }).catch(() => null);
+      const d = r ? await r.json().catch(() => ({})) : {};
+      if (!r || !r.ok) { alert(d.erro || 'Não consegui bloquear.'); return; }
+      descartados += d.descartados || 0; bloqueados.push(tipo === 'atividade' ? `atividade "${info.rotulo}"` : `porte "${info.rotulo}"`);
+    }
+    const d = { palavras: palavrasFeitas.map(p => ({ palavra: p })), descartados };
     setNegativar(null);
     // A faixa "mesmo perfil" listava os leads que a palavra acabou de tirar.
     setVarredura(null);
     setTick(t => t + 1);
-    alert(`Palavra${d.palavras.length > 1 ? 's' : ''} negativada${d.palavras.length > 1 ? 's' : ''}: ${d.palavras.map(p => p.palavra).join(', ')}.`
-      + (d.descartados ? ` ${d.descartados} lead(s) em aberto com ${d.palavras.length > 1 ? 'elas' : 'ela'} no nome saíram da lista.` : '')
-      + ' Empresas com essa palavra no nome não viram mais lead em nenhum radar.');
+    const feitos = [...(d.palavras.length ? [`palavra${d.palavras.length > 1 ? 's' : ''} ${d.palavras.map(p => `"${p.palavra}"`).join(', ')}`] : []), ...bloqueados];
+    alert(`Bloqueado: ${feitos.join(' e ')}.`
+      + (d.descartados ? ` ${d.descartados} lead(s) em aberto saíram da lista.` : '')
+      + ' Empresas assim não viram mais lead em nenhum radar (dá para desfazer em Lista negra).');
   };
 
   const marcarLote = async () => {
@@ -2220,7 +2249,7 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
         <div style={{ background:'var(--panel2)', border:`1px solid ${C.red}`, borderRadius:11, padding:'12px 15px',
           marginBottom:14, animation:'hfade .2s ease' }}>
           <div style={{ fontSize:13, fontWeight:600, marginBottom:2 }}>
-            Alguma palavra do nome mostra que “{negativar.nome}” não serve?
+            O que mostra que “{negativar.nome}” não serve?
           </div>
           <div style={{ fontSize:12, color:'var(--faint)', lineHeight:1.5, marginBottom:8 }}>
             Negativar uma palavra é mais forte que a mãozinha: empresa com ela no nome não vira mais lead em nenhum radar,
@@ -2242,23 +2271,52 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
               );
             })}
           </div>
+          {(negativar.atividade || negativar.porte) && (
+            <div style={{ display:'flex', flexWrap:'wrap', gap:6, alignItems:'center', marginTop:8 }}>
+              <span style={{ fontSize:12, color:'var(--faint)' }}>Ou bloquear:</span>
+              {[['selAtiv', negativar.atividade, 'Atividade', negativar.atividade?.bloqueada], ['selPorte', negativar.porte, 'Porte', negativar.porte?.bloqueado]]
+                .filter(([, info]) => info).map(([campo, info, rot, ja]) => {
+                  const on = negativar[campo];
+                  return (
+                    <button key={campo} type="button" disabled={ja} onClick={() => alternarBloqueio(campo)}
+                      title={ja ? 'Já bloqueado' : info.dos_clientes ? 'Os seus clientes também são assim: bloquear derruba os bons leads junto' : `Bloquear este ${rot.toLowerCase()}`}
+                      style={{ height:28, padding:'0 10px', borderRadius:7, fontSize:12.5, fontFamily:'inherit', maxWidth:420,
+                        whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', cursor: ja ? 'default' : 'pointer',
+                        textDecoration: ja ? 'line-through' : 'none',
+                        border:`1px solid ${on ? C.red : info.dos_clientes ? C.amber : 'var(--border)'}`,
+                        background: on ? 'color-mix(in srgb, ' + C.red + ' 16%, transparent)' : 'transparent',
+                        color: ja ? 'var(--faint)' : 'var(--text)' }}>
+                      {rot}: {info.rotulo}{info.dos_clientes && !ja ? ' ⚠' : ''}
+                    </button>
+                  );
+                })}
+            </div>
+          )}
+          {((negativar.selAtiv && negativar.atividade?.dos_clientes) || (negativar.selPorte && negativar.porte?.dos_clientes)) && (
+            <div style={{ fontSize:12, color:C.amber, marginTop:8 }}>
+              ⚠ {(() => { const ativ = negativar.selAtiv && negativar.atividade?.dos_clientes;
+                const f = Math.round(((ativ ? negativar.atividade : negativar.porte)?.freq_clientes || 0) * 100);
+                return `${f}% dos seus clientes têm ${ativ ? 'essa atividade' : 'esse porte'}`; })()} —
+              bloquear vai cortar também empresas boas desse tipo. Prefira negativar uma palavra do nome, se houver.
+            </div>
+          )}
           {negativar.sel.some(s => negativar.palavras.find(p => p.palavra === s)?.do_ramo) && (
             <div style={{ fontSize:12, color:C.amber, marginTop:8 }}>
               ⚠ Você escolheu uma palavra do ramo dos seus clientes — empresas boas com ela no nome também vão parar de chegar.
             </div>
           )}
           <div style={{ display:'flex', gap:8, alignItems:'center', marginTop:10, flexWrap:'wrap' }}>
-            <button onClick={confirmarNegativar} disabled={!negativar.sel.length}
-              style={{ height:34, padding:'0 14px', borderRadius:9, border:'none', background: negativar.sel.length ? C.red : 'var(--border)',
-                color:'#fff', fontWeight:600, fontSize:12.5, fontFamily:'inherit', cursor: negativar.sel.length ? 'pointer' : 'default' }}>
-              Negativar {negativar.sel.length > 1 ? `${negativar.sel.length} palavras` : 'palavra'}
+            <button onClick={confirmarNegativar} disabled={!algoEscolhido}
+              style={{ height:34, padding:'0 14px', borderRadius:9, border:'none', background: algoEscolhido ? C.red : 'var(--border)',
+                color:'#fff', fontWeight:600, fontSize:12.5, fontFamily:'inherit', cursor: algoEscolhido ? 'pointer' : 'default' }}>
+              {negativar.selAtiv || negativar.selPorte ? 'Bloquear' : `Negativar ${negativar.sel.length > 1 ? `${negativar.sel.length} palavras` : 'palavra'}`}
             </button>
             <button onClick={() => setNegativar(null)}
               style={{ height:34, padding:'0 14px', borderRadius:9, border:'1px solid var(--border)', background:'transparent',
                 color:'var(--dim)', fontSize:12.5, fontFamily:'inherit', cursor:'pointer' }}>Nenhuma</button>
             {negativar.previa != null && (
               <span style={{ fontSize:12, color:'var(--faint)' }}>
-                {negativar.previa === '…' ? 'Contando…' : `${fmtNum(negativar.previa)} lead(s) em aberto com ${negativar.sel.length > 1 ? 'essas palavras' : 'essa palavra'} sairão da lista.`}
+                {negativar.previa === '…' ? 'Contando…' : `${fmtNum(negativar.previa)} lead(s) em aberto sairão da lista.`}
               </span>
             )}
           </div>
@@ -2729,6 +2787,8 @@ const MOTIVOS_DESCARTE = [
   ['abaixo_do_corte', 'Nota abaixo do corte'],
   ['nao_e_comprador', 'A segunda verificação diz que não é o tipo de empresa que compra'],
   ['palavra_negativada', 'Nome com uma palavra que você negativou'],
+  ['atividade_bloqueada', 'Atividade que você bloqueou'],
+  ['porte_bloqueado', 'Porte que você bloqueou'],
   ['sem_palavra_do_ramo', 'Sem palavra do ramo no nome (radar em foco nas palavras)'],
   ['radar_sem_perfil', 'Radar ainda sem perfil'],
   ['desistiu_de_esperar', 'Aprovadas que desistiram de esperar vaga (7 dias)'],
@@ -2945,11 +3005,61 @@ function PalavrasNegativas() {
 // impede as regras automáticas de tirá-lo de novo.
 const ROTULO_MOTIVO_REGRA = {
   palavra_negativada: 'Palavra negativada no nome', sem_palavra_do_ramo: 'Sem palavra do ramo no nome',
+  atividade_bloqueada: 'Atividade bloqueada', porte_bloqueado: 'Porte bloqueado',
   score_recalculado: 'Nota abaixo do corte com o perfil atual', filtro_perfil: 'Fora do perfil (revisão)',
   atividade_fora_do_perfil: 'Atividade que nenhum cliente tem', atividade_rara: 'Atividade rara, sem palavra do ramo',
   atividade_recusada: 'Atividade dos leads recusados', atividade_desconhecida: 'Atividade desconhecida',
   entidade_nao_empresarial: 'Igreja, órgão público, condomínio…', nao_e_comprador: 'Segunda verificação: não é comprador',
 };
+// Atividades e portes bloqueados (depois da mãozinha, ou aqui mesmo).
+function BloqueiosLista() {
+  const [lista, setLista] = useState(null);
+  const carregar = () => fetch('/api/bloqueios', { credentials:'same-origin' })
+    .then(r => r.ok ? r.json() : { bloqueios: [] }).then(d => setLista(d.bloqueios || [])).catch(() => setLista([]));
+  useEffect(() => { carregar(); }, []);
+  const tirar = async (b) => {
+    const nome = b.tipo === 'atividade' ? `a atividade "${b.rotulo}"` : `o porte "${b.rotulo}"`;
+    let liberar = false;
+    if (b.leads > 0) liberar = window.confirm(`Desbloquear ${nome}.\n\n${b.leads} lead(s) foram descartados por esse bloqueio. `
+      + 'Clique OK para liberá-los também (voltam para a lista de leads), ou Cancelar para só desbloquear.');
+    else if (!window.confirm(`Desbloquear ${nome}?`)) return;
+    const r = await fetch('/api/bloqueios/' + b.id + (liberar ? '?liberar=1' : ''), { method:'DELETE', credentials:'same-origin' }).catch(() => null);
+    const d = r ? await r.json().catch(() => ({})) : {};
+    if (liberar && d.liberados) window.alert(`${d.liberados} lead(s) voltaram para a lista de leads.`);
+    carregar();
+  };
+  const grupo = (tipo, titulo) => {
+    const itens = (lista || []).filter(b => b.tipo === tipo);
+    return (
+      <div style={{ marginTop:10 }}>
+        <div style={{ fontSize:11.5, color:'var(--dim)', marginBottom:6 }}>{titulo}</div>
+        <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
+          {itens.map(b => (
+            <span key={b.id} style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'4px 9px', borderRadius:8, fontSize:12,
+              border:`1px solid ${C.red}`, color:'var(--text)', maxWidth:'100%' }}>
+              <span style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{b.rotulo}</span>
+              {b.leads > 0 && <span style={{ color:'var(--faint)' }} title="Leads descartados por este bloqueio">{b.leads}</span>}
+              <button type="button" onClick={() => tirar(b)} title="Desbloquear"
+                style={{ background:'none', border:'none', padding:0, color:'var(--faint)', cursor:'pointer', fontSize:13, lineHeight:1 }}>×</button>
+            </span>
+          ))}
+          {lista && !itens.length && <span style={{ fontSize:12, color:'var(--faint)' }}>Nenhum.</span>}
+        </div>
+      </div>
+    );
+  };
+  return (
+    <div style={{ background:'var(--panel)', border:'1px solid var(--border)', borderRadius:14, padding:'16px 18px', marginBottom:18 }}>
+      <h3 style={{ fontSize:14, fontWeight:600, margin:0 }}>Atividades e portes bloqueados</h3>
+      <div style={{ fontSize:12, color:'var(--faint)', margin:'4px 0 6px', lineHeight:1.45 }}>
+        Para quando o nome não mostra o problema. Bloqueie depois da mãozinha para baixo, na lista de leads.
+      </div>
+      {grupo('atividade', 'Atividades (CNAE)')}
+      {grupo('porte', 'Portes')}
+    </div>
+  );
+}
+
 function ListaNegra({ onOpenLead }) {
   const [aba, setAba] = useState('recusadas');
   const [q, setQ] = useState('');
@@ -2994,12 +3104,12 @@ function ListaNegra({ onOpenLead }) {
   const abas = [
     ['recusadas', 'Recusadas por você', contagens?.recusadas],
     ['regras', 'Tiradas pelas regras', contagens?.regras],
-    ['palavras', 'Palavras negativadas', contagens?.palavras],
+    ['palavras', 'Palavras e bloqueios', contagens?.palavras],
   ];
   const explica = {
     recusadas: 'Empresas que alguém marcou com a mãozinha para baixo. Além de saírem da lista, elas ensinam o perfil do radar a evitar empresas parecidas.',
     regras: 'Leads que o Hunter tirou sozinho: palavra negativada no nome, sem palavra do ramo, atividade fora do perfil, nota abaixo do corte ou a segunda verificação. Não ensinam o perfil.',
-    palavras: 'Empresa com uma destas palavras no nome não vira lead em nenhum radar.',
+    palavras: 'Empresa com uma destas palavras no nome, ou com uma atividade ou porte bloqueado, não vira lead em nenhum radar.',
   }[aba];
   const cols = '36px 2.2fr 1.5fr 1.1fr 90px 96px';
   return (
@@ -3015,7 +3125,7 @@ function ListaNegra({ onOpenLead }) {
         ))}
       </div>
       <div style={{ fontSize:12.5, color:'var(--faint)', marginBottom:14, lineHeight:1.5 }}>{explica}</div>
-      {aba === 'palavras' ? <PalavrasNegativas/> : (<>
+      {aba === 'palavras' ? <><PalavrasNegativas/><BloqueiosLista/></> : (<>
         <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap', marginBottom:12 }}>
           <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar por empresa ou CNPJ" aria-label="Buscar na lista negra"
             style={{ flex:'1 1 240px', maxWidth:360, height:38, borderRadius:9, border:'1px solid var(--border)', background:'var(--panel)',
@@ -7936,6 +8046,7 @@ function Config() {
           alerta_email: cfg.alerta_email, crm_auto_global: cfg.crm_auto_global,
           crm_lookalike_auto: cfg.crm_lookalike_auto,
           crm_conversao_tags: cfg.crm_conversao_tags,
+          crm_negativo_tags: cfg.crm_negativo_tags,
         })
       });
       const d = await r.json();
@@ -8181,6 +8292,18 @@ function Config() {
           onChange={e => set('crm_conversao_tags', e.target.value.split(',').map(t => t.trim()).filter(Boolean))}
           placeholder="fechado, comprou, cliente, qualificado, won"
           style={{ ...inp, marginBottom:16 }}/>
+
+        <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>
+          Tags que marcam o lead como fora do perfil <span style={{ color:'var(--faint)' }}>(separadas por vírgula — viram mãozinha para baixo no Hunter)</span>
+        </label>
+        <input value={Array.isArray(cfg.crm_negativo_tags) ? cfg.crm_negativo_tags.join(', ') : (cfg.crm_negativo_tags || '')}
+          onChange={e => set('crm_negativo_tags', e.target.value.split(',').map(t => t.trim()).filter(Boolean))}
+          placeholder="fora do perfil, não qualificado, lead ruim"
+          style={{ ...inp, marginBottom:6 }}/>
+        <div style={{ fontSize:11.5, color:'var(--faint)', marginBottom:16, lineHeight:1.45 }}>
+          Configure o CRM para chamar o mesmo webhook abaixo quando uma dessas tags for aplicada. Elas são conferidas antes das tags de conversão
+          ("não qualificado" não conta como venda).
+        </div>
 
         <label style={{ display:'block', fontSize:12, color:'var(--dim)', marginBottom:7 }}>
           URL do webhook <span style={{ color:'var(--faint)' }}>(configure no seu CRM para chamar no evento de conversão)</span>

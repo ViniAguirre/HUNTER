@@ -208,8 +208,10 @@ module.exports = async function score1(job, pool, queues) {
   // Antes de tudo, as palavras que o usuário negativou: empresa com uma delas
   // no nome não vira lead em radar nenhum (providers/negativas.js).
   const negada = importacao ? null : negativas.noNome(empresa, await negativas.carregar(pool));
+  const bloqueada = importacao || negada ? null : negativas.bloqueioDe(empresa, await negativas.carregarBloqueios(pool));
   let barrada = negada
     ? { motivo: 'palavra_negativada', item: `Nome contém "${negada}" — palavra que você negativou` }
+    : bloqueada ? bloqueada
     : importacao ? null : perfilamento.portaoPerfil(empresa, {
       perfil: busca.tipo === 'lookalike' ? params?.perfil : null,
       cnaesRadar: busca.tipo === 'lookalike' ? [] : (params?.cnaes || []),
@@ -542,7 +544,9 @@ async function conferirLead(pool, leadId, { minimo = null, mapaNeg = null } = {}
   };
   const negada = negativas.noNome(emp, mapaNeg || await negativas.carregar(pool));
   if (negada) return { motivo: 'palavra_negativada', item: `Nome contém "${negada}" — palavra que você negativou` };
-  if (!l.tipo) return null;                       // radar excluído: só as palavras valem
+  const bloqueada = negativas.bloqueioDe(emp, await negativas.carregarBloqueios(pool));
+  if (bloqueada) return bloqueada;
+  if (!l.tipo) return null;                       // radar excluído: só os bloqueios valem
   const params = parseCriterios(l.criterios);
   if (l.tipo === 'lookalike' && !params?.perfil) return null;
   const barrada = perfilamento.portaoPerfil(emp, {
@@ -591,6 +595,30 @@ async function revisarAbertos(pool, { limite = 2000 } = {}) {
   }
   return r;
 }
+// Segunda verificação (Jev) no envio ao CRM, só para quem nunca passou por ela
+// (lead criado antes de o Jev entrar no Score 1, ou Jev desligado na época).
+// Quem já foi avaliado no Score 1 não paga de novo. Mesma régua do Score 1:
+// com palavra do ramo no nome só cai quem não tem uso pra oferta; sem a
+// palavra, precisa ser provável comprador. Radar de perfil (ICP): a régua
+// branda, porque a atividade já foi escolhida pelo usuário. Falha ou Jev
+// desligado: não segura o envio.
+async function jevNoEnvio(pool, leadId) {
+  const { rows: [l] } = await pool.query(
+    `SELECT l.cnpj, l.busca_id, l.score, l.liberado_em, b.tipo, b.criterios, b.corte_score, b.lista
+       FROM leads l JOIN buscas b ON b.id = l.busca_id WHERE l.id=$1`, [leadId]);
+  if (!l || l.liberado_em || !['lookalike', 'icp'].includes(l.tipo)) return null;
+  const { rows: [ja] } = await pool.query(
+    `SELECT 1 FROM decisoes_jev WHERE tipo='score1' AND busca_id=$1 AND cnpj=$2 AND jev_score IS NOT NULL LIMIT 1`,
+    [l.busca_id, l.cnpj]);
+  if (ja) return null;
+  const { rows: [empresa] } = await pool.query(`SELECT * FROM empresas WHERE cnpj=$1`, [l.cnpj]);
+  if (!empresa) return null;
+  const params = parseCriterios(l.criterios);
+  const comPalavra = l.tipo === 'icp' || !!(params?.perfil && perfilamento.palavraDoRamo(empresa, params.perfil));
+  return portaoJev(pool, { empresa, busca_id: l.busca_id, criterios: l.criterios, score: l.score,
+    corte: corteEfetivo(l.corte_score, 0), lista: l.tipo === 'lookalike' ? l.lista : null, comPalavra });
+}
+module.exports.jevNoEnvio = jevNoEnvio;
 module.exports.conferirLead = conferirLead;
 module.exports.descartarNaConferencia = descartarNaConferencia;
 module.exports.revisarAbertos = revisarAbertos;
