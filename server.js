@@ -530,7 +530,7 @@ async function init() {
   await pool.query(`
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS empresa_cnpj    TEXT REFERENCES empresas(cnpj) ON DELETE SET NULL;
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS motivo_descarte TEXT;
-    -- Liberado à mão na Lista negra: as regras automáticas não o descartam mais.
+    -- Liberado à mão na Lista negativa: as regras automáticas não o descartam mais.
     ALTER TABLE leads ADD COLUMN IF NOT EXISTS liberado_em TIMESTAMPTZ;
     -- Raio-X do radar: por que as empresas encontradas não viraram lead, por
     -- motivo ({"atividade_rara": 120, "ja_vista": 300, …}).
@@ -3343,7 +3343,7 @@ app.delete('/api/palavras-negativas/:id', requireAuth, requireEditor, async (req
   } catch (e) { console.error('[negativas]', e.message); res.status(500).json({ erro: 'erro interno' }); }
 });
 
-// ── Lista negra ──────────────────────────────────────────────────────────────
+// ── Lista negativa ──────────────────────────────────────────────────────────────
 // Tudo o que o Hunter está deixando de fora: empresas recusadas com a mãozinha
 // (viram contraexemplo do perfil), leads tirados pelas regras automáticas e as
 // palavras negativadas. Daqui o cliente confere e libera o que foi engano.
