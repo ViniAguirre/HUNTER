@@ -627,6 +627,26 @@ async function enrichComRetry(cnpj, maxTentativas = 6, apiKey = null) {
   }
 }
 
+// Atualiza a firmografia de uma empresa já cadastrada com o que a busca paga
+// devolveu (mesmo formato do enriquecimento). Campo vazio não apaga o antigo.
+async function atualizarCadastro(pool, o) {
+  await pool.query(`
+    UPDATE empresas SET
+      razao=COALESCE(NULLIF($2,''), razao), fantasia=COALESCE(NULLIF($3,''), fantasia),
+      cnae=COALESCE(NULLIF($4,''), cnae), setor=COALESCE(NULLIF($5,''), setor), porte=COALESCE(NULLIF($6,''), porte),
+      cidade=COALESCE(NULLIF($7,''), cidade), uf=COALESCE(NULLIF($8,''), uf), situacao=COALESCE(NULLIF($9,''), situacao),
+      abertura=COALESCE(NULLIF($10,''), abertura), capital=COALESCE($11, capital), endereco=COALESCE($12, endereco),
+      natureza_juridica=COALESCE(NULLIF($13,''), natureza_juridica), opcao_simples=COALESCE($14, opcao_simples),
+      decisor=COALESCE($15, decisor), cargo=COALESCE($16, cargo),
+      qsa=$17::jsonb, contato_receita=$18::jsonb, atualizado_em=now()
+    WHERE cnpj=$1`,
+    [o.cnpj, o.razao || '', o.fantasia || '', o.cnae || '', o.setor || '', o.porte || '', o.cidade || '', o.uf || '',
+     o.situacao || '', o.abertura || '', o.capital || null, o.endereco || null, o.natureza_juridica || '',
+     o.opcao_simples ?? null, o.decisor || null, o.cargo || null,
+     JSON.stringify(o.qsa || []), JSON.stringify(o.contato_receita || { telefones: [], emails: [] })]
+  ).catch(e => console.warn(`[descoberta] não atualizei o cadastro de ${o.cnpj}: ${e.message}`));
+}
+
 // Grava/atualiza a empresa no ledger (cache), sem criar lead.
 async function upsertEmpresa(pool, o) {
   await pool.query(`
@@ -670,6 +690,12 @@ async function processarOffice(pool, queues, busca_id, office, counters) {
   if (!existente) {
     await upsertEmpresa(pool, office);
     counters.novos++;
+  } else if (Array.isArray(office.qsa)) {
+    // Veio da busca paga com o cadastro completo e atual: guarda. Antes ele
+    // era jogado fora (o cadastro já existia) e o enriquecimento, vendo o
+    // registro velho, consultava de novo no endpoint grátis — 5 por minuto,
+    // o que segurava a esteira inteira. Contatos verificados não são tocados.
+    await atualizarCadastro(pool, office);
   }
 
   // Registra que ESTE tenant descobriu o CNPJ (estado 'coletado', sem rebaixar
