@@ -360,7 +360,7 @@ const NAV_MAIN = [
   { key:'buscas', label:'Radares', icon:'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-4.3-4.3' },
   { key:'estrategia', label:'Estratégia', icon:'M3 4h18v18H3zM3 10h18M8 2v4M16 2v4M7 14h4M7 18h7' },
   { key:'leads', label:'Leads', icon:'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM12 3v3M12 18v3M3 12h3M18 12h3' },
-  { key:'listanegra', label:'Lista negra', icon:'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM4.9 4.9l14.2 14.2' },
+  { key:'listanegra', label:'Lista negativa', icon:'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM4.9 4.9l14.2 14.2' },
   { key:'propostas', label:'Propostas', icon:'M9 12h6M9 16h6M9 8h2M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z' },
   { key:'semelhantes', label:'Semelhantes', icon:'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 11l-3 3-1.5-1.5' },
 ];
@@ -651,7 +651,7 @@ const TITLES = {
   pautaForm: ['Pauta da Estratégia', 'O que procurar, onde (em ordem) e quando'],
   nova: ['Criar Radar', 'Configure um novo radar de leads'],
   propostas: ['Propostas', 'Suas propostas de valor (o que você vende)'],
-  listanegra: ['Lista negra', 'O que o Hunter está deixando de fora — e como liberar o que foi engano'],
+  listanegra: ['Lista negativa', 'O que o Hunter está deixando de fora — e como liberar o que foi engano'],
   semelhantes: ['Semelhantes', 'Listas de clientes que servem de modelo para a busca'],
   agente: ['Agente SWOT', 'Fichamento comercial que personaliza a análise'],
   integracoes: ['Integrações', 'Conexões com APIs e CRM'],
@@ -1802,7 +1802,7 @@ function Leads({ refreshKey, onOpenLead, onCrm, user, preset }) {
     const feitos = [...(d.palavras.length ? [`palavra${d.palavras.length > 1 ? 's' : ''} ${d.palavras.map(p => `"${p.palavra}"`).join(', ')}`] : []), ...bloqueados];
     alert(`Bloqueado: ${feitos.join(' e ')}.`
       + (d.descartados ? ` ${d.descartados} lead(s) em aberto saíram da lista.` : '')
-      + ' Empresas assim não viram mais lead em nenhum radar (dá para desfazer em Lista negra).');
+      + ' Empresas assim não viram mais lead em nenhum radar (dá para desfazer em Lista negativa).');
   };
 
   const marcarLote = async () => {
@@ -2961,9 +2961,9 @@ function PalavrasNegativas() {
   const tirar = async (p) => {
     let liberar = false;
     if (p.leads > 0) {
-      liberar = window.confirm(`Tirar "${p.palavra}" da lista negra.\n\n${p.leads} lead(s) foram descartados por essa palavra. `
+      liberar = window.confirm(`Tirar "${p.palavra}" da lista negativa.\n\n${p.leads} lead(s) foram descartados por essa palavra. `
         + 'Clique OK para liberá-los também (voltam para a lista de leads), ou Cancelar para só tirar a palavra.');
-    } else if (!window.confirm(`Tirar "${p.palavra}" da lista negra? Empresas com essa palavra voltam a poder virar lead.`)) return;
+    } else if (!window.confirm(`Tirar "${p.palavra}" da lista negativa? Empresas com essa palavra voltam a poder virar lead.`)) return;
     const r = await fetch('/api/palavras-negativas/' + p.id + (liberar ? '?liberar=1' : ''), { method:'DELETE', credentials:'same-origin' }).catch(() => null);
     const d = r ? await r.json().catch(() => ({})) : {};
     if (liberar && d.liberados) window.alert(`${d.liberados} lead(s) voltaram para a lista de leads.`);
@@ -2981,7 +2981,7 @@ function PalavrasNegativas() {
           <span key={p.id} style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'4px 9px', borderRadius:8, fontSize:12,
             border:`1px solid ${C.red}`, color:'var(--text)' }}>
             {p.palavra}{p.leads > 0 && <span style={{ color:'var(--faint)' }} title="Leads descartados por esta palavra">{p.leads}</span>}
-            <button type="button" onClick={() => tirar(p)} title="Tirar da lista negra"
+            <button type="button" onClick={() => tirar(p)} title="Tirar da lista negativa"
               style={{ background:'none', border:'none', padding:0, color:'var(--faint)', cursor:'pointer', fontSize:13, lineHeight:1 }}>×</button>
           </span>
         ))}
@@ -3000,7 +3000,7 @@ function PalavrasNegativas() {
   );
 }
 
-// Lista negra: o que o Hunter está deixando de fora, com o porquê, e o botão
+// Lista negativa: o que o Hunter está deixando de fora, com o porquê, e o botão
 // de liberar o que foi engano. Liberar devolve o lead à lista de trabalho e
 // impede as regras automáticas de tirá-lo de novo.
 const ROTULO_MOTIVO_REGRA = {
@@ -3127,7 +3127,7 @@ function ListaNegra({ onOpenLead }) {
       <div style={{ fontSize:12.5, color:'var(--faint)', marginBottom:14, lineHeight:1.5 }}>{explica}</div>
       {aba === 'palavras' ? <><PalavrasNegativas/><BloqueiosLista/></> : (<>
         <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap', marginBottom:12 }}>
-          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar por empresa ou CNPJ" aria-label="Buscar na lista negra"
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Buscar por empresa ou CNPJ" aria-label="Buscar na lista negativa"
             style={{ flex:'1 1 240px', maxWidth:360, height:38, borderRadius:9, border:'1px solid var(--border)', background:'var(--panel)',
               color:'var(--text)', padding:'0 12px', fontSize:13, fontFamily:'inherit' }}/>
           <button type="button" disabled={!sel.length || busy} onClick={() => liberar(sel)}
